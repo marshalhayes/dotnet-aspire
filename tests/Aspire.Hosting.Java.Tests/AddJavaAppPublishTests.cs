@@ -869,6 +869,83 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
         Assert.DoesNotContain("unzip", content, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task VerifyPublish_RaisesTheBuildJdkWhenTheProjectTargetsAnOlderRelease()
+    {
+        // Gradle 9 refuses to start on anything below Java 17 and Maven 4 needs the same, so a build stage
+        // matching an older target would die before compiling. The runtime stage still matches the target,
+        // because that is what the produced bytecode needs.
+        var content = await PublishDockerfileAsync(
+            configureSource: source => WritePom(source, javaVersion: "8"),
+            configureResource: app => app.WithMavenGoal("spring-boot:run"));
+
+        Assert.Contains("FROM --platform=$BUILDPLATFORM docker.io/library/eclipse-temurin:17-jdk AS build", content, StringComparison.Ordinal);
+        Assert.Contains("FROM docker.io/library/eclipse-temurin:8-jre", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task VerifyPublish_KeepsTheBuildJdkOnTheTargetWhenItIsNewEnough()
+    {
+        var content = await PublishDockerfileAsync(
+            configureSource: source => WritePom(source, javaVersion: "21"),
+            configureResource: app => app.WithMavenGoal("spring-boot:run"));
+
+        Assert.Contains("FROM --platform=$BUILDPLATFORM docker.io/library/eclipse-temurin:21-jdk AS build", content, StringComparison.Ordinal);
+        Assert.Contains("FROM docker.io/library/eclipse-temurin:21-jre", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PublishingWithAWrapperPathContainingWhitespaceIsRejected()
+    {
+        // COPY separates its arguments on whitespace with no quoted form available here, so such a path
+        // would copy two paths that do not exist rather than the one that does.
+        using var workspace = TemporaryWorkspace.Create(outputHelper);
+        var sourceDir = workspace.CreateDirectory("source");
+        WritePom(sourceDir.FullName, javaVersion: "21");
+        var nested = Directory.CreateDirectory(Path.Combine(sourceDir.FullName, "build tools"));
+        WriteWrapper(nested.FullName, "mvnw");
+
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish);
+        var app = builder.AddJavaApp("api", sourceDir.FullName)
+                         .WithMavenGoal("spring-boot:run")
+                         .WithWrapperPath(Path.Combine("build tools", "mvnw"));
+
+        var ex = Assert.Throws<DistributedApplicationException>(
+            () => JavaDockerfileGenerator.ResolveContainerBuildForTesting(app.Resource, sourceDir.FullName));
+
+        Assert.Contains("contains whitespace", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PublishingAfterChangingTheWorkingDirectoryIsRejected()
+    {
+        // PublishAsDockerFile fixes the build context when AddJavaApp runs, and ContextPath cannot be
+        // changed afterwards, so a later WithWorkingDirectory would build the image from the original
+        // directory while the resource points somewhere else.
+        using var workspace = TemporaryWorkspace.Create(outputHelper);
+        var sourceDir = workspace.CreateDirectory("source");
+        var movedDir = workspace.CreateDirectory("moved");
+        var outputDir = workspace.CreateDirectory("output");
+
+        WritePom(sourceDir.FullName, javaVersion: "21");
+        WritePom(movedDir.FullName, javaVersion: "21");
+
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish, outputDir.FullName, step: "publish-manifest");
+        builder.AddJavaApp("api", sourceDir.FullName)
+               .WithMavenGoal("spring-boot:run")
+               .WithWorkingDirectory(movedDir.FullName);
+
+        builder.Build().Run();
+
+        // The failure surfaces as a missing Dockerfile because the publishing callback's exception is
+        // recorded against the step rather than rethrown from Run.
+        Assert.False(
+            File.Exists(Path.Combine(outputDir.FullName, "api.Dockerfile")),
+            "No Dockerfile should be generated from a build context the resource no longer points at.");
+
+        await Task.CompletedTask;
+    }
+
     private async Task<string> PublishQuarkusDockerfileAsync(
         Action<string> configureSource,
         Func<IResourceBuilder<JavaAppResource>, IResourceBuilder<JavaAppResource>>? configureResource = null)

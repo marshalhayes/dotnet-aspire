@@ -5,6 +5,7 @@
 
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.ApplicationModel.Docker;
 using Microsoft.Extensions.DependencyInjection;
@@ -112,7 +113,7 @@ internal static class JavaDockerfileGenerator
         // tool version the project pins, so nothing has to come from the image. That also keeps the build
         // stage off the maven/gradle images, whose tags only exist for a subset of JDK releases and which
         // would otherwise pin a second, unrelated tool version.
-        var buildImage = baseImageAnnotation?.BuildImage ?? $"docker.io/library/eclipse-temurin:{javaVersion}-jdk";
+        var buildImage = baseImageAnnotation?.BuildImage ?? $"docker.io/library/eclipse-temurin:{BuildJdkVersion(javaVersion)}-jdk";
         var runtimeImage = baseImageAnnotation?.RuntimeImage ?? $"docker.io/library/eclipse-temurin:{javaVersion}-jre";
 
         if (build is not null)
@@ -289,6 +290,30 @@ internal static class JavaDockerfileGenerator
         || File.Exists(Path.Combine(appDirectory, "settings.gradle.kts"));
 
     /// <summary>
+    /// The JDK the build stage runs on, which is not necessarily the JDK the application targets.
+    /// </summary>
+    /// <remarks>
+    /// The build tool itself needs a JDK new enough to run it, independently of the bytecode the project
+    /// produces: Gradle 9 requires Java 17 or later to start at all, and Maven 4 requires 17. A project
+    /// targeting Java 8 or 11 would otherwise get an <c>eclipse-temurin:8-jdk</c> build stage where the
+    /// wrapper dies with "Unsupported class file major version" before compiling anything.
+    /// <para>
+    /// Compiling for the older target still works, because that is what <c>--release</c> and
+    /// <c>maven.compiler.release</c> are for, and JDK 17's javac still supports targets back to 7. Only the
+    /// build stage is raised; the runtime stage stays on the targeted version so the image is no larger and
+    /// no newer than the application actually needs.
+    /// </para>
+    /// See https://docs.gradle.org/current/userguide/compatibility.html and
+    /// https://maven.apache.org/docs/history.html.
+    /// </remarks>
+    private static string BuildJdkVersion(string targetVersion)
+        => int.TryParse(targetVersion, CultureInfo.InvariantCulture, out var parsed) && parsed < MinimumBuildJdkVersion
+            ? MinimumBuildJdkVersion.ToString(CultureInfo.InvariantCulture)
+            : targetVersion;
+
+    private const int MinimumBuildJdkVersion = 17;
+
+    /// <summary>
     /// The default <c>.dockerignore</c> content, with exceptions for files the image needs from the context.
     /// </summary>
     /// <remarks>
@@ -421,12 +446,15 @@ internal static class JavaDockerfileGenerator
             // A wrapper checked out from a Windows clone can arrive without the executable bit, and Git
             // does not record one on Windows at all. Invoking the interpreter directly sidesteps that
             // rather than failing with "permission denied" deep inside the container build.
-            var invocation = $"sh ./{wrapper}";
-
+            //
             // Every argument is quoted because these values reach a container build as a shell command.
             // A version pinned with -Dspring.profiles.active='a b' or any value containing $ or ; would
             // otherwise be re-split or expanded by the shell, so the image would build differently from
             // the identical arguments used on the host, where they are passed as separate argv entries.
+            // The wrapper path is quoted for the same reason: WithWrapperPath accepts any path, and an
+            // unquoted one containing a shell metacharacter would invoke something other than the wrapper.
+            var invocation = $"sh {ShellQuoteIfNeeded($"./{wrapper}")}";
+
             var buildCommand = $"{invocation} {string.Join(' ', buildArgs.Select(ShellQuoteIfNeeded))}";
 
             var (outputGlob, toolHome, cacheSubdirectory, cacheHomeVariable, supportDirectoryName, warmArgs) = tool switch
@@ -632,7 +660,19 @@ internal static class JavaDockerfileGenerator
                             $"{JavaHostingExtensions.GenerateWrapperCommand(tool)} so both scripts are present.");
                     }
 
-                    return posixSibling;
+                    relative = posixSibling;
+                }
+
+                // A Dockerfile COPY takes its arguments separated by whitespace and has no quoted form
+                // here, so a wrapper path containing whitespace would copy two nonexistent paths instead of
+                // one real one. Rejecting it names the problem, rather than failing later inside the build
+                // with "no such file or directory" for a path the author never wrote.
+                if (relative.Any(char.IsWhiteSpace))
+                {
+                    throw new DistributedApplicationException(
+                        $"Java application '{resource.Name}' cannot be published because its wrapper path " +
+                        $"'{relative}' contains whitespace, which a Dockerfile COPY instruction cannot " +
+                        "express. Move the wrapper to a path without spaces.");
                 }
 
                 return relative;
@@ -754,7 +794,6 @@ internal static class JavaDockerfileGenerator
         }
 
         private static string ShellQuote(string value) => $"'{value.Replace("'", "'\\''")}'";
-
         /// <summary>
         /// Quotes a build argument only when the shell would otherwise change its meaning.
         /// </summary>

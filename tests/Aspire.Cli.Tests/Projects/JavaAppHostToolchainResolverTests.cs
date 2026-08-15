@@ -16,6 +16,26 @@ public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
         return path;
     }
 
+    /// <summary>
+    /// Asserts the wrapper invocation, accounting for Windows running the batch wrapper through the
+    /// command interpreter rather than launching it directly.
+    /// </summary>
+    private static void AssertWrapperInvocation(string wrapperPath, string appHostDirectory, string[] toolArgs, CommandSpec actual)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Equal(Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe", actual.Command);
+            Assert.Equal(
+                ["/c", Path.GetRelativePath(appHostDirectory, wrapperPath), .. toolArgs],
+                actual.Args);
+
+            return;
+        }
+
+        Assert.Equal(wrapperPath, actual.Command);
+        Assert.Equal(toolArgs, actual.Args);
+    }
+
     private static RuntimeSpec CreateJavacRuntimeSpec()
     {
         return new RuntimeSpec
@@ -111,16 +131,17 @@ public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
         using var workspace = TemporaryWorkspace.Create(outputHelper);
 
         File.WriteAllText(Path.Combine(workspace.Path, "pom.xml"), "<project />");
-        WriteWrapper(workspace.Path, OperatingSystem.IsWindows() ? "mvnw.cmd" : "mvnw");
+        var wrapper = WriteWrapper(workspace.Path, OperatingSystem.IsWindows() ? "mvnw.cmd" : "mvnw");
 
         var spec = JavaAppHostToolchainResolver.ApplyToRuntimeSpec(CreateJavacRuntimeSpec(), JavaAppHostToolchainResolver.Resolve(workspace.WorkspaceRoot), workspace.WorkspaceRoot);
 
         Assert.Equal("Java (Maven)", spec.DisplayName);
 
-        Assert.Equal(Path.Combine(workspace.Path, OperatingSystem.IsWindows() ? "mvnw.cmd" : "mvnw"), spec.InstallDependencies!.Command);
-        Assert.Equal(
+        AssertWrapperInvocation(
+            wrapper,
+            workspace.Path,
             ["-B", "-q", "dependency:copy-dependencies", $"-DoutputDirectory={Path.Combine("target", "aspire-deps")}", "-DincludeScope=runtime"],
-            spec.InstallDependencies.Args);
+            spec.InstallDependencies!);
 
         var compile = Assert.Single(spec.PreExecute!);
         // Compilation stays with javac even under Maven: the build tool cannot be told about the
@@ -158,10 +179,11 @@ public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
         var spec = JavaAppHostToolchainResolver.ApplyToRuntimeSpec(CreateJavacRuntimeSpec(), JavaAppHostToolchainResolver.Resolve(workspace.WorkspaceRoot), workspace.WorkspaceRoot);
 
         Assert.Equal("Java (Gradle)", spec.DisplayName);
-        Assert.Equal(wrapper, spec.InstallDependencies!.Command);
-        Assert.Equal(
+        AssertWrapperInvocation(
+            wrapper,
+            workspace.Path,
             ["-q", "--init-script", JavaAppHostToolchainResolver.GradleInitScriptRelativePath, "aspireCopyDependencies"],
-            spec.InstallDependencies.Args);
+            spec.InstallDependencies!);
 
         var compile = Assert.Single(spec.PreExecute!);
         Assert.Equal("javac", compile.Command);

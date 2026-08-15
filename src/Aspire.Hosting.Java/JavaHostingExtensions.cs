@@ -118,7 +118,25 @@ public static partial class JavaHostingExtensions
 
                 containerBuilder.WithDockerfileBuilder(
                     workingDirectory,
-                    ctx => JavaDockerfileGenerator.Write(resource, workingDirectory, ctx));
+                    ctx =>
+                    {
+                        // The build context was fixed when PublishAsDockerFile ran, which is during
+                        // AddJavaApp, and DockerfileBuildAnnotation.ContextPath cannot be changed
+                        // afterwards. A later WithWorkingDirectory therefore moves where the application
+                        // runs without moving what is uploaded to the daemon, and the image would be built
+                        // from the original directory. Saying so is far better than producing an image
+                        // whose sources come from somewhere the author no longer points at.
+                        if (!ArePathsEquivalent(resource.WorkingDirectory, workingDirectory))
+                        {
+                            throw new DistributedApplicationException(
+                                $"Java application '{resource.Name}' cannot be published because its working " +
+                                $"directory was changed to '{resource.WorkingDirectory}' after the container " +
+                                $"build context was set to '{workingDirectory}'. Pass the directory to " +
+                                "AddJavaApp instead of calling WithWorkingDirectory afterwards.");
+                        }
+
+                        JavaDockerfileGenerator.Write(resource, workingDirectory, ctx);
+                    });
             });
 
         // The generated image copies files out of each container files source, so those sources have to be
@@ -1396,6 +1414,16 @@ public static partial class JavaHostingExtensions
 
         return File.Exists(runJar) ? Path.GetFullPath(runJar) : null;
     }
+
+    /// <summary>
+    /// Compares two directory paths for equivalence, tolerating a trailing separator and, on Windows and
+    /// macOS, differences in case that the file system itself ignores.
+    /// </summary>
+    private static bool ArePathsEquivalent(string left, string right)
+        => string.Equals(
+            Path.TrimEndingDirectorySeparator(Path.GetFullPath(left)),
+            Path.TrimEndingDirectorySeparator(Path.GetFullPath(right)),
+            OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase);
 
     private static bool IsAuxiliaryJar(string jarPath)
     {
