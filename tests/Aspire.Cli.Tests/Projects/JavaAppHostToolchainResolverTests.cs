@@ -32,8 +32,8 @@ public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
             return;
         }
 
-        Assert.Equal(wrapperPath, actual.Command);
-        Assert.Equal(toolArgs, actual.Args);
+        Assert.Equal("sh", actual.Command);
+        Assert.Equal([wrapperPath, .. toolArgs], actual.Args);
     }
 
     private static RuntimeSpec CreateJavacRuntimeSpec()
@@ -260,9 +260,11 @@ public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
         }
         else
         {
-            // Started without a shell, so a bare "mvnw" would be looked up on PATH and never found.
-            Assert.Equal(wrapperPath, invocation.Command);
-            Assert.Empty(invocation.PrefixArgs);
+            // Run through "sh" rather than executed directly so a wrapper checked out without its
+            // executable bit still works. The absolute path is kept because the process starts without
+            // a shell, so a bare "mvnw" would be looked up on PATH and never found.
+            Assert.Equal("sh", invocation.Command);
+            Assert.Equal([wrapperPath], invocation.PrefixArgs);
         }
     }
 

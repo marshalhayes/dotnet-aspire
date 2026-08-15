@@ -225,9 +225,15 @@ internal static class JavaAppHostToolchainResolver
 
         if (!OperatingSystem.IsWindows())
         {
-            // Referenced by absolute path because the process is started without a shell, so a bare "mvnw"
-            // would be looked up on PATH and never found in the project directory.
-            return new JavaToolInvocation(wrapperPath, []);
+            // Invoked through "sh" rather than executed directly because a wrapper checked out on
+            // Windows, or committed without its mode bit, arrives without the executable bit and
+            // exec fails with "Permission denied". The wrappers are POSIX shell scripts and are
+            // documented to be run that way, so "sh <path>" is always valid. This matches how the
+            // hosted Java resources invoke wrappers (JavaHostingExtensions.WrapperInvocationFor).
+            //
+            // The absolute path is kept because the process is started without a shell, so a bare
+            // "mvnw" would be looked up on PATH and never found in the project directory.
+            return new JavaToolInvocation("sh", [wrapperPath]);
         }
 
         // On Windows the wrappers are batch files. Launching one directly with redirected stdout can
@@ -375,8 +381,16 @@ internal static class JavaAppHostToolchainResolver
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            // A locked or unreadable staging directory is not worth failing the run over: the copy
-            // that follows still refreshes every JAR whose name is unchanged, which is the common case.
+            // Continuing here would defeat the only reason this method exists. Maven adds the new
+            // versioned JAR beside the stale one, both end up on the "dir/*" classpath, and which one
+            // the JVM loads is left to directory order — a failure that surfaces later as an unrelated
+            // NoSuchMethodError. Better to stop now with a message that names the directory.
+            throw new InvalidOperationException(
+                $"The staged dependency directory '{dependencyDirectory}' could not be cleared, so the " +
+                "AppHost would run with both the old and new versions of any upgraded dependency on its " +
+                "classpath. Close anything holding files in that directory, or delete it manually, then " +
+                "run the command again.",
+                ex);
         }
     }
 

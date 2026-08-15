@@ -1015,6 +1015,12 @@ public sealed class KubernetesEnvironmentResource : Resource, IComputeEnvironmen
 
         var gatewayName = gatewayResource.Name.ToKubernetesResourceName();
 
+        // This whole method re-runs when the deployment-target step executes a second time (once for
+        // "before-start", once in the publish/deploy DAG). GeneratedGateway is assigned so it replaces
+        // itself, but GeneratedHttpRoutes is appended to — without clearing, every route is emitted
+        // twice and the chart renders duplicate HTTPRoute objects with identical names.
+        gatewayResource.GeneratedHttpRoutes.Clear();
+
         var gateway = new GatewayV1
         {
             Metadata = { Name = gatewayName }

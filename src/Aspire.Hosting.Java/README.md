@@ -305,4 +305,4 @@ builder.AddJavaApp("catalog", "../catalog")
 
 https://github.com/microsoft/aspire
 
-_*Java is a registered trademark of Oracle and/or its affiliates. Apache Maven and Apache Tomcat are trademarks of the Apache Software Foundation. Gradle is a trademark of Gradle, Inc. Spring Boot is a trademark of Broadcom Inc. and/or its subsidiaries. Quarkus is a trademark of Red Hat, Inc._
+_\*Java is a registered trademark of Oracle and/or its affiliates. Apache Maven and Apache Tomcat are trademarks of the Apache Software Foundation. Gradle is a trademark of Gradle, Inc. Spring Boot is a trademark of Broadcom Inc. and/or its subsidiaries. Quarkus is a trademark of Red Hat, Inc._
