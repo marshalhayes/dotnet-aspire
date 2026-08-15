@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
-import { dirname, join } from 'node:path';
+import { delimiter as pathDelimiter, dirname, join } from 'node:path';
 import * as sinon from 'sinon';
 import * as vscode from 'vscode';
 import * as cliModule from '../utils/process/cliProcess';
@@ -12,7 +12,7 @@ import * as debuggerExtensionsModule from '../debugger/debuggerExtensions';
 import { AspireDebugSession, buildAspireCommandArgs, getLoggableDebugConfiguration, markDebugConfigurationEnvironmentSensitive } from '../debugger/AspireDebugSession';
 import { extensionLogOutputChannel } from '../utils/logging';
 import { appHostTelemetryTargetPathConfigKey } from '../debugger/AspireDebugConfigurationMetadata';
-import { AspireResourceExtendedDebugConfiguration, RustLaunchConfiguration } from '../dcp/types';
+import { AspireResourceExtendedDebugConfiguration, JavaLaunchConfiguration, RustLaunchConfiguration } from '../dcp/types';
 import { __resetCommonPropertiesForTests, __setReporterForTests } from '../utils/telemetry';
 import { aspireDashboard, debugSessionStopTimedOut } from '../loc/strings';
 import { registerRunCleanup } from '../debugger/runCleanupRegistry';
@@ -3308,6 +3308,222 @@ var builder = Aspire.Hosting.DistributedApplication.CreateBuilder(args);
         });
         assert.deepStrictEqual(appHostArgs, ['--example-argument']);
         assert.strictEqual(debuggerExtension.resourceType, 'rust');
+    });
+
+    test('launches a Java AppHost with the Java debugger', async () => {
+        const appHostPath = join(makeTempDir(), 'AppHost.java');
+        writeFileSync(appHostPath, '');
+        sinon.stub(vscode.extensions, 'getExtension').callsFake((extensionId: string) =>
+            extensionId === 'vscjava.vscode-java-debug'
+                ? { id: extensionId } as vscode.Extension<unknown>
+                : undefined);
+
+        const parentDebugSession = {
+            id: 'aspire-session',
+            type: 'aspire',
+            name: 'Aspire',
+            workspaceFolder: undefined,
+            configuration: {
+                type: 'aspire',
+                request: 'launch',
+                name: 'Aspire',
+                program: appHostPath,
+                command: 'run',
+            },
+            customRequest: sinon.stub(),
+            getDebugProtocolBreakpoint: sinon.stub(),
+        };
+        const createDebugSessionConfiguration = sinon.stub(debuggerExtensionsModule, 'createDebugSessionConfiguration').resolves({
+            type: 'java',
+            request: 'launch',
+            name: 'Java AppHost',
+            runId: '',
+            debugSessionId: 'aspire-session',
+        });
+        const aspireDebugSession = new AspireDebugSession(
+            parentDebugSession as unknown as vscode.DebugSession,
+            {} as any,
+            {} as any,
+            {} as any,
+            () => { });
+        sinon.stub(aspireDebugSession, 'createDebugAdapterTrackerCore');
+        sinon.stub(aspireDebugSession, 'startAndGetDebugSession').resolves(undefined);
+
+        // The CLI sends the launcher it would have run itself, so the classpath the build tool staged is
+        // already resolved and the adapter never has to reproduce it.
+        const classPath = ['target/classes', 'target/aspire-deps/*'].join(pathDelimiter);
+
+        await aspireDebugSession.startAppHost(
+            appHostPath,
+            ['java', '-Xmx512m', '-cp', classPath, 'AppHost', '--example-argument'],
+            [],
+            true,
+            { forceBuild: false });
+
+        const launchConfig = createDebugSessionConfiguration.firstCall.args[1] as JavaLaunchConfiguration;
+        const appHostArgs = createDebugSessionConfiguration.firstCall.args[2];
+        const debuggerExtension = createDebugSessionConfiguration.firstCall.args[5];
+
+        assert.deepStrictEqual(launchConfig, {
+            type: 'java',
+            main_class: 'AppHost',
+            class_paths: ['target/classes', 'target/aspire-deps/*'],
+            working_directory: dirname(appHostPath),
+            vm_args: ['-Xmx512m'],
+        });
+        assert.deepStrictEqual(appHostArgs, ['--example-argument']);
+        assert.strictEqual(debuggerExtension.resourceType, 'java');
+    });
+
+    test('omits vm_args from a Java AppHost launch when the command carries none', async () => {
+        const appHostPath = join(makeTempDir(), 'AppHost.java');
+        writeFileSync(appHostPath, '');
+        sinon.stub(vscode.extensions, 'getExtension').callsFake((extensionId: string) =>
+            extensionId === 'vscjava.vscode-java-debug'
+                ? { id: extensionId } as vscode.Extension<unknown>
+                : undefined);
+
+        const parentDebugSession = {
+            id: 'aspire-session',
+            type: 'aspire',
+            name: 'Aspire',
+            workspaceFolder: undefined,
+            configuration: {
+                type: 'aspire',
+                request: 'launch',
+                name: 'Aspire',
+                program: appHostPath,
+                command: 'run',
+            },
+            customRequest: sinon.stub(),
+            getDebugProtocolBreakpoint: sinon.stub(),
+        };
+        const createDebugSessionConfiguration = sinon.stub(debuggerExtensionsModule, 'createDebugSessionConfiguration').resolves({
+            type: 'java',
+            request: 'launch',
+            name: 'Java AppHost',
+            runId: '',
+            debugSessionId: 'aspire-session',
+        });
+        const aspireDebugSession = new AspireDebugSession(
+            parentDebugSession as unknown as vscode.DebugSession,
+            {} as any,
+            {} as any,
+            {} as any,
+            () => { });
+        sinon.stub(aspireDebugSession, 'createDebugAdapterTrackerCore');
+        sinon.stub(aspireDebugSession, 'startAndGetDebugSession').resolves(undefined);
+
+        await aspireDebugSession.startAppHost(
+            appHostPath,
+            ['java', '-cp', 'target/classes', 'AppHost'],
+            [],
+            true,
+            { forceBuild: false });
+
+        const launchConfig = createDebugSessionConfiguration.firstCall.args[1] as JavaLaunchConfiguration;
+
+        // An empty vm_args array is not the same as no vm_args to the Java adapter, and build_tool is
+        // deliberately absent because the classpath is supplied explicitly.
+        assert.deepStrictEqual(launchConfig, {
+            type: 'java',
+            main_class: 'AppHost',
+            class_paths: ['target/classes'],
+            working_directory: dirname(appHostPath),
+        });
+    });
+
+    test('reports the missing Java debugger extension rather than an unsupported debug type', async () => {
+        const appHostPath = join(makeTempDir(), 'AppHost.java');
+        writeFileSync(appHostPath, '');
+        sinon.stub(vscode.extensions, 'getExtension').returns(undefined);
+
+        const parentDebugSession = {
+            id: 'aspire-session',
+            type: 'aspire',
+            name: 'Aspire',
+            workspaceFolder: undefined,
+            configuration: {
+                type: 'aspire',
+                request: 'launch',
+                name: 'Aspire',
+                program: appHostPath,
+                command: 'run',
+            },
+            customRequest: sinon.stub(),
+            getDebugProtocolBreakpoint: sinon.stub(),
+        };
+        const aspireDebugSession = new AspireDebugSession(
+            parentDebugSession as unknown as vscode.DebugSession,
+            {} as any,
+            {} as any,
+            {} as any,
+            () => { });
+        sinon.stub(aspireDebugSession, 'createDebugAdapterTrackerCore');
+        const startAndGetDebugSession = sinon.stub(aspireDebugSession, 'startAndGetDebugSession').resolves(undefined);
+        const showErrorMessage = sinon.stub(vscode.window, 'showErrorMessage').resolves(undefined);
+
+        await aspireDebugSession.startAppHost(
+            appHostPath,
+            ['java', '-cp', 'target/classes', 'AppHost'],
+            [],
+            true,
+            { forceBuild: false });
+
+        assert.strictEqual(startAndGetDebugSession.called, false);
+        const message = showErrorMessage.firstCall.args[0] as string;
+        assert.ok(
+            message.includes('vscjava.vscode-java-debug'),
+            `expected an actionable install message, got ${message}`);
+    });
+
+    test('reports an unrecognised Java AppHost command instead of guessing a launch', async () => {
+        const appHostPath = join(makeTempDir(), 'AppHost.java');
+        writeFileSync(appHostPath, '');
+        sinon.stub(vscode.extensions, 'getExtension').callsFake((extensionId: string) =>
+            extensionId === 'vscjava.vscode-java-debug'
+                ? { id: extensionId } as vscode.Extension<unknown>
+                : undefined);
+
+        const parentDebugSession = {
+            id: 'aspire-session',
+            type: 'aspire',
+            name: 'Aspire',
+            workspaceFolder: undefined,
+            configuration: {
+                type: 'aspire',
+                request: 'launch',
+                name: 'Aspire',
+                program: appHostPath,
+                command: 'run',
+            },
+            customRequest: sinon.stub(),
+            getDebugProtocolBreakpoint: sinon.stub(),
+        };
+        const aspireDebugSession = new AspireDebugSession(
+            parentDebugSession as unknown as vscode.DebugSession,
+            {} as any,
+            {} as any,
+            {} as any,
+            () => { });
+        sinon.stub(aspireDebugSession, 'createDebugAdapterTrackerCore');
+        const startAndGetDebugSession = sinon.stub(aspireDebugSession, 'startAndGetDebugSession').resolves(undefined);
+        const showErrorMessage = sinon.stub(vscode.window, 'showErrorMessage').resolves(undefined);
+
+        // A wrapper invocation has no main class to hand the adapter, and guessing one would start a JVM
+        // with the wrong arguments.
+        await aspireDebugSession.startAppHost(
+            appHostPath,
+            ['./mvnw', 'exec:java'],
+            [],
+            true,
+            { forceBuild: false });
+
+        assert.strictEqual(startAndGetDebugSession.called, false);
+        const message = showErrorMessage.firstCall.args[0] as string;
+        assert.ok(
+            message.includes('./mvnw exec:java'),
+            `expected the command to be echoed back, got ${message}`);
     });
 
     test('an AppHost restart is aborted and forces CLI cleanup when resource shutdown fails', async () => {

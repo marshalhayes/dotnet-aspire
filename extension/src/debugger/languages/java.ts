@@ -261,6 +261,16 @@ export function parseJavaAppHostCommand(args: string[]): { mainClass: string; cl
         return null;
     }
 
+    // Only a direct JVM invocation can be turned into a launch configuration. A build-tool wrapper
+    // ("./mvnw exec:java", "./gradlew run") forks its own JVM, so its arguments are the tool's rather
+    // than the JVM's and the first bare token is a goal or task, not a main class. Without this check
+    // "exec:java" would be handed to the debug adapter as the class to launch.
+    // The path may be absolute (a JAVA_HOME-qualified launcher), so compare only the file name.
+    const executable = args[0].split(/[\\/]/).pop() ?? args[0];
+    if (executable.toLowerCase().replace(/\.exe$/, '') !== 'java') {
+        return null;
+    }
+
     const classPathOptions = new Set(['-cp', '-classpath', '--class-path']);
     let classPaths: string[] = [];
     const vmArgs: string[] = [];

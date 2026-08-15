@@ -488,4 +488,17 @@ suite('Java AppHost Command Parsing Tests', () => {
         // A classpath option with no value would otherwise consume the main class.
         assert.strictEqual(parseJavaAppHostCommand(['java', '-cp']), null);
     });
+
+    test('returns null for a build-tool wrapper invocation', () => {
+        // The wrapper forks its own JVM, so "exec:java" is a Maven goal rather than a main class.
+        assert.strictEqual(parseJavaAppHostCommand(['./mvnw', 'exec:java']), null);
+        assert.strictEqual(parseJavaAppHostCommand(['./gradlew', 'run']), null);
+        assert.strictEqual(parseJavaAppHostCommand(['cmd.exe', '/c', 'mvnw.cmd', 'exec:java']), null);
+    });
+
+    test('accepts a launcher referenced by an absolute path', () => {
+        const parsed = parseJavaAppHostCommand([path.join('/opt', 'jdk', 'bin', 'java'), '-cp', 'out', 'AppHost']);
+
+        assert.strictEqual(parsed?.mainClass, 'AppHost');
+    });
 });
