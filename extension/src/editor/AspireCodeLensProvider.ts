@@ -120,7 +120,7 @@ export class AspireCodeLensProvider implements vscode.CodeLensProvider {
         // Add* resource calls were found in the file.
         await this._addBuilderStatementLenses(lenses, document, parser, workspaceAppHostPath, workspaceResources);
 
-        this._addSpringBootDashboardLenses(lenses, document);
+        await this._addSpringBootDashboardLenses(lenses, document, parser);
 
         if (resources.length === 0) {
             return lenses;
@@ -190,9 +190,15 @@ export class AspireCodeLensProvider implements vscode.CodeLensProvider {
      * The scan is textual rather than parser-driven because a Java resource can be declared from any
      * AppHost language and the goal or task name is the only reliable in-document signal that the
      * resource is a Spring Boot app. Deciding it from the project's own `pom.xml`/`build.gradle`
-     * would mean reading files off disk on every keystroke.
+     * would mean reading files off disk on every keystroke. The matches are then filtered through the
+     * document's parser so a commented-out or quoted example does not produce a warning about a
+     * resource that does not exist.
      */
-    private _addSpringBootDashboardLenses(lenses: vscode.CodeLens[], document: vscode.TextDocument): void {
+    private async _addSpringBootDashboardLenses(
+        lenses: vscode.CodeLens[],
+        document: vscode.TextDocument,
+        parser: AppHostResourceParser,
+    ): Promise<void> {
         if (!this._isExtensionInstalled(springBootDashboardExtensionId)) {
             return;
         }
@@ -201,10 +207,23 @@ export class AspireCodeLensProvider implements vscode.CodeLensProvider {
         // Shared regex literals keep `lastIndex` between calls, so reset before iterating.
         springBootLaunchPattern.lastIndex = 0;
 
-        const warnedLines = new Set<number>();
+        const offsets: number[] = [];
         let match: RegExpExecArray | null;
         while ((match = springBootLaunchPattern.exec(text)) !== null) {
-            const line = document.positionAt(match.index).line;
+            offsets.push(match.index);
+        }
+
+        if (offsets.length === 0) {
+            return;
+        }
+
+        const activeOffsets = parser.filterActiveOffsets
+            ? await parser.filterActiveOffsets(document, offsets)
+            : offsets;
+
+        const warnedLines = new Set<number>();
+        for (const offset of activeOffsets) {
+            const line = document.positionAt(offset).line;
             if (warnedLines.has(line)) {
                 continue;
             }

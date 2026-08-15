@@ -38,6 +38,27 @@ internal static partial class JavaDockerfileGenerator
     /// </summary>
     internal const string ContainerAgentPath = "/app/agent.jar";
 
+    /// <summary>
+    /// Build-script fragments that mean the produced artifact depends on the architecture of the machine
+    /// that built it.
+    /// </summary>
+    /// <remarks>
+    /// <c>os-maven-plugin</c> and Gradle's <c>osdetector</c> both publish the detected host as
+    /// <c>${os.detected.classifier}</c>, which is how netty-tcnative, protobuf and gRPC pick their native
+    /// artifact; <c>${os.arch}</c> is the same idea spelled with a JVM system property; and GraalVM's
+    /// native-image plugins compile to a host-architecture executable.
+    /// See https://github.com/trustin/os-maven-plugin and https://github.com/google/osdetector-gradle-plugin.
+    /// </remarks>
+    private static readonly string[] s_hostArchitectureMarkers =
+    [
+        "os-maven-plugin",
+        "os.detected.",
+        "osdetector",
+        "os.arch",
+        "org.graalvm.buildtools",
+        "native-maven-plugin",
+    ];
+
     // Without this, target/ and build/ — routinely hundreds of megabytes after a local build — are
     // uploaded to the daemon and copied into the image by `COPY . .`. Multi-module projects put one next
     // to every module, hence the recursive patterns.
@@ -193,17 +214,23 @@ internal static partial class JavaDockerfileGenerator
 
     private static void WriteBuildStage(DockerfileBuilderCallbackContext context, JavaContainerBuild build, string buildImage)
     {
+        // A JAR is normally architecture-neutral, so the build runs natively even when the image targets
+        // another architecture. There is nothing to gain from emulating a portable build, and a great deal
+        // to lose: cross-building an amd64 image on an arm64 machine runs Maven under QEMU, whose syscall
+        // translation is incomplete enough that the Maven wrapper cannot even unpack itself.
+        //
+        //   tar: apache-maven-3.9.9/lib/maven-artifact-3.9.9.jar: Cannot open: Function not implemented
+        //
+        // Only the runtime stage inherits the requested platform, which is where it normally matters.
+        // A project that selects dependencies by the build machine's architecture is the exception: its
+        // JAR is not portable, so it has to be built on the platform it will run on even though that is
+        // slower and, when emulated, may not work at all. A broken build is easier to diagnose than an
+        // image that starts and then fails on the first call into a native library.
+        // https://docs.docker.com/build/building/multi-platform/#cross-compilation
+        var fromArguments = build.BuildOnTargetPlatform ? buildImage : $"--platform=$BUILDPLATFORM {buildImage}";
+
         var buildStage = context.Builder
-            // The build stage runs natively even when the image targets another architecture. A JAR is
-            // portable, so there is nothing to gain from emulating the build, and a great deal to lose:
-            // cross-building an amd64 image on an arm64 machine runs Maven under QEMU, whose syscall
-            // translation is incomplete enough that the Maven wrapper cannot even unpack itself.
-            //
-            //   tar: apache-maven-3.9.9/lib/maven-artifact-3.9.9.jar: Cannot open: Function not implemented
-            //
-            // Only the runtime stage below inherits the requested platform, which is where it matters.
-            // https://docs.docker.com/build/building/multi-platform/#cross-compilation
-            .From($"--platform=$BUILDPLATFORM {buildImage}", "build")
+            .From(fromArguments, "build")
             .WorkDir("/app");
 
         if (build.CacheHomeVariable is { } cacheHomeVariable)
@@ -504,6 +531,7 @@ internal static partial class JavaDockerfileGenerator
     /// <param name="ArtifactIsDirectory">Whether the staged artifact is a directory rather than a single JAR.</param>
     /// <param name="MinimumBuildJdk">The JDK release the pinned build tool needs to start, or 0 when unknown.</param>
     /// <param name="MaximumBuildJdk">The newest JDK release the pinned build tool can run on, or 0 when unknown.</param>
+    /// <param name="BuildOnTargetPlatform">Whether the build produces an architecture-specific artifact and so cannot run on the build machine's platform.</param>
     private sealed record JavaContainerBuild(
         JavaBuildTool Tool,
         string BuildCommand,
@@ -518,7 +546,8 @@ internal static partial class JavaDockerfileGenerator
         bool RequiresUnzip,
         bool ArtifactIsDirectory,
         int MinimumBuildJdk,
-        int MaximumBuildJdk)
+        int MaximumBuildJdk,
+        bool BuildOnTargetPlatform)
     {
 
         public static JavaContainerBuild Resolve(JavaAppResource resource, string appDirectory)
@@ -592,7 +621,63 @@ internal static partial class JavaDockerfileGenerator
                 RequiresUnzip: requiresUnzip,
                 ArtifactIsDirectory: artifactIsDirectory,
                 MinimumBuildJdk: bounds.Minimum,
-                MaximumBuildJdk: bounds.Maximum);
+                MaximumBuildJdk: bounds.Maximum,
+                BuildOnTargetPlatform: SelectsDependenciesByBuildArchitecture(appDirectory, tool));
+        }
+
+        /// <summary>
+        /// Whether the project picks dependencies or produces artifacts based on the architecture of the
+        /// machine running the build, which makes its output architecture-specific.
+        /// </summary>
+        /// <remarks>
+        /// The usual JAR is bytecode and runs anywhere, but a project can package a native library chosen
+        /// from the build machine: <c>os-maven-plugin</c> and Gradle's <c>osdetector</c> expose the host
+        /// as <c>${os.detected.classifier}</c>, which projects using netty-tcnative, protobuf or gRPC pass
+        /// as a dependency classifier, and GraalVM's native-image plugins emit a host-architecture
+        /// executable outright. Building such a project on the build machine and shipping the result in an
+        /// image for another architecture produces an image that starts and then fails on the first call
+        /// into the native code, so those builds run on the platform they target instead.
+        /// <para>
+        /// This reads the build script as text rather than as XML or Groovy/Kotlin, because a match
+        /// anywhere - including in a comment or a profile that is not active - only costs a slower build,
+        /// while a miss costs a broken image. A build file that cannot be read is treated as portable,
+        /// which is the behaviour for every project that does none of this.
+        /// </para>
+        /// </remarks>
+        private static bool SelectsDependenciesByBuildArchitecture(string appDirectory, JavaBuildTool tool)
+        {
+            string[] fileNames = tool is JavaBuildTool.Gradle
+                ? ["build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"]
+                : ["pom.xml"];
+
+            foreach (var fileName in fileNames)
+            {
+                string content;
+                try
+                {
+                    var path = Path.Combine(appDirectory, fileName);
+                    if (!File.Exists(path))
+                    {
+                        continue;
+                    }
+
+                    content = File.ReadAllText(path);
+                }
+                catch (IOException)
+                {
+                    continue;
+                }
+
+                foreach (var marker in s_hostArchitectureMarkers)
+                {
+                    if (content.Contains(marker, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
         }
 
         /// <summary>

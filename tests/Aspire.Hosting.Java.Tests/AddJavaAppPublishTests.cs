@@ -1267,6 +1267,55 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
     }
 
     [Fact]
+    public async Task VerifyPublish_BuildsOnTheTargetPlatformWhenMavenSelectsNativeDependenciesByHostArchitecture()
+    {
+        // os-maven-plugin resolves ${os.detected.classifier} from the machine running the build, so a JAR
+        // built on the build platform would carry the wrong native library into the runtime image and only
+        // fail on the first call into it.
+        var content = await PublishDockerfileAsync(
+            configureSource: source =>
+            {
+                WritePom(source, javaVersion: "21");
+                File.WriteAllText(
+                    Path.Combine(source, "pom.xml"),
+                    File.ReadAllText(Path.Combine(source, "pom.xml")).Replace(
+                        "</project>",
+                        """
+                          <dependencies>
+                            <dependency>
+                              <groupId>io.netty</groupId>
+                              <artifactId>netty-tcnative-boringssl-static</artifactId>
+                              <classifier>${os.detected.classifier}</classifier>
+                            </dependency>
+                          </dependencies>
+                        </project>
+                        """,
+                        StringComparison.Ordinal));
+            },
+            configureResource: app => app.WithMavenGoal("spring-boot:run"));
+
+        Assert.Contains("FROM docker.io/library/eclipse-temurin:21-jdk AS build", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("--platform=$BUILDPLATFORM", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task VerifyPublish_BuildsOnTheTargetPlatformWhenGradleUsesTheOsDetectorPlugin()
+    {
+        var content = await PublishDockerfileAsync(
+            configureSource: source => WriteGradleBuild(source, """
+                plugins {
+                    id 'com.google.osdetector' version '1.7.3'
+                }
+
+                sourceCompatibility = '21'
+                """),
+            configureResource: app => app.WithGradleTask("bootRun"));
+
+        Assert.Contains("FROM docker.io/library/eclipse-temurin:21-jdk AS build", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("--platform=$BUILDPLATFORM", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void PublishingWithAWrapperPathContainingWhitespaceIsRejected()
     {
         // COPY separates its arguments on whitespace with no quoted form available here, so such a path
