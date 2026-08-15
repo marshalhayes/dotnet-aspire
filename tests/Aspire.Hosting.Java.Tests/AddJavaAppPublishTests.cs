@@ -875,6 +875,24 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
     }
 
     [Fact]
+    public async Task VerifyPublish_WithAPrebuiltJar_WithJarArtifactHasNoEffect()
+    {
+        // Nothing is built in the image, so there is no build output for WithJarArtifact to select from.
+        // The XML doc on WithJarArtifact promises this, and it is the one case where it does not win.
+        var content = await PublishDockerfileAsync(
+            configureSource: source =>
+            {
+                Directory.CreateDirectory(Path.Combine(source, "target"));
+                File.WriteAllText(Path.Combine(source, "target", "worker.jar"), "");
+            },
+            jarPath: Path.Combine("target", "worker.jar"),
+            configureResource: app => app.WithJarArtifact("target/other.jar"));
+
+        Assert.DoesNotContain("AS build", content);
+        Assert.Contains("COPY --chown=999:999 target/worker.jar /app/app.jar", content);
+    }
+
+    [Fact]
     public async Task PublishingAPrebuiltJarReincludesItAndItsDirectoriesInTheBuildContext()
     {
         var ignore = await PublishBuildContextIgnoreAsync(

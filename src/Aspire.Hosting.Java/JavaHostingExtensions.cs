@@ -836,9 +836,10 @@ public static partial class JavaHostingExtensions
     /// container build selects the single JAR that is not a <c>-plain</c>, <c>-sources</c>, or
     /// <c>-javadoc</c> artifact, and fails the build if that is ambiguous.
     /// <para>
-    /// An application added with the <c>jarPath</c> overload of
-    /// <see cref="AddJavaApp(IDistributedApplicationBuilder, string, string, string, string[])"/> already
-    /// names the JAR it runs, so it is published from that JAR and this has no effect.
+    /// This takes precedence over the JAR named by the <c>jarPath</c> overload of
+    /// <see cref="AddJavaApp(IDistributedApplicationBuilder, string, string, string, string[])"/>, so a
+    /// resource can run one JAR locally and publish another. It has no effect on an application published
+    /// from a prebuilt JAR, because nothing is built in the image for it to select from.
     /// </para>
     /// </remarks>
     [AspireExport]
