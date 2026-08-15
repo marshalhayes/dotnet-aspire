@@ -1284,6 +1284,37 @@ suite('AspireCodeLensProvider resource lens anchoring', () => {
             }
         });
 
+        test('stays silent for a source file that is not the AppHost', async () => {
+            // The parserless languages have nothing narrowing the document to an AppHost, so without a
+            // file-name gate every Java, Python and Go file in the workspace would be scanned - and any
+            // that happened to contain the call would get an Aspire lens.
+            const cases: ReadonlyArray<readonly [string, string]> = [
+                [p('repo', 'src', 'Application.java'), 'class Application {\n    void configure() {\n        builder.addJavaApp("api", "../api").withMavenGoal("spring-boot:run");\n    }\n}'],
+                [p('repo', 'src', 'helpers.py'), 'builder.add_java_app("api", "../api").with_gradle_task("bootRun")'],
+                [p('repo', 'src', 'main.go'), 'func run() {\n\tbuilder.AddJavaApp("api", "../api").WithMavenGoal("spring-boot:run")\n}'],
+            ];
+
+            for (const [filePath, content] of cases) {
+                const harness = createHarness({ installedExtensions: [springBootDashboard] });
+                const lenses = springBootLenses(await harness.provider.provideCodeLenses(createMockDocument(content, filePath), cancellationToken) as vscode.CodeLens[]);
+                assert.strictEqual(lenses.length, 0, `expected no warning for ${filePath}`);
+                harness.dispose();
+            }
+        });
+
+        test('warns in a nested AppHost that keeps the conventional file name', async () => {
+            // A Maven or Gradle Java AppHost sits at the build tool's source root rather than the
+            // project root, so the gate has to look at the file name and not at the directory.
+            const appHostPath = p('repo', 'AppHost', 'src', 'main', 'java', 'AppHost.java');
+            const content = 'public class AppHost {\n    public static void main(String[] args) {\n        builder.addJavaApp("api", "../api").withMavenGoal("spring-boot:run");\n    }\n}';
+            const harness = createHarness({ installedExtensions: [springBootDashboard] });
+
+            const lenses = springBootLenses(await harness.provider.provideCodeLenses(createMockDocument(content, appHostPath), cancellationToken) as vscode.CodeLens[]);
+
+            assert.strictEqual(lenses.length, 1);
+            harness.dispose();
+        });
+
         test('stays silent for a commented-out launch in a language that has no parser', async () => {
             const cases: ReadonlyArray<readonly [string, string]> = [
                 [p('repo', 'AppHost', 'AppHost.java'), 'public class AppHost {\n    // builder.addJavaApp("api", "../api").withMavenGoal("spring-boot:run");\n    /* builder.addJavaApp("b", "../b").withGradleTask("bootRun"); */\n}'],

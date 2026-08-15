@@ -63,6 +63,34 @@ const springBootDashboardExtensionId = 'vscjava.vscode-spring-boot-dashboard';
  */
 const springBootLaunchPattern = /\bwith_?(?:maven_?goal|gradle_?task)\s*\(\s*[@$]*(['"])(?:spring-boot:run|bootRun)\1/gi;
 
+/**
+ * The conventional AppHost file name for each language that has no resource parser, matched
+ * case-insensitively to mirror the CLI's own detection.
+ *
+ * The parser-backed languages are already narrowed by their parser, which only accepts a document it
+ * can parse as an AppHost. The parserless languages have nothing playing that role, so without this the
+ * provider would scan every Java, Python and Go file in the workspace. Gating on the file name rather
+ * than on a discovered AppHost is deliberate: the warning is most useful before the AppHost has ever
+ * been run through Aspire, which is exactly when discovery has nothing to match against.
+ */
+const parserlessAppHostFileNames: ReadonlyMap<string, string> = new Map([
+    ['java', 'apphost.java'],
+    ['python', 'apphost.py'],
+    ['go', 'apphost.go'],
+]);
+
+function isParserlessAppHostDocument(document: vscode.TextDocument): boolean {
+    const expected = parserlessAppHostFileNames.get(document.languageId);
+    if (expected === undefined) {
+        return false;
+    }
+
+    // uri.path is always '/'-separated, including on Windows, so this does not need the platform separator.
+    const fileName = document.uri.path.split('/').pop() ?? '';
+
+    return fileName.toLowerCase() === expected;
+}
+
 export class AspireCodeLensProvider implements vscode.CodeLensProvider {
     private readonly _onDidChangeCodeLenses = new vscode.EventEmitter<void>();
     readonly onDidChangeCodeLenses = this._onDidChangeCodeLenses.event;
@@ -99,6 +127,10 @@ export class AspireCodeLensProvider implements vscode.CodeLensProvider {
             // lenses apply. The Spring Boot warning still does: it is about the Java resource being
             // declared, not about the language declaring it, and a Java AppHost is the likeliest place
             // for `withMavenGoal("spring-boot:run")` to appear at all.
+            if (!isParserlessAppHostDocument(document)) {
+                return [];
+            }
+
             const warningOnlyLenses: vscode.CodeLens[] = [];
             await this._addSpringBootDashboardLenses(warningOnlyLenses, document, parser);
 
