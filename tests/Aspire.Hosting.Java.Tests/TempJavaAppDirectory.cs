@@ -10,6 +10,19 @@ internal sealed class TempJavaAppDirectory : IDisposable
 {
     private readonly DirectoryInfo _directory = Directory.CreateTempSubdirectory("aspire-java-tests");
 
+    /// <param name="withWrappers">
+    /// Whether to seed both wrapper scripts. Aspire requires a wrapper, so a project that ships one is the
+    /// normal case; pass <see langword="false"/> to exercise the rejection.
+    /// </param>
+    public TempJavaAppDirectory(bool withWrappers = true)
+    {
+        if (withWrappers)
+        {
+            WriteWrapper(OperatingSystem.IsWindows() ? "mvnw.cmd" : "mvnw");
+            WriteWrapper(OperatingSystem.IsWindows() ? "gradlew.bat" : "gradlew");
+        }
+    }
+
     public string Path => _directory.FullName;
 
     /// <summary>

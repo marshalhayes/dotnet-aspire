@@ -1,10 +1,11 @@
+import * as path from 'path';
 import * as assert from 'assert';
 import * as sinon from 'sinon';
 import * as vscode from 'vscode';
 import { getSupportedCapabilities } from '../capabilities';
 import { AspireDebugSession } from '../debugger/AspireDebugSession';
 import { getResourceDebuggerExtensions } from '../debugger/debuggerExtensions';
-import { javaDebuggerExtension } from '../debugger/languages/java';
+import { javaDebuggerExtension, parseJavaAppHostCommand } from '../debugger/languages/java';
 import { AspireResourceExtendedDebugConfiguration, GoLaunchConfiguration, JavaLaunchConfiguration } from '../dcp/types';
 
 suite('Java Debugger Extension Tests', () => {
@@ -326,3 +327,49 @@ function stubJavaLanguageServer(serverReady: boolean): void {
         } as unknown as vscode.Extension<unknown>;
     });
 }
+
+suite('Java AppHost Command Parsing Tests', () => {
+    // The CLI launches every Java AppHost toolchain as a plain JVM invocation, so the extension can
+    // recover the main class and classpath from the command line rather than re-deriving the layout.
+    test('parses the javac toolchain command', () => {
+        const parsed = parseJavaAppHostCommand(['java', '-cp', '.java-build', 'AppHost', '--operation', 'run']);
+
+        assert.deepStrictEqual(parsed, {
+            mainClass: 'AppHost',
+            classPaths: ['.java-build'],
+            vmArgs: [],
+            appHostArgs: ['--operation', 'run']
+        });
+    });
+
+    test('splits a multi-entry classpath on the platform delimiter', () => {
+        const classPath = ['target/classes', 'target/aspire-deps/*'].join(path.delimiter);
+        const parsed = parseJavaAppHostCommand(['java', '-cp', classPath, 'AppHost']);
+
+        assert.deepStrictEqual(parsed?.classPaths, ['target/classes', 'target/aspire-deps/*']);
+        assert.deepStrictEqual(parsed?.appHostArgs, []);
+    });
+
+    test('accepts the -classpath and --class-path aliases', () => {
+        for (const option of ['-classpath', '--class-path']) {
+            const parsed = parseJavaAppHostCommand(['java', option, 'build/classes/java/main', 'AppHost']);
+            assert.deepStrictEqual(parsed?.classPaths, ['build/classes/java/main'], option);
+        }
+    });
+
+    test('keeps JVM options separate from the AppHost arguments', () => {
+        const parsed = parseJavaAppHostCommand(['java', '-Xmx512m', '-cp', 'out', 'AppHost', '-Dnot.a.vm.arg']);
+
+        assert.deepStrictEqual(parsed?.vmArgs, ['-Xmx512m']);
+        assert.deepStrictEqual(parsed?.appHostArgs, ['-Dnot.a.vm.arg']);
+    });
+
+    test('returns null when the command is not a recognizable JVM launch', () => {
+        assert.strictEqual(parseJavaAppHostCommand([]), null);
+        assert.strictEqual(parseJavaAppHostCommand(['java']), null);
+        // Only options, so there is no main class to attach the debugger to.
+        assert.strictEqual(parseJavaAppHostCommand(['java', '-Xmx512m']), null);
+        // A classpath option with no value would otherwise consume the main class.
+        assert.strictEqual(parseJavaAppHostCommand(['java', '-cp']), null);
+    });
+});

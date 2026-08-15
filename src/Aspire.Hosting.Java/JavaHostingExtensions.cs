@@ -4,6 +4,8 @@
 #pragma warning disable ASPIREDOCKERFILEBUILDER001
 
 #pragma warning disable ASPIRECERTIFICATES001
+#pragma warning disable ASPIREPIPELINES001
+#pragma warning disable ASPIREPIPELINES003
 #pragma warning disable ASPIREEXTENSION001 // WithDebugSupport and WithLaunchToolArgs are experimental but used internally for debug support.
 
 using System.Diagnostics.CodeAnalysis;
@@ -15,6 +17,7 @@ using System.Security.Cryptography.Pkcs;
 using System.Security.Cryptography.X509Certificates;
 using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Java;
+using Aspire.Hosting.Pipelines;
 using Aspire.Hosting.Utils;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -79,7 +82,7 @@ public static class JavaHostingExtensions
 
         var resource = new JavaAppResource(name, workingDirectory);
 
-        return builder.AddResource(resource)
+        var resourceBuilder = builder.AddResource(resource)
             .WithIconName(JavaIconName)
             .WithRequiredCommand("java", "https://adoptium.net/")
             // Declared as launch tool arguments rather than through WithArgs for two reasons: they are
@@ -107,6 +110,24 @@ public static class JavaHostingExtensions
                     workingDirectory,
                     ctx => JavaDockerfileGenerator.Write(resource, workingDirectory, ctx));
             });
+
+        // The generated image copies files out of each container files source, so those sources have to be
+        // built first. PublishAsDockerFile removes the Java resource from the model, but the container it
+        // substitutes shares this annotation collection, so the callback still runs; the step lookup matches
+        // on resource name and therefore finds the substituted container's build steps.
+        resourceBuilder.WithPipelineConfiguration(context =>
+        {
+            if (resource.TryGetAnnotationsOfType<ContainerFilesDestinationAnnotation>(out var containerFilesAnnotations))
+            {
+                var buildSteps = context.GetSteps(resource, WellKnownPipelineTags.BuildCompute);
+                foreach (var containerFile in containerFilesAnnotations)
+                {
+                    buildSteps.DependsOn(context.GetSteps(containerFile.Source, WellKnownPipelineTags.BuildCompute));
+                }
+            }
+        });
+
+        return resourceBuilder;
     }
 
     /// <summary>
@@ -536,15 +557,29 @@ public static class JavaHostingExtensions
 
         // Recorded so the container build can copy the agent forward. The environment variable alone
         // would leave a published image pointing at a JAR that is not in it.
+        var isFirstCall = !builder.Resource.HasAnnotationOfType<JavaOtelAgentAnnotation>();
         builder.WithAnnotation(new JavaOtelAgentAnnotation(agentPath), ResourceAnnotationMutationBehavior.Replace);
+
+        // Callbacks accumulate even though the annotation replaces, so registering one per call would
+        // put a -javaagent: entry per call into JAVA_TOOL_OPTIONS and start the JVM with several agents.
+        // Only the first call registers, and it reads the replaced annotation so it sees the last path.
+        if (!isFirstCall)
+        {
+            return builder;
+        }
 
         return builder.WithEnvironment(context =>
         {
+            if (!builder.Resource.TryGetLastAnnotation<JavaOtelAgentAnnotation>(out var agent))
+            {
+                return;
+            }
+
             string resolved;
 
             if (context.ExecutionContext.IsRunMode)
             {
-                resolved = Path.GetFullPath(Path.Combine(builder.Resource.WorkingDirectory, agentPath));
+                resolved = Path.GetFullPath(Path.Combine(builder.Resource.WorkingDirectory, agent.AgentPath));
             }
             else if (JavaDockerfileGenerator.TryGetBuildProducedAgentPath(builder.Resource, out _))
             {
@@ -552,7 +587,7 @@ public static class JavaHostingExtensions
             }
             else
             {
-                resolved = agentPath;
+                resolved = agent.AgentPath;
             }
 
             AppendJavaToolOptions(context.EnvironmentVariables, [$"-javaagent:{resolved}"]);
@@ -597,11 +632,13 @@ public static class JavaHostingExtensions
     /// <see cref="WithWrapperPath{T}(IResourceBuilder{T}, string)"/>.
     /// </summary>
     /// <remarks>
-    /// A project that ships no wrapper falls back to the bare <c>mvn</c>/<c>gradle</c> command so it is
-    /// resolved from <c>PATH</c>. Without the fallback such a project starts with an exec failure naming a
-    /// wrapper the author never added, and it would publish successfully while being unable to run —
-    /// <see cref="JavaDockerfileGenerator"/> already selects the bare command for the container build.
+    /// A wrapper is required; a globally installed <c>mvn</c> or <c>gradle</c> is deliberately not used as
+    /// a fallback. The wrapper pins the exact tool version in the repository, so the AppHost, CI, and the
+    /// published container image all build with the same one. Falling back to whatever happens to be on
+    /// <c>PATH</c> would make the build depend on each developer's machine and silently change behaviour
+    /// when that version differs, which is precisely what the wrapper exists to prevent.
     /// </remarks>
+    /// <exception cref="DistributedApplicationException">No wrapper is present and none was configured.</exception>
     private static string ResolveWrapperPath(JavaAppResource resource, JavaBuildTool tool)
     {
         if (resource.TryGetLastAnnotation<WrapperAnnotation>(out var wrapper))
@@ -620,16 +657,27 @@ public static class JavaHostingExtensions
 
         if (!File.Exists(wrapperPath))
         {
-            return tool switch
-            {
-                JavaBuildTool.Maven => "mvn",
-                JavaBuildTool.Gradle => "gradle",
-                _ => throw new ArgumentOutOfRangeException(nameof(tool), tool, null)
-            };
+            throw new DistributedApplicationException(
+                $"Java application '{resource.Name}' has no {wrapperName} in '{resource.WorkingDirectory}'. " +
+                $"Aspire runs Java applications through the project's own wrapper so that every build uses " +
+                $"the tool version the repository pins. Generate one with {GenerateWrapperCommand(tool)}, " +
+                $"or point at an existing wrapper with {nameof(WithWrapperPath)}.");
         }
 
         return PathNormalizer.NormalizePathForCurrentPlatform(wrapperPath);
     }
+
+    /// <summary>
+    /// The command that adds a wrapper to an existing project, named in the error raised when one is missing.
+    /// </summary>
+    internal static string GenerateWrapperCommand(JavaBuildTool tool) => tool switch
+    {
+        // -N keeps the goal from recursing into the modules of a multi-module build, which would litter
+        // every module with a wrapper that only the root needs.
+        JavaBuildTool.Maven => "'mvn -N wrapper:wrapper'",
+        JavaBuildTool.Gradle => "'gradle wrapper'",
+        _ => throw new ArgumentOutOfRangeException(nameof(tool), tool, null)
+    };
 
     /// <summary>
     /// Appends <paramref name="values"/> to the <c>JAVA_TOOL_OPTIONS</c> environment variable, preserving
@@ -917,4 +965,6 @@ public static class JavaHostingExtensions
     }
 }
 
+#pragma warning restore ASPIREPIPELINES003
+#pragma warning restore ASPIREPIPELINES001
 #pragma warning restore ASPIREDOCKERFILEBUILDER001

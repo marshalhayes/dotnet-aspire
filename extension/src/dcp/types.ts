@@ -147,6 +147,8 @@ export interface JavaLaunchConfiguration extends ExecutableLaunchConfiguration {
     // Classpath entries to launch the JVM with, used when the resource runs a prebuilt JAR. Absent
     // when the IDE should resolve the classpath from the project itself.
     class_paths?: string[];
+    // JVM options (e.g. "-Xmx512m"). These are the JVM's own arguments, not the application's.
+    vm_args?: string[];
     // "maven" or "gradle", or absent when the resource runs a prebuilt JAR and therefore has no
     // build files whose classpath the Java language server could refresh.
     build_tool?: string;

@@ -83,43 +83,83 @@ internal static class JavaAppHostToolchainResolver
 
     internal const string GradleInitScriptRelativePath = ".aspire/aspire-gradle-init.gradle";
 
+    /// <summary>
+    /// <see cref="GradleInitScriptRelativePath"/> with the separators this platform uses.
+    /// </summary>
+    private static string GradleInitScriptPath => GradleInitScriptRelativePath.Replace('/', Path.DirectorySeparatorChar);
+
     public static bool IsJavaLanguage(LanguageInfo? language)
     {
         return language is not null &&
             language.LanguageId.Value.Equals(KnownLanguageId.Java, StringComparison.OrdinalIgnoreCase);
     }
 
-    public static JavaAppHostToolchain Resolve(DirectoryInfo appHostDirectory, ILogger? logger = null)
+    /// <summary>
+    /// Conventional source root a build tool compiles from. When the AppHost lives here the build
+    /// file is at the project root, three directories up.
+    /// https://maven.apache.org/guides/introduction/introduction-to-the-standard-directory-layout.html
+    /// </summary>
+    private static readonly string[] s_conventionalSourceRootSegments = ["src", "main", "java"];
+
+    public static JavaAppHostToolchainResolution Resolve(DirectoryInfo appHostDirectory, ILogger? logger = null)
     {
         var resolution = ResolveWithReason(appHostDirectory);
         logger?.LogDebug(
-            "Selected Java AppHost build tool '{BuildTool}' because {Reason}.",
+            "Selected Java AppHost build tool '{BuildTool}' rooted at '{ProjectDirectory}' because {Reason}.",
             resolution.Toolchain,
+            resolution.ProjectDirectory.FullName,
             resolution.Reason);
 
-        return resolution.Toolchain;
+        return resolution;
     }
 
     internal static JavaAppHostToolchainResolution ResolveWithReason(DirectoryInfo appHostDirectory)
     {
-        // Only the AppHost directory is inspected. Unlike a Node package, a Java AppHost is not part
-        // of a parent workspace graph, and a pom.xml in an ancestor directory usually belongs to an
-        // unrelated project that happens to contain the AppHost folder.
-        if (File.Exists(Path.Combine(appHostDirectory.FullName, MavenPomFileName)))
+        // The AppHost directory is checked first, then the project root implied by the conventional
+        // source layout. An unbounded walk up the tree is deliberately avoided: a pom.xml in some
+        // arbitrary ancestor usually belongs to an unrelated project that happens to contain the
+        // AppHost folder, whereas src/main/java is only ever a build tool's source root.
+        foreach (var candidate in GetCandidateProjectDirectories(appHostDirectory))
         {
-            return new(JavaAppHostToolchain.Maven, $"{MavenPomFileName} found in {appHostDirectory.FullName}");
-        }
-
-        foreach (var gradleBuildFileName in new[] { GradleBuildFileName, GradleKotlinBuildFileName })
-        {
-            if (File.Exists(Path.Combine(appHostDirectory.FullName, gradleBuildFileName)))
+            if (File.Exists(Path.Combine(candidate.FullName, MavenPomFileName)))
             {
-                return new(JavaAppHostToolchain.Gradle, $"{gradleBuildFileName} found in {appHostDirectory.FullName}");
+                return new(JavaAppHostToolchain.Maven, candidate, $"{MavenPomFileName} found in {candidate.FullName}");
+            }
+
+            foreach (var gradleBuildFileName in new[] { GradleBuildFileName, GradleKotlinBuildFileName })
+            {
+                if (File.Exists(Path.Combine(candidate.FullName, gradleBuildFileName)))
+                {
+                    return new(JavaAppHostToolchain.Gradle, candidate, $"{gradleBuildFileName} found in {candidate.FullName}");
+                }
             }
         }
 
-        return new(JavaAppHostToolchain.Javac, $"no build file found in {appHostDirectory.FullName}");
+        return new(JavaAppHostToolchain.Javac, appHostDirectory, $"no build file found in {appHostDirectory.FullName}");
     }
+
+    private static IEnumerable<DirectoryInfo> GetCandidateProjectDirectories(DirectoryInfo appHostDirectory)
+    {
+        yield return appHostDirectory;
+
+        // Walk back out of src/main/java only when the directory names actually match, so an AppHost
+        // that merely sits three levels deep is not mistaken for a conventional project layout.
+        var candidate = appHostDirectory;
+        foreach (var segment in s_conventionalSourceRootSegments.Reverse())
+        {
+            if (!string.Equals(candidate.Name, segment, PathComparison) || candidate.Parent is null)
+            {
+                yield break;
+            }
+
+            candidate = candidate.Parent;
+        }
+
+        yield return candidate;
+    }
+
+    private static StringComparison PathComparison =>
+        OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
 
     public static string[] GetRequiredCommands(JavaAppHostToolchain toolchain)
     {
@@ -144,39 +184,80 @@ internal static class JavaAppHostToolchainResolver
     }
 
     /// <summary>
-    /// Returns the command the build tool should be invoked with, preferring a wrapper checked into
-    /// the project so the AppHost builds with the version the project pins.
+    /// Returns how the build tool should be invoked. The wrapper checked into the project is required,
+    /// so the AppHost always builds with the tool version the project pins.
     /// </summary>
-    internal static string GetToolCommand(DirectoryInfo appHostDirectory, JavaAppHostToolchain toolchain)
+    /// <param name="projectDirectory">Directory holding the build file and the wrapper.</param>
+    /// <param name="appHostDirectory">Directory the command runs in, which the wrapper path is relative to.</param>
+    /// <param name="toolchain">The resolved build tool.</param>
+    internal static JavaToolInvocation GetToolInvocation(
+        DirectoryInfo projectDirectory,
+        DirectoryInfo appHostDirectory,
+        JavaAppHostToolchain toolchain)
     {
-        var (wrapperName, fallbackCommand) = toolchain switch
+        var (wrapperName, generateCommand) = toolchain switch
         {
-            JavaAppHostToolchain.Maven => (OperatingSystem.IsWindows() ? "mvnw.cmd" : "mvnw", "mvn"),
-            JavaAppHostToolchain.Gradle => (OperatingSystem.IsWindows() ? "gradlew.bat" : "gradlew", "gradle"),
+            // -N keeps the goal from recursing into the modules of a multi-module build.
+            JavaAppHostToolchain.Maven => (OperatingSystem.IsWindows() ? "mvnw.cmd" : "mvnw", "mvn -N wrapper:wrapper"),
+            JavaAppHostToolchain.Gradle => (OperatingSystem.IsWindows() ? "gradlew.bat" : "gradlew", "gradle wrapper"),
             _ => throw new ArgumentOutOfRangeException(nameof(toolchain), toolchain, null)
         };
 
-        var wrapperPath = Path.Combine(appHostDirectory.FullName, wrapperName);
+        var wrapperPath = Path.Combine(projectDirectory.FullName, wrapperName);
 
-        // A wrapper is referenced by absolute path because the process is started without a shell, so
-        // a bare "mvnw" would be looked up on PATH and never found in the project directory.
-        return File.Exists(wrapperPath) ? wrapperPath : fallbackCommand;
+        // A globally installed Maven or Gradle is deliberately not used as a fallback: the wrapper pins the
+        // tool version in the repository, so every machine builds the AppHost with the same one. Falling
+        // back silently would make the AppHost build depend on whatever the developer happens to have.
+        if (!File.Exists(wrapperPath))
+        {
+            throw new InvalidOperationException(
+                $"The Java AppHost project in '{projectDirectory.FullName}' declares a {GetDisplayName(toolchain)} " +
+                $"build but ships no {wrapperName}. Generate one with '{generateCommand}', or remove the " +
+                "build file to build the AppHost with javac instead.");
+        }
+
+        if (!OperatingSystem.IsWindows())
+        {
+            // Referenced by absolute path because the process is started without a shell, so a bare "mvnw"
+            // would be looked up on PATH and never found in the project directory.
+            return new JavaToolInvocation(wrapperPath, []);
+        }
+
+        // On Windows the wrappers are batch files. Launching one directly with redirected stdout can
+        // silently produce no output (see NpmRunner, which hits the same problem with npm.cmd), so the
+        // command interpreter runs it instead.
+        //
+        // cmd.exe strips quotes in ways that do not match how ProcessStartInfo.ArgumentList escapes
+        // arguments: if the *first* token is quoted, cmd removes that quote and the last one on the
+        // line, mangling everything in between. Passing the wrapper as a path relative to the working
+        // directory keeps that token free of spaces, so ArgumentList never quotes it and the hazard
+        // cannot arise. See the quote-processing rules printed by `cmd /?`.
+        var relativeWrapperPath = Path.GetRelativePath(appHostDirectory.FullName, wrapperPath);
+
+        return new JavaToolInvocation(
+            Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe",
+            ["/c", relativeWrapperPath]);
     }
 
     /// <summary>
     /// Rewrites the runtime spec for the resolved build tool. The <see cref="JavaAppHostToolchain.Javac"/>
     /// spec is returned unchanged so an AppHost without build files behaves exactly as before.
     /// </summary>
-    public static RuntimeSpec ApplyToRuntimeSpec(RuntimeSpec baseRuntimeSpec, JavaAppHostToolchain toolchain, DirectoryInfo appHostDirectory)
+    public static RuntimeSpec ApplyToRuntimeSpec(RuntimeSpec baseRuntimeSpec, JavaAppHostToolchainResolution resolution, DirectoryInfo appHostDirectory)
     {
+        var toolchain = resolution.Toolchain;
         if (toolchain == JavaAppHostToolchain.Javac)
         {
             return baseRuntimeSpec;
         }
 
-        var toolCommand = GetToolCommand(appHostDirectory, toolchain);
-        var classesDirectory = GetClassesDirectory(toolchain);
-        var dependencyDirectory = GetDependencyDirectory(toolchain);
+        var invocation = GetToolInvocation(resolution.ProjectDirectory, appHostDirectory, toolchain);
+
+        // Commands run with the AppHost directory as their working directory, which is not the project
+        // directory in the src/main/java layout, so every path below is rewritten relative to it.
+        var projectPath = GetRelativeProjectPath(resolution.ProjectDirectory, appHostDirectory);
+        var classesDirectory = CombineProjectPath(projectPath, GetClassesDirectory(toolchain));
+        var dependencyDirectory = CombineProjectPath(projectPath, GetDependencyDirectory(toolchain));
 
         return new RuntimeSpec
         {
@@ -185,8 +266,8 @@ internal static class JavaAppHostToolchainResolver
             CodeGenLanguage = baseRuntimeSpec.CodeGenLanguage,
             DetectionPatterns = baseRuntimeSpec.DetectionPatterns,
             Initialize = baseRuntimeSpec.Initialize,
-            InstallDependencies = CreateInstallCommand(toolchain, toolCommand),
-            PreExecute = [CreateCompileCommand(toolchain, toolCommand)],
+            InstallDependencies = CreateInstallCommand(toolchain, invocation, projectPath),
+            PreExecute = [CreateCompileCommand(toolchain, invocation, projectPath)],
             Execute = CreateExecuteCommand(classesDirectory, dependencyDirectory),
             WatchExecute = baseRuntimeSpec.WatchExecute,
             PublishExecute = baseRuntimeSpec.PublishExecute,
@@ -205,24 +286,60 @@ internal static class JavaAppHostToolchainResolver
     /// script lives under <c>.aspire</c>.
     /// </remarks>
     public static async Task EnsureToolchainFilesExistAsync(
-        DirectoryInfo appHostDirectory,
-        JavaAppHostToolchain toolchain,
+        JavaAppHostToolchainResolution resolution,
         CancellationToken cancellationToken)
     {
-        if (toolchain != JavaAppHostToolchain.Gradle)
+        if (resolution.Toolchain != JavaAppHostToolchain.Gradle)
         {
             return;
         }
 
-        var scriptPath = Path.Combine(
-            appHostDirectory.FullName,
-            GradleInitScriptRelativePath.Replace('/', Path.DirectorySeparatorChar));
+        // Written into the project directory rather than the AppHost directory so it sits alongside
+        // the build file it augments, which is where the --init-script argument points.
+        var scriptPath = Path.Combine(resolution.ProjectDirectory.FullName, GradleInitScriptPath);
 
         Directory.CreateDirectory(Path.GetDirectoryName(scriptPath)!);
 
         // Rewritten every run rather than only when missing, so a script left behind by an older
         // Aspire version cannot silently keep staging dependencies the wrong way.
         await File.WriteAllTextAsync(scriptPath, GradleInitScript, cancellationToken);
+    }
+
+    /// <summary>
+    /// Path from the AppHost directory to the project directory, or <see langword="null"/> when they are
+    /// the same. Null rather than "." so the common flat layout keeps clean, unprefixed relative paths.
+    /// </summary>
+    private static string? GetRelativeProjectPath(DirectoryInfo projectDirectory, DirectoryInfo appHostDirectory)
+    {
+        var relativePath = Path.GetRelativePath(appHostDirectory.FullName, projectDirectory.FullName);
+
+        return relativePath == "." ? null : relativePath;
+    }
+
+    private static string CombineProjectPath(string? projectPath, string path)
+    {
+        return projectPath is null ? path : Path.Combine(projectPath, path);
+    }
+
+    /// <summary>
+    /// Arguments that point the build tool at a project other than its working directory. Both tools
+    /// need this because the AppHost is launched from its own directory, not the project root.
+    /// </summary>
+    private static string[] GetProjectSelectionArgs(JavaAppHostToolchain toolchain, string? projectPath)
+    {
+        if (projectPath is null)
+        {
+            return [];
+        }
+
+        return toolchain switch
+        {
+            // https://maven.apache.org/ref/current/maven-embedder/cli.html
+            JavaAppHostToolchain.Maven => ["-f", Path.Combine(projectPath, MavenPomFileName)],
+            // https://docs.gradle.org/current/userguide/command_line_interface.html
+            JavaAppHostToolchain.Gradle => ["-p", projectPath],
+            _ => throw new ArgumentOutOfRangeException(nameof(toolchain), toolchain, null)
+        };
     }
 
     private static string GetClassesDirectory(JavaAppHostToolchain toolchain)
@@ -248,49 +365,49 @@ internal static class JavaAppHostToolchainResolver
         };
     }
 
-    private static CommandSpec CreateInstallCommand(JavaAppHostToolchain toolchain, string toolCommand)
+    private static CommandSpec CreateInstallCommand(
+        JavaAppHostToolchain toolchain,
+        JavaToolInvocation invocation,
+        string? projectPath)
     {
-        return toolchain switch
+        var toolArgs = toolchain switch
         {
-            JavaAppHostToolchain.Maven => new CommandSpec
-            {
-                Command = toolCommand,
-                // Batch mode keeps the transfer progress spinner out of the CLI's captured output.
-                // Only runtime-scoped dependencies are staged: test and provided dependencies are not
-                // on the application's runtime classpath and staging them can shadow real versions.
-                Args =
-                [
-                    "-B", "-q",
-                    "dependency:copy-dependencies",
-                    $"-DoutputDirectory={GetDependencyDirectory(toolchain)}",
-                    "-DincludeScope=runtime"
-                ]
-            },
-            JavaAppHostToolchain.Gradle => new CommandSpec
-            {
-                Command = toolCommand,
-                Args = ["-q", "--init-script", GradleInitScriptRelativePath, "aspireCopyDependencies"]
-            },
+            // Batch mode keeps the transfer progress spinner out of the CLI's captured output.
+            // Only runtime-scoped dependencies are staged: test and provided dependencies are not
+            // on the application's runtime classpath and staging them can shadow real versions.
+            JavaAppHostToolchain.Maven => (string[])
+            [
+                "-B", "-q",
+                .. GetProjectSelectionArgs(toolchain, projectPath),
+                "dependency:copy-dependencies",
+                // Maven resolves a relative outputDirectory against the project's base directory, so
+                // the path is expressed relative to the project rather than the working directory.
+                $"-DoutputDirectory={GetDependencyDirectory(toolchain)}",
+                "-DincludeScope=runtime"
+            ],
+            JavaAppHostToolchain.Gradle =>
+            [
+                "-q",
+                .. GetProjectSelectionArgs(toolchain, projectPath),
+                "--init-script", CombineProjectPath(projectPath, GradleInitScriptPath),
+                "aspireCopyDependencies"
+            ],
             _ => throw new ArgumentOutOfRangeException(nameof(toolchain), toolchain, null)
         };
+
+        return invocation.CreateCommand(toolArgs);
     }
 
-    private static CommandSpec CreateCompileCommand(JavaAppHostToolchain toolchain, string toolCommand)
+    private static CommandSpec CreateCompileCommand(JavaAppHostToolchain toolchain, JavaToolInvocation invocation, string? projectPath)
     {
-        return toolchain switch
+        var toolArgs = toolchain switch
         {
-            JavaAppHostToolchain.Maven => new CommandSpec
-            {
-                Command = toolCommand,
-                Args = ["-B", "-q", "compile"]
-            },
-            JavaAppHostToolchain.Gradle => new CommandSpec
-            {
-                Command = toolCommand,
-                Args = ["-q", "classes"]
-            },
+            JavaAppHostToolchain.Maven => (string[])["-B", "-q", .. GetProjectSelectionArgs(toolchain, projectPath), "compile"],
+            JavaAppHostToolchain.Gradle => ["-q", .. GetProjectSelectionArgs(toolchain, projectPath), "classes"],
             _ => throw new ArgumentOutOfRangeException(nameof(toolchain), toolchain, null)
         };
+
+        return invocation.CreateCommand(toolArgs);
     }
 
     private static CommandSpec CreateExecuteCommand(string classesDirectory, string dependencyDirectory)
@@ -311,4 +428,32 @@ internal static class JavaAppHostToolchainResolver
     }
 }
 
-internal readonly record struct JavaAppHostToolchainResolution(JavaAppHostToolchain Toolchain, string Reason);
+/// <summary>
+/// How a build tool wrapper is launched: the executable, plus any arguments that must precede the
+/// tool's own. Windows needs a command interpreter in front of the batch wrapper, other platforms
+/// invoke it directly.
+/// </summary>
+internal readonly record struct JavaToolInvocation(string Command, string[] PrefixArgs)
+{
+    public CommandSpec CreateCommand(string[] args)
+    {
+        return new CommandSpec
+        {
+            Command = Command,
+            Args = [.. PrefixArgs, .. args]
+        };
+    }
+}
+
+/// <summary>
+/// The build tool selected for a Java AppHost, the directory its build file lives in, and why it was chosen.
+/// </summary>
+/// <remarks>
+/// <see cref="ProjectDirectory"/> is not always the AppHost's own directory: with the conventional
+/// <c>src/main/java/AppHost.java</c> layout the build file is at the project root. Commands are still
+/// launched from the AppHost directory, so paths are made relative to it rather than to the project.
+/// </remarks>
+internal readonly record struct JavaAppHostToolchainResolution(
+    JavaAppHostToolchain Toolchain,
+    DirectoryInfo ProjectDirectory,
+    string Reason);

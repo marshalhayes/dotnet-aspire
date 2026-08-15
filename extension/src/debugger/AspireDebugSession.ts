@@ -2,17 +2,18 @@ import * as vscode from "vscode";
 import { EventEmitter } from "vscode";
 import { promises as fs } from "fs";
 import { createDebugAdapterTracker, AppHostOutputHandler, AppHostRestartHandler } from "./adapterTracker";
-import { AspireResourceExtendedDebugConfiguration, AspireResourceDebugSession, EnvVar, AspireExtendedDebugConfiguration, NodeLaunchConfiguration, ProcessRestartedNotification, ProjectLaunchConfiguration, RustLaunchConfiguration, SessionTerminatedNotification, StartAppHostOptions, AspireOperationKind } from "../dcp/types";
+import { AspireResourceExtendedDebugConfiguration, AspireResourceDebugSession, EnvVar, AspireExtendedDebugConfiguration, NodeLaunchConfiguration, ProcessRestartedNotification, ProjectLaunchConfiguration, JavaLaunchConfiguration, RustLaunchConfiguration, SessionTerminatedNotification, StartAppHostOptions, AspireOperationKind } from "../dcp/types";
 import { extensionLogOutputChannel } from "../utils/logging";
 import AspireDcpServer, { generateDcpIdPrefix } from "../dcp/AspireDcpServer";
 import { spawnCliProcess, terminateCliProcess } from "../utils/process/cliProcess";
-import { disconnectingFromSession, launchingWithAppHost, launchingWithDirectory, processExceptionOccurred, processExitedWithCode, appHostSessionTerminated, debugSessionsFailedToStop, debugSessionStartTimedOut, debugSessionStopTimedOut, rustDebuggerExtensionNotInstalled } from "../loc/strings";
+import { disconnectingFromSession, launchingWithAppHost, launchingWithDirectory, processExceptionOccurred, processExitedWithCode, appHostSessionTerminated, debugSessionsFailedToStop, debugSessionStartTimedOut, debugSessionStopTimedOut, rustDebuggerExtensionNotInstalled, javaDebuggerExtensionNotInstalled, javaAppHostCommandNotRecognized } from "../loc/strings";
 import { isExtensionInstalled } from "../capabilities";
 import { projectDebuggerExtension } from "./languages/dotnet";
 import { AnsiColors } from "../utils/AspireTerminalProvider";
 import { applyTextStyle } from "../utils/strings";
 import { nodeDebuggerExtension } from "./languages/node";
 import { createDefaultRustDebuggerExtension } from "./languages/rust";
+import { javaDebuggerExtension, parseJavaAppHostCommand } from "./languages/java";
 import { cleanupRun } from "./runCleanupRegistry";
 import { runWithRunStartWrappers } from "./runStartRegistry";
 import AspireRpcServer from "../server/AspireRpcServer";
@@ -1123,6 +1124,7 @@ export class AspireDebugSession implements vscode.DebugAdapter, DashboardLaunche
   private static readonly _nodeAppHostExtensions = ['.js', '.ts', '.mjs', '.mts', '.cjs', '.cts'];
   private static readonly _csharpAppHostExtensions = ['.cs', '.csproj'];
   private static readonly _rustAppHostExtensions = ['.rs'];
+  private static readonly _javaAppHostExtensions = ['.java'];
 
   private _appHostRestartRequested = false;
   private _preserveAppHostRestartSourceSessionId = false;
@@ -1133,12 +1135,24 @@ export class AspireDebugSession implements vscode.DebugAdapter, DashboardLaunche
       const isNodeAppHost = AspireDebugSession._nodeAppHostExtensions.includes(fileExtension);
       const isCSharpAppHost = AspireDebugSession._csharpAppHostExtensions.includes(fileExtension);
       const isRustAppHost = AspireDebugSession._rustAppHostExtensions.includes(fileExtension);
+      const isJavaAppHost = AspireDebugSession._javaAppHostExtensions.includes(fileExtension);
+
+      // The CLI only routes an AppHost here when the language declares ExtensionLaunchCapability, so
+      // this is parsed before choosing a debugger: an unrecognised command means we cannot build a
+      // launch configuration for it, and guessing would start a JVM with the wrong arguments.
+      const javaCommand = isJavaAppHost ? parseJavaAppHostCommand(args) : null;
+
+      if (isJavaAppHost && !javaCommand) {
+        throw new Error(javaAppHostCommandNotRecognized(args.join(' ')));
+      }
 
       const debuggerExtension = isNodeAppHost
         ? nodeDebuggerExtension
         : isRustAppHost
           ? createDefaultRustDebuggerExtension()
-          : projectDebuggerExtension;
+          : isJavaAppHost
+            ? javaDebuggerExtension
+            : projectDebuggerExtension;
 
       // Resource launches are gated by getResourceDebuggerExtensions, which omits Rust when no native
       // debugger extension is installed. This path builds the descriptor directly, so without the same
@@ -1147,6 +1161,12 @@ export class AspireDebugSession implements vscode.DebugAdapter, DashboardLaunche
       // the adapter.
       if (isRustAppHost && debuggerExtension.extensionId && !isExtensionInstalled(debuggerExtension.extensionId)) {
         throw new Error(rustDebuggerExtensionNotInstalled(debuggerExtension.extensionId));
+      }
+
+      // Same gate for Java: getResourceDebuggerExtensions only offers the Java adapter when the
+      // Debugger for Java extension is present, and this path bypasses that check.
+      if (isJavaAppHost && debuggerExtension.extensionId && !isExtensionInstalled(debuggerExtension.extensionId)) {
+        throw new Error(javaDebuggerExtensionNotInstalled(debuggerExtension.extensionId));
       }
 
       // Register the adapter tracker with an app host restart handler.
@@ -1202,6 +1222,21 @@ export class AspireDebugSession implements vscode.DebugAdapter, DashboardLaunche
           type: 'rust',
           working_directory: path.dirname(projectFile),
         } as RustLaunchConfiguration;
+      }
+      else if (isJavaAppHost) {
+        // javaCommand is parsed above so the debugger choice can depend on it. The AppHost is
+        // compiled by the runtime spec's pre-execute step before this runs, so the classes the
+        // adapter needs already exist on disk whichever toolchain produced them.
+        appHostArgs = javaCommand!.appHostArgs;
+        launchConfig = {
+          type: 'java',
+          main_class: javaCommand!.mainClass,
+          class_paths: javaCommand!.classPaths,
+          working_directory: path.dirname(projectFile),
+          // build_tool is deliberately absent: it only drives a language server project reimport,
+          // and the classpath is sent explicitly here, so the launch never depends on one.
+          ...(javaCommand!.vmArgs.length > 0 ? { vm_args: javaCommand!.vmArgs } : {})
+        } as JavaLaunchConfiguration;
       }
       else {
         // The CLI sends the full dotnet CLI args (e.g., ["run", "--no-build", "--project", "...", "--", ...appHostArgs]).

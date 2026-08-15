@@ -8,6 +8,14 @@ namespace Aspire.Cli.Tests.Projects;
 
 public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
 {
+    private static string WriteWrapper(string directory, string wrapperName)
+    {
+        var path = Path.Combine(directory, wrapperName);
+        File.WriteAllText(path, "");
+
+        return path;
+    }
+
     private static RuntimeSpec CreateJavacRuntimeSpec()
     {
         return new RuntimeSpec
@@ -20,8 +28,8 @@ public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
             ExtensionLaunchCapability = "java",
             Execute = new CommandSpec
             {
-                Command = "sh",
-                Args = ["-c", "mkdir -p .java-build && javac --release 25 -d .java-build @.aspire/modules/sources.txt \"{appHostFile}\" && java -cp .java-build AppHost {args}"]
+                Command = "java",
+                Args = ["-cp", ".java-build", "AppHost"]
             }
         };
     }
@@ -31,7 +39,7 @@ public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
     {
         using var workspace = TemporaryWorkspace.Create(outputHelper);
 
-        Assert.Equal(JavaAppHostToolchain.Javac, JavaAppHostToolchainResolver.Resolve(workspace.WorkspaceRoot));
+        Assert.Equal(JavaAppHostToolchain.Javac, JavaAppHostToolchainResolver.Resolve(workspace.WorkspaceRoot).Toolchain);
     }
 
     [Fact]
@@ -40,7 +48,7 @@ public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
         using var workspace = TemporaryWorkspace.Create(outputHelper);
         File.WriteAllText(Path.Combine(workspace.Path, "pom.xml"), "<project />");
 
-        Assert.Equal(JavaAppHostToolchain.Maven, JavaAppHostToolchainResolver.Resolve(workspace.WorkspaceRoot));
+        Assert.Equal(JavaAppHostToolchain.Maven, JavaAppHostToolchainResolver.Resolve(workspace.WorkspaceRoot).Toolchain);
     }
 
     [Theory]
@@ -51,7 +59,7 @@ public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
         using var workspace = TemporaryWorkspace.Create(outputHelper);
         File.WriteAllText(Path.Combine(workspace.Path, buildFileName), "");
 
-        Assert.Equal(JavaAppHostToolchain.Gradle, JavaAppHostToolchainResolver.Resolve(workspace.WorkspaceRoot));
+        Assert.Equal(JavaAppHostToolchain.Gradle, JavaAppHostToolchainResolver.Resolve(workspace.WorkspaceRoot).Toolchain);
     }
 
     [Fact]
@@ -61,7 +69,7 @@ public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
         File.WriteAllText(Path.Combine(workspace.Path, "pom.xml"), "<project />");
         File.WriteAllText(Path.Combine(workspace.Path, "build.gradle"), "");
 
-        Assert.Equal(JavaAppHostToolchain.Maven, JavaAppHostToolchainResolver.Resolve(workspace.WorkspaceRoot));
+        Assert.Equal(JavaAppHostToolchain.Maven, JavaAppHostToolchainResolver.Resolve(workspace.WorkspaceRoot).Toolchain);
     }
 
     [Fact]
@@ -74,7 +82,7 @@ public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
 
         // A pom.xml above the AppHost usually belongs to an unrelated project that merely contains the
         // AppHost folder, so inheriting it would build the wrong thing.
-        Assert.Equal(JavaAppHostToolchain.Javac, JavaAppHostToolchainResolver.Resolve(appHostDirectory));
+        Assert.Equal(JavaAppHostToolchain.Javac, JavaAppHostToolchainResolver.Resolve(appHostDirectory).Toolchain);
     }
 
     [Fact]
@@ -84,7 +92,7 @@ public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
         var baseSpec = CreateJavacRuntimeSpec();
 
         // Existing single-file AppHosts must keep working byte for byte; adopting a build tool is opt-in.
-        Assert.Same(baseSpec, JavaAppHostToolchainResolver.ApplyToRuntimeSpec(baseSpec, JavaAppHostToolchain.Javac, workspace.WorkspaceRoot));
+        Assert.Same(baseSpec, JavaAppHostToolchainResolver.ApplyToRuntimeSpec(baseSpec, JavaAppHostToolchainResolver.Resolve(workspace.WorkspaceRoot), workspace.WorkspaceRoot));
     }
 
     [Fact]
@@ -92,17 +100,20 @@ public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
     {
         using var workspace = TemporaryWorkspace.Create(outputHelper);
 
-        var spec = JavaAppHostToolchainResolver.ApplyToRuntimeSpec(CreateJavacRuntimeSpec(), JavaAppHostToolchain.Maven, workspace.WorkspaceRoot);
+        File.WriteAllText(Path.Combine(workspace.Path, "pom.xml"), "<project />");
+        WriteWrapper(workspace.Path, OperatingSystem.IsWindows() ? "mvnw.cmd" : "mvnw");
+
+        var spec = JavaAppHostToolchainResolver.ApplyToRuntimeSpec(CreateJavacRuntimeSpec(), JavaAppHostToolchainResolver.Resolve(workspace.WorkspaceRoot), workspace.WorkspaceRoot);
 
         Assert.Equal("Java (Maven)", spec.DisplayName);
 
-        Assert.Equal("mvn", spec.InstallDependencies!.Command);
+        Assert.Equal(Path.Combine(workspace.Path, OperatingSystem.IsWindows() ? "mvnw.cmd" : "mvnw"), spec.InstallDependencies!.Command);
         Assert.Equal(
             ["-B", "-q", "dependency:copy-dependencies", $"-DoutputDirectory={Path.Combine("target", "aspire-deps")}", "-DincludeScope=runtime"],
             spec.InstallDependencies.Args);
 
         var compile = Assert.Single(spec.PreExecute!);
-        Assert.Equal("mvn", compile.Command);
+        Assert.Equal(Path.Combine(workspace.Path, OperatingSystem.IsWindows() ? "mvnw.cmd" : "mvnw"), compile.Command);
         Assert.Equal(["-B", "-q", "compile"], compile.Args);
 
         // The AppHost is launched directly rather than through mvn exec:java so console signals reach
@@ -119,10 +130,13 @@ public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
     {
         using var workspace = TemporaryWorkspace.Create(outputHelper);
 
-        var spec = JavaAppHostToolchainResolver.ApplyToRuntimeSpec(CreateJavacRuntimeSpec(), JavaAppHostToolchain.Gradle, workspace.WorkspaceRoot);
+        File.WriteAllText(Path.Combine(workspace.Path, "build.gradle"), "");
+        var wrapper = WriteWrapper(workspace.Path, OperatingSystem.IsWindows() ? "gradlew.bat" : "gradlew");
+
+        var spec = JavaAppHostToolchainResolver.ApplyToRuntimeSpec(CreateJavacRuntimeSpec(), JavaAppHostToolchainResolver.Resolve(workspace.WorkspaceRoot), workspace.WorkspaceRoot);
 
         Assert.Equal("Java (Gradle)", spec.DisplayName);
-        Assert.Equal("gradle", spec.InstallDependencies!.Command);
+        Assert.Equal(wrapper, spec.InstallDependencies!.Command);
         Assert.Equal(
             ["-q", "--init-script", JavaAppHostToolchainResolver.GradleInitScriptRelativePath, "aspireCopyDependencies"],
             spec.InstallDependencies.Args);
@@ -141,51 +155,76 @@ public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
     {
         using var workspace = TemporaryWorkspace.Create(outputHelper);
 
-        var spec = JavaAppHostToolchainResolver.ApplyToRuntimeSpec(CreateJavacRuntimeSpec(), JavaAppHostToolchain.Maven, workspace.WorkspaceRoot);
+        File.WriteAllText(Path.Combine(workspace.Path, "pom.xml"), "<project />");
+        WriteWrapper(workspace.Path, OperatingSystem.IsWindows() ? "mvnw.cmd" : "mvnw");
+
+        var spec = JavaAppHostToolchainResolver.ApplyToRuntimeSpec(CreateJavacRuntimeSpec(), JavaAppHostToolchainResolver.Resolve(workspace.WorkspaceRoot), workspace.WorkspaceRoot);
 
         Assert.Equal("java", spec.ExtensionLaunchCapability);
     }
 
     [Theory]
-    [InlineData(true, "mvn")]
-    [InlineData(false, "gradle")]
-    public void GetToolCommand_WithoutAWrapper_FallsBackToTheToolOnPath(bool useMaven, string expected)
+    [InlineData(true, "mvnw", "mvn -N wrapper:wrapper")]
+    [InlineData(false, "gradlew", "gradle wrapper")]
+    public void GetToolInvocation_WithoutAWrapper_IsRejected(bool useMaven, string wrapperName, string generateCommand)
     {
         using var workspace = TemporaryWorkspace.Create(outputHelper);
         var toolchain = useMaven ? JavaAppHostToolchain.Maven : JavaAppHostToolchain.Gradle;
 
-        Assert.Equal(expected, JavaAppHostToolchainResolver.GetToolCommand(workspace.WorkspaceRoot, toolchain));
+        // A globally installed tool is deliberately not used: the wrapper pins the version the repository
+        // builds with, and falling back silently would make the AppHost build machine-dependent.
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => JavaAppHostToolchainResolver.GetToolInvocation(workspace.WorkspaceRoot, workspace.WorkspaceRoot, toolchain));
+
+        Assert.Contains(wrapperName, ex.Message);
+        Assert.Contains(generateCommand, ex.Message);
     }
 
     [Theory]
     [InlineData(true, "mvnw", "mvnw.cmd")]
     [InlineData(false, "gradlew", "gradlew.bat")]
-    public void GetToolCommand_WithAWrapper_UsesItByAbsolutePath(bool useMaven, string wrapperName, string windowsWrapperName)
+    public void GetToolInvocation_WithAWrapper_UsesIt(bool useMaven, string wrapperName, string windowsWrapperName)
     {
         using var workspace = TemporaryWorkspace.Create(outputHelper);
         var toolchain = useMaven ? JavaAppHostToolchain.Maven : JavaAppHostToolchain.Gradle;
 
-        // Started without a shell, so a bare "mvnw" would be looked up on PATH and never found.
         var expectedWrapper = OperatingSystem.IsWindows() ? windowsWrapperName : wrapperName;
         var wrapperPath = Path.Combine(workspace.Path, expectedWrapper);
         File.WriteAllText(wrapperPath, "");
 
-        Assert.Equal(wrapperPath, JavaAppHostToolchainResolver.GetToolCommand(workspace.WorkspaceRoot, toolchain));
+        var invocation = JavaAppHostToolchainResolver.GetToolInvocation(workspace.WorkspaceRoot, workspace.WorkspaceRoot, toolchain);
+
+        if (OperatingSystem.IsWindows())
+        {
+            // The wrappers are batch files, which produce no output when launched directly with
+            // redirected stdout, so the command interpreter runs them instead. The wrapper is passed
+            // relative to the working directory so cmd.exe never sees a quoted first token.
+            Assert.Equal(Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe", invocation.Command);
+            Assert.Equal(["/c", expectedWrapper], invocation.PrefixArgs);
+        }
+        else
+        {
+            // Started without a shell, so a bare "mvnw" would be looked up on PATH and never found.
+            Assert.Equal(wrapperPath, invocation.Command);
+            Assert.Empty(invocation.PrefixArgs);
+        }
     }
 
     [Fact]
     public async Task EnsureToolchainFilesExistAsync_ForGradle_WritesTheInitScriptAndOverwritesAStaleOne()
     {
         using var workspace = TemporaryWorkspace.Create(outputHelper);
+        File.WriteAllText(Path.Combine(workspace.Path, "build.gradle"), "");
+        WriteWrapper(workspace.Path, OperatingSystem.IsWindows() ? "gradlew.bat" : "gradlew");
         var scriptPath = Path.Combine(workspace.Path, ".aspire", "aspire-gradle-init.gradle");
 
         // The .aspire directory does not exist yet, which is why this is not a RuntimeSpec migration file.
-        await JavaAppHostToolchainResolver.EnsureToolchainFilesExistAsync(workspace.WorkspaceRoot, JavaAppHostToolchain.Gradle, CancellationToken.None);
+        await JavaAppHostToolchainResolver.EnsureToolchainFilesExistAsync(JavaAppHostToolchainResolver.Resolve(workspace.WorkspaceRoot), CancellationToken.None);
 
         Assert.Contains("aspireCopyDependencies", await File.ReadAllTextAsync(scriptPath));
 
         await File.WriteAllTextAsync(scriptPath, "// stale");
-        await JavaAppHostToolchainResolver.EnsureToolchainFilesExistAsync(workspace.WorkspaceRoot, JavaAppHostToolchain.Gradle, CancellationToken.None);
+        await JavaAppHostToolchainResolver.EnsureToolchainFilesExistAsync(JavaAppHostToolchainResolver.Resolve(workspace.WorkspaceRoot), CancellationToken.None);
 
         Assert.Contains("aspireCopyDependencies", await File.ReadAllTextAsync(scriptPath));
     }
@@ -196,10 +235,90 @@ public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
     public async Task EnsureToolchainFilesExistAsync_ForANonGradleToolchain_WritesNothing(bool useJavac)
     {
         using var workspace = TemporaryWorkspace.Create(outputHelper);
-        var toolchain = useJavac ? JavaAppHostToolchain.Javac : JavaAppHostToolchain.Maven;
+        if (!useJavac)
+        {
+            File.WriteAllText(Path.Combine(workspace.Path, "pom.xml"), "<project />");
+        }
 
-        await JavaAppHostToolchainResolver.EnsureToolchainFilesExistAsync(workspace.WorkspaceRoot, toolchain, CancellationToken.None);
+        await JavaAppHostToolchainResolver.EnsureToolchainFilesExistAsync(
+            JavaAppHostToolchainResolver.Resolve(workspace.WorkspaceRoot),
+            CancellationToken.None);
 
         Assert.Empty(workspace.WorkspaceRoot.GetDirectories());
+    }
+
+    [Theory]
+    [InlineData("pom.xml", true)]
+    [InlineData("build.gradle", false)]
+    public void Resolve_WithTheConventionalSourceLayout_FindsTheBuildFileAtTheProjectRoot(string buildFileName, bool expectMaven)
+    {
+        using var workspace = TemporaryWorkspace.Create(outputHelper);
+        var expected = expectMaven ? JavaAppHostToolchain.Maven : JavaAppHostToolchain.Gradle;
+        File.WriteAllText(Path.Combine(workspace.Path, buildFileName), "");
+        var appHostDirectory = Directory.CreateDirectory(Path.Combine(workspace.Path, "src", "main", "java"));
+
+        // src/main/java is a build tool's source root by convention, so the build file above it is
+        // this project's, not an unrelated one that happens to contain the AppHost.
+        var resolution = JavaAppHostToolchainResolver.Resolve(appHostDirectory);
+
+        Assert.Equal(expected, resolution.Toolchain);
+        Assert.Equal(workspace.Path, resolution.ProjectDirectory.FullName);
+    }
+
+    [Fact]
+    public void Resolve_WithABuildFileThreeLevelsUpThatIsNotASourceRoot_UsesJavac()
+    {
+        using var workspace = TemporaryWorkspace.Create(outputHelper);
+        File.WriteAllText(Path.Combine(workspace.Path, "pom.xml"), "<project />");
+        var appHostDirectory = Directory.CreateDirectory(Path.Combine(workspace.Path, "a", "b", "c"));
+
+        Assert.Equal(JavaAppHostToolchain.Javac, JavaAppHostToolchainResolver.Resolve(appHostDirectory).Toolchain);
+    }
+
+    [Fact]
+    public void ApplyToRuntimeSpec_WithTheConventionalSourceLayout_PointsTheToolAtTheProjectRoot()
+    {
+        using var workspace = TemporaryWorkspace.Create(outputHelper);
+        File.WriteAllText(Path.Combine(workspace.Path, "pom.xml"), "<project />");
+        WriteWrapper(workspace.Path, OperatingSystem.IsWindows() ? "mvnw.cmd" : "mvnw");
+        var appHostDirectory = Directory.CreateDirectory(Path.Combine(workspace.Path, "src", "main", "java"));
+
+        var resolution = JavaAppHostToolchainResolver.Resolve(appHostDirectory);
+        var spec = JavaAppHostToolchainResolver.ApplyToRuntimeSpec(CreateJavacRuntimeSpec(), resolution, appHostDirectory);
+
+        // Commands run from the AppHost directory, so Maven has to be pointed back at the project root
+        // and the classpath has to climb back out of src/main/java.
+        var toProjectRoot = Path.Combine("..", "..", "..");
+        Assert.Contains("-f", spec.InstallDependencies!.Args);
+        Assert.Contains(Path.Combine(toProjectRoot, "pom.xml"), spec.InstallDependencies.Args);
+        Assert.Equal(["-B", "-q", "-f", Path.Combine(toProjectRoot, "pom.xml"), "compile"], Assert.Single(spec.PreExecute!).Args);
+        Assert.Equal(
+            [
+                "-cp",
+                $"{Path.Combine(toProjectRoot, "target", "classes")}{Path.PathSeparator}{Path.Combine(toProjectRoot, "target", "aspire-deps", "*")}",
+                "AppHost"
+            ],
+            spec.Execute.Args);
+    }
+
+    [Fact]
+    public async Task EnsureToolchainFilesExistAsync_WithTheConventionalSourceLayout_WritesTheScriptNextToTheBuildFile()
+    {
+        using var workspace = TemporaryWorkspace.Create(outputHelper);
+        File.WriteAllText(Path.Combine(workspace.Path, "build.gradle"), "");
+        WriteWrapper(workspace.Path, OperatingSystem.IsWindows() ? "gradlew.bat" : "gradlew");
+        var appHostDirectory = Directory.CreateDirectory(Path.Combine(workspace.Path, "src", "main", "java"));
+
+        var resolution = JavaAppHostToolchainResolver.Resolve(appHostDirectory);
+        await JavaAppHostToolchainResolver.EnsureToolchainFilesExistAsync(resolution, CancellationToken.None);
+
+        // The --init-script argument is resolved relative to the AppHost directory, so the script has to
+        // be where that argument points: alongside the build file it augments.
+        var scriptPath = Path.Combine(workspace.Path, ".aspire", "aspire-gradle-init.gradle");
+        Assert.Contains("aspireCopyDependencies", await File.ReadAllTextAsync(scriptPath));
+
+        var spec = JavaAppHostToolchainResolver.ApplyToRuntimeSpec(CreateJavacRuntimeSpec(), resolution, appHostDirectory);
+        var initScriptArgument = spec.InstallDependencies!.Args[Array.IndexOf(spec.InstallDependencies.Args, "--init-script") + 1];
+        Assert.Equal(scriptPath, Path.GetFullPath(Path.Combine(appHostDirectory.FullName, initScriptArgument)));
     }
 }

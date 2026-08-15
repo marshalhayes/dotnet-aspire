@@ -394,6 +394,9 @@
     <trans-unit id="aspire-vscode.strings.javaLabel">
       <source xml:lang="en">Java</source>
     </trans-unit>
+    <trans-unit id="aspire-vscode.strings.javaDebuggerExtensionNotInstalled">
+      <source xml:lang="en">Java AppHosts are launched through the Java debugger extension. Install {0} from the Extensions view, then start the AppHost again.</source>
+    </trans-unit>
     <trans-unit id="aspire-vscode.strings.javaDisplayName">
       <source xml:lang="en">Java: {0}</source>
     </trans-unit>
@@ -786,6 +789,9 @@
     </trans-unit>
     <trans-unit id="views.appHosts.errorWelcome">
       <source xml:lang="en">The Aspire panel workspace view requires Aspire CLI 13.2.0 or newer and an AppHost that references Aspire.Hosting 13.2.0 or newer. Install or update the Aspire CLI and update your AppHost package to get started.&#10;[Update Aspire CLI](command:aspire-vscode.updateSelf)&#10;[Refresh](command:aspire-vscode.globalRefreshAppHosts)</source>
+    </trans-unit>
+    <trans-unit id="aspire-vscode.strings.javaAppHostCommandNotRecognized">
+      <source xml:lang="en">The Java AppHost launch command was not recognized and cannot be debugged: {0}</source>
     </trans-unit>
     <trans-unit id="aspire-vscode.strings.resourceCommandOutputOpenFailed">
       <source xml:lang="en">The command completed, but its output could not be opened: {0}</source>

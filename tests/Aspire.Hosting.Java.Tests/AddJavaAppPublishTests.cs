@@ -8,6 +8,8 @@
 
 using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Utils;
+using Aspire.Hosting.Tests.Utils;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Aspire.Hosting.Java.Tests;
 
@@ -20,7 +22,7 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
             configureSource: source => WritePom(source, javaVersion: "21"),
             configureResource: app => app.WithMavenGoal("spring-boot:run"));
 
-        Assert.StartsWith("FROM docker.io/library/maven:3-eclipse-temurin-21 AS build", content);
+        Assert.StartsWith("FROM docker.io/library/eclipse-temurin:21-jdk AS build", content);
         Assert.Contains("\nFROM docker.io/library/eclipse-temurin:21-jre\n", content);
         await Verify(content);
     }
@@ -38,7 +40,7 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
                 """),
             configureResource: app => app.WithGradleTask("bootRun"));
 
-        Assert.StartsWith("FROM docker.io/library/gradle:8-jdk17 AS build", content);
+        Assert.StartsWith("FROM docker.io/library/eclipse-temurin:17-jdk AS build", content);
         await Verify(content);
     }
 
@@ -116,7 +118,6 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
             configureSource: source =>
             {
                 WritePom(source, javaVersion: "21");
-                File.WriteAllText(Path.Combine(source, "mvnw"), "#!/bin/sh\n");
             },
             configureResource: app => app.WithMavenGoal("spring-boot:run"));
 
@@ -128,14 +129,25 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
     }
 
     [Fact]
-    public async Task VerifyPublish_FallsBackToTheImageToolWhenNoWrapperIsPresent()
+    public void PublishingAProjectWithoutAWrapperIsRejectedRatherThanUsingTheImageTool()
     {
-        var content = await PublishDockerfileAsync(
-            configureSource: source => WriteGradleBuild(source, ""),
-            configureResource: app => app.WithGradleTask("bootRun"));
+        using var workspace = TemporaryWorkspace.Create(outputHelper);
+        var sourceDir = workspace.CreateDirectory("source");
+        File.WriteAllText(Path.Combine(sourceDir.FullName, "build.gradle"), "");
 
-        Assert.Contains("gradle --no-daemon -x test build", content);
-        Assert.DoesNotContain("sh ./gradlew", content);
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish);
+
+        // No goal is configured, so nothing resolves a wrapper before the image is generated: the tool is
+        // detected from the build file on disk and this is the only check that runs.
+        var app = builder.AddJavaApp("api", sourceDir.FullName, "build/libs/api.jar");
+
+        var ex = Assert.Throws<DistributedApplicationException>(
+            () => JavaDockerfileGenerator.ResolveContainerBuildForTesting(app.Resource, sourceDir.FullName));
+
+        // A globally installed Gradle in the build image would build the project with a different version
+        // than the developer used, which is exactly what the wrapper exists to prevent.
+        Assert.Contains("there is no gradlew", ex.Message);
+        Assert.Contains("gradle wrapper", ex.Message);
     }
 
     [Fact]
@@ -147,7 +159,7 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
             configureSource: source => WritePom(source, javaVersion: "21"),
             configureResource: app => app.WithMavenGoal("spring-boot:run").WithMavenBuild("-Pprod", "package"));
 
-        Assert.Contains("mvn -Pprod package", content);
+        Assert.Contains("sh ./mvnw -Pprod package", content);
         await Verify(content);
     }
 
@@ -158,7 +170,7 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
             configureSource: source => WritePom(source, javaVersion: "21"),
             jarPath: "target/worker.jar");
 
-        Assert.Contains("mvn -B -ntp -DskipTests package", content);
+        Assert.Contains("sh ./mvnw -B -ntp -DskipTests package", content);
         await Verify(content);
     }
 
@@ -415,6 +427,140 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
         Assert.Equal(["bootJar"], args);
     }
 
+    [Fact]
+    public async Task ApplicationArgumentsSurvivePublishingWhileLaunchToolArgumentsDoNot()
+    {
+        using var workspace = TemporaryWorkspace.Create(outputHelper);
+        var sourceDir = workspace.CreateDirectory("source");
+        WritePom(sourceDir.FullName, javaVersion: "21");
+
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish);
+
+        builder.AddJavaApp("worker", sourceDir.FullName, "target/worker.jar", ["--interval-seconds", "10"])
+               .WithMavenBuild();
+
+        using var app = builder.Build();
+        var model = app.Services.GetRequiredService<DistributedApplicationModel>();
+
+        // PublishAsDockerFile swaps the executable for a container that shares this annotation collection,
+        // so the published resource carries the same name.
+        var published = Assert.Single(model.Resources.OfType<ContainerResource>(), r => r.Name == "worker");
+        var args = await ArgumentEvaluator.GetArgumentListAsync(published, app.Services);
+
+        // PublishAsDockerFile clears the arguments because they routinely contain host paths, and it does so
+        // when AddJavaApp runs. Anything added afterwards — which is every application argument, including
+        // the ones passed to the jarPath overload — is appended after that clear and therefore survives,
+        // while the launch tool arguments registered before it do not. The image's ENTRYPOINT is the JVM, so these
+        // reach main(String[]) exactly as they do when the resource runs on the host.
+        Assert.Equal(["--interval-seconds", "10"], args);
+    }
+
+    [Fact]
+    public void PublishingWithoutAWrapperIsRejected()
+    {
+        using var workspace = TemporaryWorkspace.Create(outputHelper);
+        var sourceDir = workspace.CreateDirectory("source");
+        File.WriteAllText(Path.Combine(sourceDir.FullName, "pom.xml"), "<project/>");
+
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish);
+        var app = builder.AddJavaApp("api", sourceDir.FullName, "target/api.jar");
+
+        var ex = Assert.Throws<DistributedApplicationException>(
+            () => JavaDockerfileGenerator.ResolveContainerBuildForTesting(app.Resource, sourceDir.FullName));
+
+        Assert.Contains("there is no mvnw", ex.Message);
+        Assert.Contains("mvn -N wrapper:wrapper", ex.Message);
+    }
+
+    [Fact]
+    public void PublishingWithAWrapperOutsideTheBuildContextIsRejected()
+    {
+        using var workspace = TemporaryWorkspace.Create(outputHelper);
+        var sourceDir = workspace.CreateDirectory("source");
+        var siblingDir = workspace.CreateDirectory("sibling");
+        WritePom(sourceDir.FullName, javaVersion: "21");
+        WriteWrapper(siblingDir.FullName, "mvnw");
+
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish);
+        var app = builder.AddJavaApp("api", sourceDir.FullName)
+                         .WithMavenGoal("spring-boot:run")
+                         .WithWrapperPath(Path.Combine("..", "sibling", "mvnw"));
+
+        var ex = Assert.Throws<DistributedApplicationException>(
+            () => JavaDockerfileGenerator.ResolveContainerBuildForTesting(app.Resource, sourceDir.FullName));
+
+        // Only files under the context are uploaded to the daemon, so a wrapper outside it is not in the
+        // image and the build would fail partway through with an opaque "not found".
+        Assert.Contains("is outside the build context", ex.Message);
+    }
+
+    [Fact]
+    public async Task PublishingHonoursAWrapperSelectedWithWithWrapperPath()
+    {
+        var content = await PublishDockerfileAsync(
+            configureSource: source =>
+            {
+                WritePom(source, javaVersion: "21");
+                Directory.CreateDirectory(Path.Combine(source, "scripts"));
+                WriteWrapper(Path.Combine(source, "scripts"), "custom-mvnw");
+            },
+            configureResource: app => app
+                .WithMavenGoal("spring-boot:run")
+                .WithWrapperPath(Path.Combine("scripts", "custom-mvnw")));
+
+        // Without this the container silently built with a different Maven than the host did.
+        Assert.Contains("sh ./scripts/custom-mvnw", content);
+    }
+
+    [Fact]
+    public async Task VerifyPublish_WithAPrebuiltJarAndNoBuildTool_CopiesTheJarWithoutABuildStage()
+    {
+        var content = await PublishDockerfileAsync(
+            configureSource: source =>
+            {
+                Directory.CreateDirectory(Path.Combine(source, "target"));
+                File.WriteAllText(Path.Combine(source, "target", "worker.jar"), "");
+            },
+            jarPath: Path.Combine("target", "worker.jar"));
+
+        // A runnable application must stay publishable. Requiring a build tool here made
+        // AddJavaApp(name, dir, jarPath) unpublishable even though it runs.
+        Assert.DoesNotContain("AS build", content);
+        Assert.Contains("COPY target/worker.jar /app/app.jar", content);
+        await Verify(content);
+    }
+
+    [Fact]
+    public async Task PublishingAPrebuiltJarReincludesItAndItsDirectoriesInTheBuildContext()
+    {
+        var ignore = await PublishBuildContextIgnoreAsync(
+            configureSource: source =>
+            {
+                Directory.CreateDirectory(Path.Combine(source, "target"));
+                File.WriteAllText(Path.Combine(source, "target", "worker.jar"), "");
+            },
+            jarPath: Path.Combine("target", "worker.jar"));
+
+        // "target" is excluded by default because it is routinely hundreds of megabytes, and Docker does
+        // not descend into an excluded directory, so re-including only the JAR would never match.
+        Assert.NotNull(ignore);
+        Assert.Contains("\n!target\n", ignore);
+        Assert.Contains("\n!target/worker.jar\n", ignore);
+    }
+
+    [Fact]
+    public async Task APrebuiltJarAlongsideAPomIsStillBuiltInTheImage()
+    {
+        var content = await PublishDockerfileAsync(
+            configureSource: source => WritePom(source, javaVersion: "21"),
+            jarPath: Path.Combine("target", "api.jar"));
+
+        // A JAR path next to a pom.xml names the artifact the build produces, not one that already exists,
+        // so the image has to build it rather than copy a file that is not in the context.
+        Assert.Contains("AS build", content);
+        Assert.Contains("sh ./mvnw", content);
+    }
+
     private async Task<string> PublishDockerfileAsync(
         Action<string>? configureSource = null,
         string? jarPath = null,
@@ -441,6 +587,7 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
 
     private async Task<string?> PublishBuildContextIgnoreAsync(
         Action<string>? configureSource = null,
+        string? jarPath = null,
         Func<IResourceBuilder<JavaAppResource>, IResourceBuilder<JavaAppResource>>? configureResource = null)
     {
         using var workspace = TemporaryWorkspace.Create(outputHelper);
@@ -451,7 +598,10 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
 
         using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish, outputDir.FullName, step: "publish-manifest");
 
-        var app = builder.AddJavaApp("api", sourceDir.FullName);
+        var app = jarPath is null
+            ? builder.AddJavaApp("api", sourceDir.FullName)
+            : builder.AddJavaApp("api", sourceDir.FullName, jarPath);
+
         configureResource?.Invoke(app);
 
         builder.Build().Run();
@@ -465,6 +615,8 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
 
     private static void WritePom(string sourceDirectory, string javaVersion)
     {
+        // Publishing requires a wrapper, so every project that publishes has to ship one.
+        WriteWrapper(sourceDirectory, "mvnw");
         File.WriteAllText(Path.Combine(sourceDirectory, "pom.xml"), $"""
             <?xml version="1.0" encoding="UTF-8"?>
             <project xmlns="http://maven.apache.org/POM/4.0.0">
@@ -481,6 +633,12 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
 
     private static void WriteGradleBuild(string sourceDirectory, string contents)
     {
+        WriteWrapper(sourceDirectory, "gradlew");
         File.WriteAllText(Path.Combine(sourceDirectory, "build.gradle"), contents);
+    }
+
+    private static void WriteWrapper(string sourceDirectory, string wrapperName)
+    {
+        File.WriteAllText(Path.Combine(sourceDirectory, wrapperName), "#!/bin/sh\nexit 0\n");
     }
 }

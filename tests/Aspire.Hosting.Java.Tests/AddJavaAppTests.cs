@@ -208,7 +208,8 @@ public class AddJavaAppTests
     public void WithMavenGoalShouldThrowWhenGoalIsNullOrEmpty()
     {
         using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
-        var app = builder.AddJavaApp("api", AppContext.BaseDirectory);
+        using var tempDir = new TempJavaAppDirectory();
+        var app = builder.AddJavaApp("api", tempDir.Path);
 
         var nullAction = () => app.WithMavenGoal(null!);
         var emptyAction = () => app.WithMavenGoal(string.Empty);
@@ -239,7 +240,8 @@ public class AddJavaAppTests
     {
         using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
 
-        var app = builder.AddJavaApp("api", AppContext.BaseDirectory)
+        using var tempDir = new TempJavaAppDirectory();
+        var app = builder.AddJavaApp("api", tempDir.Path)
             .WithMavenGoal("spring-boot:run", "-DskipTests");
 
         var args = await ArgumentEvaluator.GetArgumentListAsync(app.Resource);
@@ -265,7 +267,8 @@ public class AddJavaAppTests
     public void WithGradleTaskShouldThrowWhenTaskIsNullOrEmpty()
     {
         using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
-        var app = builder.AddJavaApp("api", AppContext.BaseDirectory);
+        using var tempDir = new TempJavaAppDirectory();
+        var app = builder.AddJavaApp("api", tempDir.Path);
 
         var nullAction = () => app.WithGradleTask(null!);
         var emptyAction = () => app.WithGradleTask(string.Empty);
@@ -332,7 +335,8 @@ public class AddJavaAppTests
     {
         using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
 
-        var app = builder.AddJavaApp("api", AppContext.BaseDirectory)
+        using var tempDir = new TempJavaAppDirectory();
+        var app = builder.AddJavaApp("api", tempDir.Path)
             .WithGradleTask("bootRun", "--no-daemon");
 
         var args = await ArgumentEvaluator.GetArgumentListAsync(app.Resource);
@@ -346,7 +350,8 @@ public class AddJavaAppTests
     {
         using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
 
-        var app = builder.AddJavaApp("api", AppContext.BaseDirectory, "app.jar");
+        using var tempDir = new TempJavaAppDirectory();
+        var app = builder.AddJavaApp("api", tempDir.Path, "app.jar");
 
         var action = () => app.WithGradleTask("bootRun");
 
@@ -361,7 +366,8 @@ public class AddJavaAppTests
     {
         using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
 
-        var app = builder.AddJavaApp("api", AppContext.BaseDirectory, "app.jar");
+        using var tempDir = new TempJavaAppDirectory();
+        var app = builder.AddJavaApp("api", tempDir.Path, "app.jar");
 
         var action = () => app.WithMavenGoal("spring-boot:run");
 
@@ -376,7 +382,8 @@ public class AddJavaAppTests
     {
         using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
 
-        var app = builder.AddJavaApp("api", AppContext.BaseDirectory).WithMavenGoal("spring-boot:run");
+        using var tempDir = new TempJavaAppDirectory();
+        var app = builder.AddJavaApp("api", tempDir.Path).WithMavenGoal("spring-boot:run");
 
         var action = () => app.WithGradleTask("bootRun");
 
@@ -391,7 +398,8 @@ public class AddJavaAppTests
     {
         using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
 
-        var app = builder.AddJavaApp("api", AppContext.BaseDirectory).WithGradleTask("bootRun");
+        using var tempDir = new TempJavaAppDirectory();
+        var app = builder.AddJavaApp("api", tempDir.Path).WithGradleTask("bootRun");
 
         var action = () => app.WithMavenGoal("spring-boot:run");
 
@@ -587,6 +595,23 @@ public class AddJavaAppTests
     }
 
     [Fact]
+    public async Task WithOtelAgent_CalledTwice_UsesOnlyTheLastAgent()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+
+        // The annotation replaces, so the second call has to win outright. Two -javaagent: entries
+        // would start the JVM with both agents attached, which double-instruments the application.
+        var app = builder.AddJavaApp("api", AppContext.BaseDirectory)
+            .WithOtelAgent("/opt/otel/first.jar")
+            .WithOtelAgent(AbsoluteAgentPath);
+
+        var envVars = await EnvironmentVariableEvaluator.GetEnvironmentVariablesAsync(
+            app.Resource, DistributedApplicationOperation.Run, TestServiceProvider.Instance);
+
+        Assert.Equal($"-javaagent:{AbsoluteAgentPath}", envVars["JAVA_TOOL_OPTIONS"]);
+    }
+
+    [Fact]
     public async Task WithOtelAgent_WithAgentPath_CombinedWithJvmArgs()
     {
         using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
@@ -602,42 +627,46 @@ public class AddJavaAppTests
     }
 
     [Fact]
-    public void WithMavenGoal_WithoutAWrapperOnDisk_FallsBackToMavenOnThePath()
+    public void WithMavenGoal_WithoutAWrapperOnDisk_IsRejected()
     {
         using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
-        using var tempDir = new TempJavaAppDirectory();
+        using var tempDir = new TempJavaAppDirectory(withWrappers: false);
 
-        var app = builder.AddJavaApp("api", tempDir.Path).WithMavenGoal("spring-boot:run");
+        // A globally installed Maven is deliberately not used as a fallback: the wrapper pins the tool
+        // version in the repository, so the AppHost, CI, and the published image all build with the same
+        // one. Failing here names the fix instead of silently building with whatever is on the machine.
+        var ex = Assert.Throws<DistributedApplicationException>(
+            () => builder.AddJavaApp("api", tempDir.Path).WithMavenGoal("spring-boot:run"));
 
-        // Pointing at a wrapper the project does not ship fails at process start with an exec error naming
-        // a file the author never added, and it would leave the resource unable to run while `aspire
-        // publish` still succeeded -- the generated Dockerfile already falls back to the bare command.
-        Assert.Equal("mvn", app.Resource.Command);
+        Assert.Contains("has no mvnw", ex.Message);
+        Assert.Contains("mvn -N wrapper:wrapper", ex.Message);
     }
 
     [Fact]
-    public void WithGradleTask_WithoutAWrapperOnDisk_FallsBackToGradleOnThePath()
+    public void WithGradleTask_WithoutAWrapperOnDisk_IsRejected()
     {
         using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
-        using var tempDir = new TempJavaAppDirectory();
+        using var tempDir = new TempJavaAppDirectory(withWrappers: false);
 
-        var app = builder.AddJavaApp("api", tempDir.Path).WithGradleTask("bootRun");
+        var ex = Assert.Throws<DistributedApplicationException>(
+            () => builder.AddJavaApp("api", tempDir.Path).WithGradleTask("bootRun"));
 
-        Assert.Equal("gradle", app.Resource.Command);
+        Assert.Contains("has no gradlew", ex.Message);
+        Assert.Contains("gradle wrapper", ex.Message);
     }
 
     [Fact]
     public void WithWrapperPath_IsHonouredEvenWhenNoWrapperExistsOnDisk()
     {
         using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
-        using var tempDir = new TempJavaAppDirectory();
+        using var tempDir = new TempJavaAppDirectory(withWrappers: false);
 
         var app = builder.AddJavaApp("api", tempDir.Path)
-            .WithMavenGoal("spring-boot:run")
-            .WithWrapperPath("/opt/maven/bin/mvn");
+            .WithWrapperPath("/opt/maven/bin/mvn")
+            .WithMavenGoal("spring-boot:run");
 
-        // An explicit override is a deliberate choice and must win over both the wrapper probe and the
-        // PATH fallback.
+        // An explicit override is a deliberate choice and must win over the default wrapper probe, which
+        // would otherwise reject this project for shipping no mvnw.
         Assert.Equal("/opt/maven/bin/mvn", app.Resource.Command);
     }
 
@@ -936,7 +965,8 @@ public class AddJavaAppTests
     {
         using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
 
-        var app = builder.AddJavaApp("api", AppContext.BaseDirectory)
+        using var tempDir = new TempJavaAppDirectory();
+        var app = builder.AddJavaApp("api", tempDir.Path)
             .WithMavenGoal("spring-boot:run")
             .WithJvmArgs(["-Xmx1g"]);
 
@@ -953,7 +983,8 @@ public class AddJavaAppTests
     {
         using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
 
-        var app = builder.AddJavaApp("api", AppContext.BaseDirectory)
+        using var tempDir = new TempJavaAppDirectory();
+        var app = builder.AddJavaApp("api", tempDir.Path)
             .WithGradleTask("bootRun")
             .WithOtelAgent(AbsoluteAgentPath);
 

@@ -154,7 +154,25 @@ internal sealed class JavaLanguageSupport : ILanguageSupport
     /// and then fail at run time on a conforming Java 25 runtime.
     /// </para>
     /// </remarks>
-    private const string JavacOptions = "--release 25";
+    private static readonly string[] s_javacOptions = ["--release", "25"];
+
+    /// <summary>
+    /// Argument file listing the generated SDK sources, produced by the code generator.
+    /// </summary>
+    /// <remarks>
+    /// Passed to <c>javac</c> as an <c>@</c> argument file. javac expands these itself, so this
+    /// works without a shell and stays well under the command-line length limit even though the
+    /// generated SDK is hundreds of files.
+    /// </remarks>
+    private const string GeneratedSourcesListPath = ".aspire/modules/sources.txt";
+
+    /// <summary>
+    /// Class that the scaffolded AppHost compiles to.
+    /// </summary>
+    /// <remarks>
+    /// The AppHost is declared in the default package, so this is also its fully qualified name.
+    /// </remarks>
+    private const string AppHostClassName = "AppHost";
 
     /// <inheritdoc />
     public RuntimeSpec GetRuntimeSpec()
@@ -165,24 +183,34 @@ internal sealed class JavaLanguageSupport : ILanguageSupport
             DisplayName = LanguageDisplayName,
             CodeGenLanguage = CodeGenTarget,
             DetectionPatterns = s_detectionPatterns,
-            // No separate install step - compilation happens in Execute.
-            // A Maven or Gradle AppHost gets a real restore phase from JavaAppHostToolchainResolver.
+            // Compilation is a pre-execute step rather than part of Execute so that Execute is a plain
+            // JVM launch. That is what lets the AppHost be debugged (the IDE starts the JVM itself and
+            // would otherwise start a shell), and it lets --no-build skip the compile.
+            // A Maven or Gradle AppHost replaces both commands via JavaAppHostToolchainResolver.
             InstallDependencies = null,
+            PreExecute =
+            [
+                new CommandSpec
+                {
+                    // No shell. javac creates the destination directory itself, so there is nothing
+                    // left that needed one, and running without a shell means arguments are not
+                    // re-split: a project under a path such as "C:\My Projects" works unchanged, on
+                    // Windows and Unix alike, from a single spec.
+                    Command = "javac",
+                    Args = [.. s_javacOptions, "-d", BuildOutputDirectory, $"@{GeneratedSourcesListPath}", "{appHostFile}"]
+                }
+            ],
             // Debugging the AppHost itself goes through the same Java debug adapter the resources use.
             // The CLI only takes this path when the extension reports the capability, so a CLI-only
             // run is unaffected.
             ExtensionLaunchCapability = LanguageId,
             Execute = new CommandSpec
             {
-                // Use a shell to compile and run in sequence
-                // On Windows, use cmd /c; on Unix, use sh -c
-                Command = OperatingSystem.IsWindows() ? "cmd" : "sh",
-                // {appHostFile} is substituted with an absolute path, so it is quoted: this command is
-                // handed to a shell, and a project under a directory such as "C:\My Projects" would
-                // otherwise be split into two arguments.
-                Args = OperatingSystem.IsWindows()
-                    ? ["/c", $"if not exist {BuildOutputDirectory} mkdir {BuildOutputDirectory} && javac {JavacOptions} -d {BuildOutputDirectory} @.aspire\\modules\\sources.txt \"{{appHostFile}}\" && java -cp {BuildOutputDirectory} AppHost {{args}}"]
-                    : ["-c", $"mkdir -p {BuildOutputDirectory} && javac {JavacOptions} -d {BuildOutputDirectory} @.aspire/modules/sources.txt \"{{appHostFile}}\" && java -cp {BuildOutputDirectory} AppHost {{args}}"]
+                Command = "java",
+                // {args} is deliberately absent. When no argument contains that placeholder the CLI
+                // appends its arguments as separate argv entries, whereas substituting the placeholder
+                // joins them into a single space-separated string the AppHost would have to re-split.
+                Args = ["-cp", BuildOutputDirectory, AppHostClassName]
             }
         };
     }

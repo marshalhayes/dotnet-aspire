@@ -8,9 +8,11 @@ Use this integration to model, configure, and orchestrate a Java application res
 
 A **JDK** must be available on the PATH of the machine running the AppHost. Aspire does not install one.
 
-Applications are normally launched through the **Maven or Gradle wrapper** (`mvnw`/`gradlew`) checked into
-the project, which needs nothing else installed. When a project ships no wrapper, `mvn` or `gradle` has to
-be on the PATH instead, or a wrapper elsewhere has to be selected with `WithWrapperPath(...)`.
+Applications are launched through the **Maven or Gradle wrapper** (`mvnw`/`gradlew`) checked into the
+project, which needs nothing else installed. A wrapper is required: Aspire deliberately does not fall back
+to a globally installed `mvn` or `gradle`, because the wrapper pins the tool version in the repository so
+the AppHost, CI, and the published container image all build with the same one. Add a wrapper with
+`mvn -N wrapper:wrapper` or `gradle wrapper`, or select one elsewhere with `WithWrapperPath(...)`.
 
 For VS Code debugging, install
 [Language Support for Java](https://marketplace.visualstudio.com/items?itemName=redhat.java) and
@@ -175,11 +177,11 @@ builder.AddJavaApp("catalog", "../catalog")
 
 ## Additional documentation
 
-- https://aspire.dev/integrations/gallery/
-- https://aspire.dev/integrations/frameworks/java/
-- [Aspire documentation](https://aspire.dev/)
-- [Maven Wrapper](https://maven.apache.org/wrapper/)
-- [Gradle Wrapper](https://docs.gradle.org/current/userguide/gradle_wrapper.html)
+* https://aspire.dev/integrations/gallery/
+* https://aspire.dev/integrations/frameworks/java/
+* [Aspire documentation](https://aspire.dev/)
+* [Maven Wrapper](https://maven.apache.org/wrapper/)
+* [Gradle Wrapper](https://docs.gradle.org/current/userguide/gradle_wrapper.html)
 
 ## Feedback & contributing
 

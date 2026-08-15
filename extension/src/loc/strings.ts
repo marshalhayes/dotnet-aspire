@@ -207,6 +207,8 @@ export const dotNetRunFallbackDisablesDebugger = (outputPath: string, projectPat
 export const dotNetRunFileBasedExecutableProfileFallback = (profileName: string, projectPath: string) => vscode.l10n.t('The default launch profile \'{0}\' is an Executable profile, so dotnet run-api does not return the file-based app {1}; launching it with dotnet run without debugger attach. Breakpoints will not be hit for this resource.', profileName, projectPath);
 export const executableLaunchProfileMissingExecutablePath = (profileName: string) => vscode.l10n.t('Launch profile \'{0}\' uses commandName \'Executable\' but does not specify an executablePath. Add an executablePath to the launch profile.', profileName);
 export const lookingForDevkitBuildTask = vscode.l10n.t('C# Dev Kit is installed, looking for C# Dev Kit build task...');
+export const javaDebuggerExtensionNotInstalled = (extensionId: string) => vscode.l10n.t('Java AppHosts are launched through the Java debugger extension. Install {0} from the Extensions view, then start the AppHost again.', extensionId);
+export const javaAppHostCommandNotRecognized = (command: string) => vscode.l10n.t('The Java AppHost launch command was not recognized and cannot be debugged: {0}', command);
 export const csharpDevKitNotInstalled = vscode.l10n.t('C# Dev Kit is not installed, building using dotnet CLI...');
 export const hotReloadDisabledNotice = vscode.l10n.t('C# Dev Kit Hot Reload is disabled. When enabled, it can apply .NET code edits while debugging where supported.');
 export const openSettingsLabel = vscode.l10n.t('Open Settings');

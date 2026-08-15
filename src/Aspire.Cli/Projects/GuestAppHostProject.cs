@@ -1874,9 +1874,9 @@ internal sealed class GuestAppHostProject : IAppHostProject, IGuestAppHostSdkGen
             }
             else if (JavaAppHostToolchainResolver.IsJavaLanguage(_resolvedLanguage))
             {
-                var toolchain = JavaAppHostToolchainResolver.Resolve(directory, _logger);
-                await JavaAppHostToolchainResolver.EnsureToolchainFilesExistAsync(directory, toolchain, cancellationToken);
-                runtimeSpec = JavaAppHostToolchainResolver.ApplyToRuntimeSpec(runtimeSpec, toolchain, directory);
+                var resolution = JavaAppHostToolchainResolver.Resolve(directory, _logger);
+                await JavaAppHostToolchainResolver.EnsureToolchainFilesExistAsync(resolution, cancellationToken);
+                runtimeSpec = JavaAppHostToolchainResolver.ApplyToRuntimeSpec(runtimeSpec, resolution, directory);
             }
 
             _guestRuntime = new GuestRuntime(runtimeSpec, _logger, PathLookupHelper.FindFullPathFromPath, _environment, _profilingTelemetry, _fileLoggerProvider);

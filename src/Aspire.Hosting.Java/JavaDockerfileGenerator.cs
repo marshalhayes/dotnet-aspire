@@ -71,27 +71,101 @@ internal static class JavaDockerfileGenerator
     internal static (JavaBuildTool Tool, string[] Args) ResolveBuildTool(JavaAppResource resource, string appDirectory)
         => JavaContainerBuild.ResolveToolAndArgs(resource, appDirectory);
 
+    /// <summary>
+    /// Resolves the full container build, including wrapper selection, without running a publish pipeline.
+    /// </summary>
+    /// <remarks>
+    /// The publish pipeline reports a failure by throwing while reading a Dockerfile that was never
+    /// written, which hides the message that explains what to fix, so the rejections are asserted here.
+    /// </remarks>
+    internal static void ResolveContainerBuildForTesting(JavaAppResource resource, string appDirectory)
+        => JavaContainerBuild.Resolve(resource, appDirectory);
+
     public static void Write(JavaAppResource resource, string appDirectory, DockerfileBuilderCallbackContext context)
     {
         var logger = context.Services.GetService<ILogger<JavaAppResource>>();
+
+        // An application added with a prebuilt JAR and no build configuration has nothing to build: the
+        // artifact already exists in the context, so the image just carries it. Requiring a build tool here
+        // would make a runnable application unpublishable.
+        var prebuiltJar = TryGetPrebuiltJarPath(resource, appDirectory, out var jarPath) ? jarPath : null;
 
         // A <dockerfile>.dockerignore replaces the context root's .dockerignore rather than merging with
         // it, so an authored one wins outright.
         if (context.Resource.TryGetLastAnnotation<DockerfileBuildAnnotation>(out var dockerfileBuildAnnotation)
             && !File.Exists(Path.Combine(appDirectory, ".dockerignore")))
         {
-            dockerfileBuildAnnotation.BuildContextIgnoreContent ??= DefaultJavaBuildContextIgnoreContent;
+            dockerfileBuildAnnotation.BuildContextIgnoreContent ??= BuildContextIgnoreContent(resource, prebuiltJar);
         }
 
-        var build = JavaContainerBuild.Resolve(resource, appDirectory);
+        var build = prebuiltJar is null ? JavaContainerBuild.Resolve(resource, appDirectory) : null;
         var javaVersion = JavaVersionDetector.Detect(appDirectory);
 
         // The Java annotations live on the original JavaAppResource; ctx.Resource is the ContainerResource
         // PublishAsDockerFile substitutes in, and only carries the container-level annotations.
         context.Resource.TryGetLastAnnotation<DockerfileBaseImageAnnotation>(out var baseImageAnnotation);
-        var buildImage = baseImageAnnotation?.BuildImage ?? build.DefaultBuildImage(javaVersion);
+        // A plain JDK image is always enough because a wrapper is required: the wrapper downloads the exact
+        // tool version the project pins, so nothing has to come from the image. That also keeps the build
+        // stage off the maven/gradle images, whose tags only exist for a subset of JDK releases and which
+        // would otherwise pin a second, unrelated tool version.
+        var buildImage = baseImageAnnotation?.BuildImage ?? $"docker.io/library/eclipse-temurin:{javaVersion}-jdk";
         var runtimeImage = baseImageAnnotation?.RuntimeImage ?? $"docker.io/library/eclipse-temurin:{javaVersion}-jre";
 
+        if (build is not null)
+        {
+            WriteBuildStage(context, build, buildImage);
+        }
+
+        // Add intermediate FROM stages for any container files sources (e.g. FROM frontend AS frontend_stage).
+        context.Builder.AddContainerFilesStages(context.Resource, logger);
+
+        var runtimeStage = context.Builder.From(runtimeImage);
+
+        // eclipse-temurin JRE images are Debian based, so the glibc user tools apply. An Alpine override
+        // brings its own busybox tools, which take different switches.
+        runtimeStage.Run(runtimeImage.Contains("alpine", StringComparison.OrdinalIgnoreCase)
+            ? "addgroup -S app && adduser -S -G app app"
+            : "groupadd --system --gid 999 app && useradd --system --gid 999 --uid 999 --no-create-home app");
+
+        runtimeStage
+            .WorkDir("/app")
+            // Add COPY --from=<source> instructions for each container files source.
+            .AddContainerFiles(context.Resource, "/app", logger);
+
+        if (prebuiltJar is null)
+        {
+            runtimeStage.CopyFrom("build", ContainerArtifactPath, "/app/app.jar");
+        }
+        else
+        {
+            runtimeStage.Copy(prebuiltJar, "/app/app.jar");
+        }
+
+        // A relative agent path names a file the build produced, so it only exists in the build stage.
+        // Carry it into the runtime image; the matching JAVA_TOOL_OPTIONS value is written by
+        // WithOtelAgent, which points at ContainerAgentPath in publish mode.
+        if (TryGetBuildProducedAgentPath(resource, out var agentPath))
+        {
+            if (prebuiltJar is null)
+            {
+                runtimeStage.CopyFrom("build", $"/app/{agentPath}", ContainerAgentPath);
+            }
+            else
+            {
+                // No build stage exists, so the agent has to already be in the context alongside the JAR.
+                runtimeStage.Copy(agentPath, ContainerAgentPath);
+            }
+        }
+
+        runtimeStage
+            .User("app")
+            // No shell form: with an ENTRYPOINT array the JVM is PID 1 and receives SIGTERM directly, so
+            // Spring's shutdown hooks run instead of the container being killed after the stop timeout.
+            .Entrypoint(["java", "-jar", "/app/app.jar"]);
+    }
+
+    private static void WriteBuildStage(DockerfileBuilderCallbackContext context, JavaContainerBuild build, string buildImage)
+    {
         var buildStage = context.Builder
             .From(buildImage, "build")
             .WorkDir("/app");
@@ -116,37 +190,97 @@ internal static class JavaDockerfileGenerator
             // Maven's local repository is not safe for concurrent writers.
             // See https://maven.apache.org/guides/mini/guide-multiple-repositories.html
             $"type=cache,id={build.CacheId},target={build.CacheTarget},sharing=locked");
+    }
 
-        // Add intermediate FROM stages for any container files sources (e.g. FROM frontend AS frontend_stage).
-        context.Builder.AddContainerFilesStages(context.Resource, logger);
+    /// <summary>
+    /// Gets the JAR to publish directly, for an application that runs a prebuilt JAR and configures no build.
+    /// </summary>
+    /// <remarks>
+    /// A JAR path alone does not mean the artifact is prebuilt: it is also how a Maven or Gradle application
+    /// names the JAR its own build produces, and those still have to be built in the image. This is therefore
+    /// limited to the case where nothing at all describes a build — no build step, no launch tool, and no
+    /// build file in the directory.
+    /// </remarks>
+    /// <exception cref="DistributedApplicationException">The JAR is outside the build context.</exception>
+    internal static bool TryGetPrebuiltJarPath(JavaAppResource resource, string appDirectory, [NotNullWhen(true)] out string? jarPath)
+    {
+        jarPath = null;
 
-        var runtimeStage = context.Builder.From(runtimeImage);
-
-        // eclipse-temurin JRE images are Debian based, so the glibc user tools apply. An Alpine override
-        // brings its own busybox tools, which take different switches.
-        runtimeStage.Run(runtimeImage.Contains("alpine", StringComparison.OrdinalIgnoreCase)
-            ? "addgroup -S app && adduser -S -G app app"
-            : "groupadd --system --gid 999 app && useradd --system --gid 999 --uid 999 --no-create-home app");
-
-        runtimeStage
-            .WorkDir("/app")
-            // Add COPY --from=<source> instructions for each container files source.
-            .AddContainerFiles(context.Resource, "/app", logger)
-            .CopyFrom("build", ContainerArtifactPath, "/app/app.jar");
-
-        // A relative agent path names a file the build produced, so it only exists in the build stage.
-        // Carry it into the runtime image; the matching JAVA_TOOL_OPTIONS value is written by
-        // WithOtelAgent, which points at ContainerAgentPath in publish mode.
-        if (TryGetBuildProducedAgentPath(resource, out var agentPath))
+        if (!resource.TryGetLastAnnotation<JavaJarPathAnnotation>(out var annotation)
+            || resource.HasAnnotationOfType<JavaBuildStepAnnotation>()
+            || resource.HasAnnotationOfType<JavaBuildToolAnnotation>()
+            || HasBuildFile(appDirectory))
         {
-            runtimeStage.CopyFrom("build", $"/app/{agentPath}", ContainerAgentPath);
+            return false;
         }
 
-        runtimeStage
-            .User("app")
-            // No shell form: with an ENTRYPOINT array the JVM is PID 1 and receives SIGTERM directly, so
-            // Spring's shutdown hooks run instead of the container being killed after the stop timeout.
-            .Entrypoint(["java", "-jar", "/app/app.jar"]);
+        // Container paths are POSIX even when the AppHost authored a Windows-style relative path.
+        var normalized = annotation.JarPath.Replace('\\', '/').TrimStart('.', '/');
+
+        if (Path.IsPathRooted(annotation.JarPath)
+            || normalized.Split('/').Contains(".."))
+        {
+            throw new DistributedApplicationException(
+                $"Java application '{resource.Name}' cannot be published because its JAR " +
+                $"'{annotation.JarPath}' is outside the build context '{appDirectory}'. Only files under " +
+                "the application directory are uploaded to the container build.");
+        }
+
+        jarPath = normalized;
+
+        return jarPath.Length > 0;
+    }
+
+    private static bool HasBuildFile(string appDirectory)
+        => File.Exists(Path.Combine(appDirectory, "pom.xml"))
+        || File.Exists(Path.Combine(appDirectory, "build.gradle"))
+        || File.Exists(Path.Combine(appDirectory, "build.gradle.kts"))
+        || File.Exists(Path.Combine(appDirectory, "settings.gradle"))
+        || File.Exists(Path.Combine(appDirectory, "settings.gradle.kts"));
+
+    /// <summary>
+    /// The default <c>.dockerignore</c> content, with exceptions for files the image needs from the context.
+    /// </summary>
+    /// <remarks>
+    /// The defaults exclude <c>target</c> and <c>build</c> because they are routinely hundreds of megabytes
+    /// of build output. A prebuilt JAR normally sits in exactly those directories, so publishing it needs an
+    /// exception; without one the COPY fails with "file not found in build context" even though the file is
+    /// plainly there. Exceptions have to follow the exclusion they re-include.
+    /// See https://docs.docker.com/build/concepts/context/#dockerignore-files.
+    /// </remarks>
+    private static string BuildContextIgnoreContent(JavaAppResource resource, string? prebuiltJarPath)
+    {
+        if (prebuiltJarPath is null)
+        {
+            return DefaultJavaBuildContextIgnoreContent;
+        }
+
+        var exceptions = new List<string> { prebuiltJarPath };
+
+        if (TryGetBuildProducedAgentPath(resource, out var agentPath))
+        {
+            exceptions.Add(agentPath);
+        }
+
+        // Each parent directory has to be re-included too: Docker does not descend into a directory it has
+        // already excluded, so "!target/app.jar" alone never matches when "target" itself is excluded.
+        var reincluded = exceptions
+            .SelectMany(ParentPathsAndSelf)
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .Select(path => $"!{path}");
+
+        return DefaultJavaBuildContextIgnoreContent + string.Join('\n', reincluded) + "\n";
+    }
+
+    private static IEnumerable<string> ParentPathsAndSelf(string path)
+    {
+        var segments = path.Split('/');
+
+        for (var i = 1; i <= segments.Length; i++)
+        {
+            yield return string.Join('/', segments.Take(i));
+        }
     }
 
     /// <summary>
@@ -203,7 +337,6 @@ internal static class JavaDockerfileGenerator
     /// The build-tool-specific pieces of the container build.
     /// </summary>
     /// <param name="Tool">The build tool that produces the JAR.</param>
-    /// <param name="HasWrapper">Whether the project ships a wrapper script for <paramref name="Tool"/>.</param>
     /// <param name="BuildCommand">The shell command that runs the build.</param>
     /// <param name="SelectArtifactCommand">The shell command that copies the produced JAR to a fixed path.</param>
     /// <param name="CacheTarget">The container path holding the tool's dependency cache.</param>
@@ -211,47 +344,28 @@ internal static class JavaDockerfileGenerator
     /// <param name="CacheId">The BuildKit cache identity, scoped per tool and resource.</param>
     private sealed record JavaContainerBuild(
         JavaBuildTool Tool,
-        bool HasWrapper,
         string BuildCommand,
         string SelectArtifactCommand,
         string CacheTarget,
         string? CacheHomeVariable,
         string CacheId)
     {
-        public string DefaultBuildImage(string javaVersion) => (Tool, HasWrapper) switch
-        {
-            // A plain JDK image is enough when the repository ships a wrapper: the wrapper downloads the
-            // exact tool version the project pins, so nothing has to come from the image.
-            (_, true) => $"docker.io/library/eclipse-temurin:{javaVersion}-jdk",
-            // Without a wrapper the tool itself has to be in the image. These tags only exist for a subset
-            // of JDK releases, so an unusual release needs WithDockerfileBaseImage.
-            (JavaBuildTool.Maven, false) => $"docker.io/library/maven:3-eclipse-temurin-{javaVersion}",
-            (JavaBuildTool.Gradle, false) => $"docker.io/library/gradle:8-jdk{javaVersion}",
-            _ => throw new UnreachableException()
-        };
 
         public static JavaContainerBuild Resolve(JavaAppResource resource, string appDirectory)
         {
             var (tool, buildArgs) = ResolveToolAndArgs(resource, appDirectory);
-
-            var hasWrapper = File.Exists(Path.Combine(appDirectory, tool switch
-            {
-                JavaBuildTool.Maven => "mvnw",
-                JavaBuildTool.Gradle => "gradlew",
-                _ => throw new UnreachableException()
-            }));
+            var wrapper = ResolveWrapperForContext(resource, appDirectory, tool);
 
             // A wrapper checked out from a Windows clone can arrive without the executable bit, and Git
             // does not record one on Windows at all. Invoking the interpreter directly sidesteps that
             // rather than failing with "permission denied" deep inside the container build.
-            var invocation = tool switch
-            {
-                JavaBuildTool.Maven => hasWrapper ? "sh ./mvnw" : "mvn",
-                JavaBuildTool.Gradle => hasWrapper ? "sh ./gradlew" : "gradle",
-                _ => throw new UnreachableException()
-            };
+            var invocation = $"sh ./{wrapper}";
 
-            var buildCommand = $"{invocation} {string.Join(' ', buildArgs)}";
+            // Every argument is quoted because these values reach a container build as a shell command.
+            // A version pinned with -Dspring.profiles.active='a b' or any value containing $ or ; would
+            // otherwise be re-split or expanded by the shell, so the image would build differently from
+            // the identical arguments used on the host, where they are passed as separate argv entries.
+            var buildCommand = $"{invocation} {string.Join(' ', buildArgs.Select(ShellQuoteIfNeeded))}";
 
             var (outputGlob, cacheTarget, cacheHomeVariable) = tool switch
             {
@@ -268,7 +382,6 @@ internal static class JavaDockerfileGenerator
 
             return new JavaContainerBuild(
                 tool,
-                hasWrapper,
                 buildCommand,
                 selectArtifact,
                 cacheTarget,
@@ -276,6 +389,67 @@ internal static class JavaDockerfileGenerator
                 // Scoped per resource so two Java applications built concurrently do not contend on one
                 // locked mount, and per tool because the two caches have different layouts.
                 CacheId: $"aspire-java-{tool.ToString().ToLowerInvariant()}-{resource.Name.ToLowerInvariant()}");
+        }
+
+        /// <summary>
+        /// Resolves the wrapper script as a path relative to the build context.
+        /// </summary>
+        /// <remarks>
+        /// A wrapper is required rather than falling back to a <c>mvn</c>/<c>gradle</c> installed in the
+        /// build image: the wrapper pins the tool version in the repository, so the container image is
+        /// produced by the same version that built the project locally and in CI.
+        /// <para>
+        /// The wrapper also has to sit inside the build context, because only files under the context are
+        /// uploaded to the daemon and reachable by <c>COPY . .</c>. A wrapper outside it exists on the host
+        /// and not in the image, so the build would fail partway through with an opaque "not found".
+        /// </para>
+        /// </remarks>
+        /// <exception cref="DistributedApplicationException">No wrapper is present, or the configured wrapper is outside the build context.</exception>
+        private static string ResolveWrapperForContext(JavaAppResource resource, string appDirectory, JavaBuildTool tool)
+        {
+            var defaultWrapperName = tool switch
+            {
+                JavaBuildTool.Maven => "mvnw",
+                JavaBuildTool.Gradle => "gradlew",
+                _ => throw new UnreachableException()
+            };
+
+            if (resource.TryGetLastAnnotation<WrapperAnnotation>(out var configured))
+            {
+                // WithWrapperPath stores an absolute path, so this is what decides whether the file is
+                // inside the context that was uploaded.
+                var relative = Path.GetRelativePath(appDirectory, configured.WrapperPath).Replace('\\', '/');
+
+                if (relative.StartsWith("../", StringComparison.Ordinal) || Path.IsPathRooted(relative))
+                {
+                    throw new DistributedApplicationException(
+                        $"Java application '{resource.Name}' cannot be published because its wrapper " +
+                        $"'{configured.WrapperPath}' is outside the build context '{appDirectory}'. " +
+                        "Move the wrapper into the application directory, or set the build context to a " +
+                        "directory that contains both.");
+                }
+
+                if (!File.Exists(configured.WrapperPath))
+                {
+                    throw new DistributedApplicationException(
+                        $"Java application '{resource.Name}' cannot be published because the wrapper " +
+                        $"configured with WithWrapperPath was not found at '{configured.WrapperPath}'.");
+                }
+
+                return relative;
+            }
+
+            if (!File.Exists(Path.Combine(appDirectory, defaultWrapperName)))
+            {
+                throw new DistributedApplicationException(
+                    $"Java application '{resource.Name}' cannot be published because there is no " +
+                    $"{defaultWrapperName} in '{appDirectory}'. Aspire builds the image with the project's " +
+                    $"own wrapper so the container uses the tool version the repository pins. Generate one " +
+                    $"with {JavaHostingExtensions.GenerateWrapperCommand(tool)}, or point at an existing " +
+                    "wrapper with WithWrapperPath.");
+            }
+
+            return defaultWrapperName;
         }
 
         internal static (JavaBuildTool Tool, string[] Args) ResolveToolAndArgs(JavaAppResource resource, string appDirectory)
@@ -353,6 +527,21 @@ internal static class JavaDockerfileGenerator
         }
 
         private static string ShellQuote(string value) => $"'{value.Replace("'", "'\\''")}'";
+
+        /// <summary>
+        /// Quotes a build argument only when the shell would otherwise change its meaning.
+        /// </summary>
+        /// <remarks>
+        /// These values reach the container build as a shell command, so a value containing whitespace,
+        /// quotes, <c>$</c>, or <c>;</c> would be re-split or expanded and the image would build differently
+        /// from the identical arguments used on the host, where they are passed as separate argv entries.
+        /// Ordinary arguments such as <c>-DskipTests</c> are left bare so the generated Dockerfile stays
+        /// readable.
+        /// </remarks>
+        private static string ShellQuoteIfNeeded(string value)
+            => value.Length > 0 && value.All(static c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '/' or ':' or '=' or '+' or '@' or '-' or ',')
+                ? value
+                : ShellQuote(value);
     }
 }
 
