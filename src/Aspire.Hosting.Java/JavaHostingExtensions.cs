@@ -445,6 +445,14 @@ public static partial class JavaHostingExtensions
         // The callback runs after the one WithOtlpExporter installed in AddJavaApp, so the OTEL_* entries are
         // already present and carry the resolved endpoint reference rather than a literal. An application that
         // does not use the extension ignores these, at the cost of a "unrecognized configuration key" warning.
+        //
+        // This covers `aspire run`. It cannot cover a published image, because there the compute environment
+        // supplies OTEL_* from a callback it appends while preparing the deployment target — after every
+        // callback the AppHost registered — so there is nothing here to copy. A SmallRye config expression
+        // would sidestep the ordering, but it cannot be passed as an environment variable: Docker Compose
+        // interpolates '${...}' in its own file and rejects SmallRye's '${VAR:default}' form outright
+        // ("invalid interpolation format"). A deployed application therefore maps the value in its own
+        // application.properties, which the README documents and both playgrounds do.
         resourceBuilder.WithEnvironment(context =>
         {
             MirrorOtelVariable(context, KnownOtelConfigNames.ExporterOtlpEndpoint, "QUARKUS_OTEL_EXPORTER_OTLP_ENDPOINT");

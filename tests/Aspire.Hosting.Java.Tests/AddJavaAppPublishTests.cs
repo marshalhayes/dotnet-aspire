@@ -60,7 +60,7 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
         // published container starts a JVM pointing at a JAR that is not in the image and dies during VM
         // initialization with "Error opening zip file or JAR manifest missing".
         Assert.Contains(
-            "COPY --from=build /app/target/agent/opentelemetry-javaagent.jar /app/agent.jar",
+            "COPY --from=build --chown=app:app /app/target/agent/opentelemetry-javaagent.jar /app/agent.jar",
             content);
         await Verify(content);
     }
@@ -75,7 +75,7 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
                 .WithOtelAgent("./target/agent/opentelemetry-javaagent.jar"));
 
         Assert.Contains(
-            "COPY --from=build /app/target/agent/opentelemetry-javaagent.jar /app/agent.jar",
+            "COPY --from=build --chown=app:app /app/target/agent/opentelemetry-javaagent.jar /app/agent.jar",
             content);
     }
 
@@ -618,7 +618,7 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
         var content = await PublishDockerfileAsync(jarPath: "./target/worker.jar");
 
         // A leading "./" is a normal way to write a context-relative path and must survive normalization.
-        Assert.Contains("COPY target/worker.jar /app/app.jar", content);
+        Assert.Contains("COPY --chown=app:app target/worker.jar /app/app.jar", content);
     }
 
     [Fact]
@@ -721,7 +721,7 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
         // A runnable application must stay publishable. Requiring a build tool here made
         // AddJavaApp(name, dir, jarPath) unpublishable even though it runs.
         Assert.DoesNotContain("AS build", content);
-        Assert.Contains("COPY target/worker.jar /app/app.jar", content);
+        Assert.Contains("COPY --chown=app:app target/worker.jar /app/app.jar", content);
         await Verify(content);
     }
 
@@ -965,7 +965,7 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
         // The fast JAR's manifest Class-Path names lib/, app/, and quarkus/ relatively, so copying only
         // quarkus-run.jar produces an image that starts and immediately fails to find its own classes.
         Assert.Contains("cp -r target/quarkus-app/. /build/app/", content, StringComparison.Ordinal);
-        Assert.Contains("COPY --from=build /build/app /app", content, StringComparison.Ordinal);
+        Assert.Contains("COPY --from=build --chown=app:app /build/app /app", content, StringComparison.Ordinal);
         Assert.Contains("ENTRYPOINT [\"java\",\"-jar\",\"/app/quarkus-run.jar\"]", content, StringComparison.Ordinal);
         await Verify(content);
     }
@@ -1009,7 +1009,7 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
             app => app.WithJarArtifact("target/api-runner.jar"));
 
         Assert.Contains("cp 'target/api-runner.jar' /build/app.jar", content, StringComparison.Ordinal);
-        Assert.Contains("COPY --from=build /build/app.jar /app/app.jar", content, StringComparison.Ordinal);
+        Assert.Contains("COPY --from=build --chown=app:app /build/app.jar /app/app.jar", content, StringComparison.Ordinal);
         Assert.Contains("ENTRYPOINT [\"java\",\"-jar\",\"/app/app.jar\"]", content, StringComparison.Ordinal);
     }
 

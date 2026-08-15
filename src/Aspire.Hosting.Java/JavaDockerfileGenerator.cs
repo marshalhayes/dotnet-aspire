@@ -144,16 +144,28 @@ internal static partial class JavaDockerfileGenerator
             ? $"/app/{JavaHostingExtensions.QuarkusRunJarName}"
             : "/app/app.jar";
 
+        // Everything under /app has to be readable by the unprivileged runtime user. That is not automatic:
+        // Quarkus's fast JAR stages its dependencies by copying them out of the Maven/Gradle cache, and the
+        // cache is a BuildKit cache mount whose files are mode 600 and owned by root. Copying those through
+        // unchanged produces an image that cannot start, because the JVM cannot read lib/boot:
+        //
+        //   Error: Could not find or load main class io.quarkus.bootstrap.runner.QuarkusEntryPoint
+        //
+        // COPY --chown assigns ownership as the layer is written, so the 600 modes still grant the app user
+        // access, and it costs no extra layer.
+        const string RuntimeUser = "app:app";
+
         if (prebuiltJar is null)
         {
             runtimeStage.CopyFrom(
                 "build",
                 build?.ArtifactIsDirectory == true ? ContainerArtifactDirectory : ContainerArtifactPath,
-                build?.ArtifactIsDirectory == true ? "/app" : "/app/app.jar");
+                build?.ArtifactIsDirectory == true ? "/app" : "/app/app.jar",
+                RuntimeUser);
         }
         else
         {
-            runtimeStage.Copy(prebuiltJar, "/app/app.jar");
+            runtimeStage.Copy(prebuiltJar, "/app/app.jar", RuntimeUser);
         }
 
         // A relative agent path names a file the build produced, so it only exists in the build stage.
@@ -163,12 +175,12 @@ internal static partial class JavaDockerfileGenerator
         {
             if (prebuiltJar is null)
             {
-                runtimeStage.CopyFrom("build", $"/app/{agentPath}", ContainerAgentPath);
+                runtimeStage.CopyFrom("build", $"/app/{agentPath}", ContainerAgentPath, RuntimeUser);
             }
             else
             {
                 // No build stage exists, so the agent has to already be in the context alongside the JAR.
-                runtimeStage.Copy(agentPath, ContainerAgentPath);
+                runtimeStage.Copy(agentPath, ContainerAgentPath, RuntimeUser);
             }
         }
 

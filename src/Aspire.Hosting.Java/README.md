@@ -150,9 +150,29 @@ builder.AddQuarkusApp("inventory", "../inventory")
     .WithHttpHealthCheck("/q/health");
 ```
 
-`WithOtelAgent` is usually unnecessary for Quarkus. The `quarkus-opentelemetry` extension is compiled
-into the application and reads the same `OTEL_*` environment variables Aspire already supplies, so
-telemetry works with no AppHost configuration at all.
+`WithOtelAgent` is usually unnecessary for Quarkus, because the `quarkus-opentelemetry` extension is
+compiled into the application. It does not, however, read the standard `OTEL_*` environment variables —
+it reads its own `quarkus.otel.*` configuration — so `AddQuarkusApp` mirrors the values Aspire supplies
+onto the `QUARKUS_OTEL_*` names that SmallRye Config maps back to `quarkus.otel.*`. Under `aspire run`
+telemetry therefore works with no configuration at all.
+
+A **published** container needs one thing more, in the application's own `application.properties`:
+
+```properties
+quarkus.otel.exporter.otlp.endpoint=${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4317}
+quarkus.otel.exporter.otlp.protocol=${OTEL_EXPORTER_OTLP_PROTOCOL:grpc}
+```
+
+The compute environment supplies `OTEL_*` from a callback it appends while preparing the deployment
+target, which is after every callback the AppHost registered, so there is nothing left for the mirroring
+to copy. These are [SmallRye config expressions](https://smallrye.io/smallrye-config/Main/config/expressions/),
+expanded inside the JVM at startup, so it does not matter when the variable was set. They cannot be passed
+as environment variables instead, because Docker Compose interpolates `${...}` in its own file and rejects
+this form. The defaults match the extension's own, so the application still runs outside Aspire.
+
+A Quarkus application described with `AddJavaApp` rather than `AddQuarkusApp` gets no mirroring at all and
+exports to the extension's `localhost:4317` default. Use `AddQuarkusApp`, or attach the agent with
+`WithOtelAgent()`.
 
 ### Launch modes
 

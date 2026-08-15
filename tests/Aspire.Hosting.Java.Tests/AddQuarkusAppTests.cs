@@ -162,8 +162,10 @@ public class AddQuarkusAppTests
     [Fact]
     public async Task AddQuarkusApp_DoesNotMirrorTheOtlpConfigurationWhenPublishing()
     {
-        // WithOtlpExporter contributes nothing in publish mode, so there is nothing to mirror and the
-        // published image must not carry a stale endpoint.
+        // WithOtlpExporter contributes nothing in publish mode, so there is nothing to mirror. The mirror
+        // must not invent a value either: an OTLP endpoint baked in here would be the AppHost's, not the
+        // one the compute environment goes on to supply. A deployed application maps the value in its own
+        // application.properties instead, which both Quarkus playgrounds do.
         using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish);
         using var tempDir = new TempJavaAppDirectory();
         tempDir.Write("pom.xml", "<project/>");

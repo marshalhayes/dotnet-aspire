@@ -10,7 +10,7 @@ RUN --mount=type=cache,id=aspire-java-maven-api,target=/root/.m2/repository,shar
 FROM docker.io/library/eclipse-temurin:21-jre
 RUN groupadd --system --gid 999 app && useradd --system --gid 999 --uid 999 --no-create-home app
 WORKDIR /app
-COPY --from=build /build/app.jar /app/app.jar
-COPY --from=build /app/target/agent/opentelemetry-javaagent.jar /app/agent.jar
+COPY --from=build --chown=app:app /build/app.jar /app/app.jar
+COPY --from=build --chown=app:app /app/target/agent/opentelemetry-javaagent.jar /app/agent.jar
 USER app
 ENTRYPOINT ["java","-jar","/app/app.jar"]

@@ -10,6 +10,6 @@ RUN --mount=type=cache,id=aspire-java-maven-api,target=/root/.m2/repository,shar
 FROM docker.io/library/amazoncorretto:21-alpine
 RUN addgroup -S app && adduser -S -G app app
 WORKDIR /app
-COPY --from=build /build/app.jar /app/app.jar
+COPY --from=build --chown=app:app /build/app.jar /app/app.jar
 USER app
 ENTRYPOINT ["java","-jar","/app/app.jar"]
