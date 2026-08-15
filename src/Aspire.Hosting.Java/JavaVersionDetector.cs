@@ -1,6 +1,7 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 
@@ -79,17 +80,18 @@ internal static partial class JavaVersionDetector
             ("java.version", false),
             ("maven.compiler.release", false),
             ("maven.compiler.target", false),
-            // <release> and <target> are only meaningful inside a plugin's <configuration>. Matched
-            // anywhere they would also pick up unrelated elements, for example a <target> in an
-            // antrun or assembly plugin, or a profile's <activation>.
+            // <release> and <target> are only meaningful inside the compiler plugin's <configuration>.
+            // Matched merely by having a <configuration> parent they would also pick up unrelated
+            // plugins: maven-antrun-plugin's canonical configuration is literally
+            // <configuration><target>...</target></configuration>, holding Ant XML rather than a Java
+            // release, and any plugin is free to name a <release> of its own.
             ("release", true),
             ("target", true),
         ])
         {
             foreach (var element in document.Descendants().Where(e => string.Equals(e.Name.LocalName, name, StringComparison.Ordinal)))
             {
-                if (mustBePluginConfiguration
-                    && !string.Equals(element.Parent?.Name.LocalName, "configuration", StringComparison.Ordinal))
+                if (mustBePluginConfiguration && !IsCompilerPluginConfiguration(element.Parent))
                 {
                     continue;
                 }
@@ -102,6 +104,47 @@ internal static partial class JavaVersionDetector
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Determines whether an element is a <c>&lt;configuration&gt;</c> belonging to
+    /// <c>maven-compiler-plugin</c>.
+    /// </summary>
+    /// <remarks>
+    /// Both places a compiler configuration can appear are accepted, because both really set the release:
+    /// <code>
+    /// &lt;plugin&gt;
+    ///   &lt;artifactId&gt;maven-compiler-plugin&lt;/artifactId&gt;
+    ///   &lt;configuration&gt;&lt;release&gt;21&lt;/release&gt;&lt;/configuration&gt;      &lt;!-- plugin level --&gt;
+    ///   &lt;executions&gt;&lt;execution&gt;
+    ///     &lt;configuration&gt;&lt;release&gt;21&lt;/release&gt;&lt;/configuration&gt;    &lt;!-- execution level --&gt;
+    ///   &lt;/execution&gt;&lt;/executions&gt;
+    /// &lt;/plugin&gt;
+    /// </code>
+    /// The plugin is identified by <c>artifactId</c> alone: <c>groupId</c> defaults to
+    /// <c>org.apache.maven.plugins</c> and is routinely omitted for the core plugins.
+    /// See https://maven.apache.org/plugins/maven-compiler-plugin/compile-mojo.html.
+    /// </remarks>
+    private static bool IsCompilerPluginConfiguration(XElement? configuration)
+    {
+        if (!string.Equals(configuration?.Name.LocalName, "configuration", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        for (var ancestor = configuration!.Parent; ancestor is not null; ancestor = ancestor.Parent)
+        {
+            if (!string.Equals(ancestor.Name.LocalName, "plugin", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            return ancestor.Elements().Any(e =>
+                string.Equals(e.Name.LocalName, "artifactId", StringComparison.Ordinal)
+                && string.Equals(e.Value.Trim(), "maven-compiler-plugin", StringComparison.Ordinal));
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -135,6 +178,8 @@ internal static partial class JavaVersionDetector
             return null;
         }
 
+        contents = StripComments(contents);
+
         if (ToolchainRegex().Match(contents) is { Success: true } toolchain)
         {
             return Normalize(toolchain.Groups[1].Value);
@@ -151,6 +196,96 @@ internal static partial class JavaVersionDetector
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Blanks out line and block comments so a commented-out setting cannot be mistaken for an active one.
+    /// </summary>
+    /// <remarks>
+    /// The version patterns are applied to the raw script rather than a parsed model, so without this a
+    /// leftover line wins over the setting that is actually in effect:
+    /// <code>
+    /// java {
+    ///     toolchain {
+    ///         // languageVersion = JavaLanguageVersion.of(17)
+    ///         languageVersion = JavaLanguageVersion.of(21)
+    ///     }
+    /// }
+    /// </code>
+    /// String literals are tracked so that the <c>//</c> inside a repository URL, and any <c>/*</c> inside
+    /// a string, are not treated as comment starts — the latter would otherwise swallow the rest of the
+    /// file. Single, double, and triple-quoted forms are recognized, covering both the Groovy and the
+    /// Kotlin DSL. Groovy's slashy strings (<c>/pattern/</c>) are not recognized; they do not appear in the
+    /// toolchain or compatibility declarations this reads.
+    /// </remarks>
+    private static string StripComments(string contents)
+    {
+        var builder = new StringBuilder(contents.Length);
+        var index = 0;
+
+        while (index < contents.Length)
+        {
+            var current = contents[index];
+
+            if (current is '/' && index + 1 < contents.Length)
+            {
+                if (contents[index + 1] is '/')
+                {
+                    while (index < contents.Length && contents[index] is not ('\n' or '\r'))
+                    {
+                        index++;
+                    }
+
+                    continue;
+                }
+
+                if (contents[index + 1] is '*')
+                {
+                    var end = contents.IndexOf("*/", index + 2, StringComparison.Ordinal);
+                    index = end < 0 ? contents.Length : end + 2;
+                    // A newline stands in for the comment so that the text on either side of a block
+                    // comment cannot be joined into a single line and match as one declaration.
+                    builder.Append('\n');
+                    continue;
+                }
+            }
+
+            if (current is '"' or '\'')
+            {
+                var delimiter = new string(current, contents.AsSpan(index).StartsWith(new string(current, 3), StringComparison.Ordinal) ? 3 : 1);
+                builder.Append(delimiter);
+                index += delimiter.Length;
+
+                // The literal's contents are copied through unchanged - only comments are removed - so a
+                // version written as a quoted string, such as sourceCompatibility = '17', still matches.
+                while (index < contents.Length)
+                {
+                    if (contents[index] is '\\' && index + 1 < contents.Length)
+                    {
+                        builder.Append(contents, index, 2);
+                        index += 2;
+                        continue;
+                    }
+
+                    if (contents.AsSpan(index).StartsWith(delimiter, StringComparison.Ordinal))
+                    {
+                        builder.Append(delimiter);
+                        index += delimiter.Length;
+                        break;
+                    }
+
+                    builder.Append(contents[index]);
+                    index++;
+                }
+
+                continue;
+            }
+
+            builder.Append(current);
+            index++;
+        }
+
+        return builder.ToString();
     }
 
     /// <summary>

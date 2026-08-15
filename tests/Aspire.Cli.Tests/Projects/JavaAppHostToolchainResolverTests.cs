@@ -152,7 +152,7 @@ public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
             [
                 "--release", "25",
                 "-classpath", Path.Combine("target", "aspire-deps", "*"),
-                "-sourcepath", ".",
+                "-sourcepath", $".{Path.PathSeparator}{Path.Combine("src", "main", "java")}",
                 "-d", Path.Combine("target", "classes"),
                 "@.aspire/modules/sources.txt",
                 "{appHostFile}"
@@ -191,7 +191,7 @@ public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
             [
                 "--release", "25",
                 "-classpath", Path.Combine("build", "aspire-deps", "*"),
-                "-sourcepath", ".",
+                "-sourcepath", $".{Path.PathSeparator}{Path.Combine("src", "main", "java")}",
                 "-d", Path.Combine("build", "classes", "java", "main"),
                 "@.aspire/modules/sources.txt",
                 "{appHostFile}"
@@ -356,7 +356,7 @@ public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
             [
                 "--release", "25",
                 "-classpath", Path.Combine(toProjectRoot, "target", "aspire-deps", "*"),
-                "-sourcepath", ".",
+                "-sourcepath", $".{Path.PathSeparator}{Path.Combine("src", "main", "java")}",
                 "-d", Path.Combine(toProjectRoot, "target", "classes"),
                 "@.aspire/modules/sources.txt",
                 "{appHostFile}"

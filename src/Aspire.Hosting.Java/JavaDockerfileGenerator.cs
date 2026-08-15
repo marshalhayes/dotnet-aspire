@@ -114,7 +114,7 @@ internal static partial class JavaDockerfileGenerator
         // tool version the project pins, so nothing has to come from the image. That also keeps the build
         // stage off the maven/gradle images, whose tags only exist for a subset of JDK releases and which
         // would otherwise pin a second, unrelated tool version.
-        var buildImage = baseImageAnnotation?.BuildImage ?? $"docker.io/library/eclipse-temurin:{BuildJdkVersion(javaVersion, build?.MinimumBuildJdk ?? 0)}-jdk";
+        var buildImage = baseImageAnnotation?.BuildImage ?? $"docker.io/library/eclipse-temurin:{BuildJdkVersion(javaVersion, build)}-jdk";
         var runtimeImage = baseImageAnnotation?.RuntimeImage ?? $"docker.io/library/eclipse-temurin:{javaVersion}-jre";
 
         if (build is not null)
@@ -126,12 +126,6 @@ internal static partial class JavaDockerfileGenerator
         context.Builder.AddContainerFilesStages(context.Resource, logger);
 
         var runtimeStage = context.Builder.From(runtimeImage);
-
-        // eclipse-temurin JRE images are Debian based, so the glibc user tools apply. An Alpine override
-        // brings its own busybox tools, which take different switches.
-        runtimeStage.Run(runtimeImage.Contains("alpine", StringComparison.OrdinalIgnoreCase)
-            ? "addgroup -S app && adduser -S -G app app"
-            : "groupadd --system --gid 999 app && useradd --system --gid 999 --uid 999 --no-create-home app");
 
         runtimeStage
             .WorkDir("/app")
@@ -153,7 +147,13 @@ internal static partial class JavaDockerfileGenerator
         //
         // COPY --chown assigns ownership as the layer is written, so the 600 modes still grant the app user
         // access, and it costs no extra layer.
-        const string RuntimeUser = "app:app";
+        //
+        // A numeric UID/GID is used rather than a named account created with groupadd/useradd, because the
+        // runtime image is overridable. Distros disagree on the tools (busybox adduser on Alpine takes
+        // different switches from shadow's useradd on Debian) and distroless images have neither, so any
+        // RUN that creates a user only works for the images it was written against. USER accepts a numeric
+        // id whether or not /etc/passwd names it, which works on every image including distroless.
+        const string RuntimeUser = "999:999";
 
         if (prebuiltJar is null)
         {
@@ -185,7 +185,7 @@ internal static partial class JavaDockerfileGenerator
         }
 
         runtimeStage
-            .User("app")
+            .User(RuntimeUser)
             // No shell form: with an ENTRYPOINT array the JVM is PID 1 and receives SIGTERM directly, so
             // Spring's shutdown hooks run instead of the container being killed after the stop timeout.
             .Entrypoint(["java", "-jar", applicationJarPath]);
@@ -343,11 +343,30 @@ internal static partial class JavaDockerfileGenerator
     /// build stage is raised; the runtime stage stays on the targeted version so the image is no larger and
     /// no newer than the application actually needs.
     /// </para>
+    /// <para>
+    /// The ceiling is applied the same way, in the other direction. Capping at the newest JDK the tool
+    /// can run on is never worse than ignoring it: a project whose build actually resolves the target
+    /// another way — a Gradle toolchain the build downloads or already has — now builds where it
+    /// previously died on startup with "Unsupported class file major version", and one that genuinely
+    /// needs the newer javac fails with "release version N not supported", which names the real problem.
+    /// </para>
     /// </remarks>
-    private static string BuildJdkVersion(string targetVersion, int minimumBuildJdk)
-        => int.TryParse(targetVersion, CultureInfo.InvariantCulture, out var parsed) && parsed < minimumBuildJdk
-            ? minimumBuildJdk.ToString(CultureInfo.InvariantCulture)
+    private static string BuildJdkVersion(string targetVersion, JavaContainerBuild? build)
+    {
+        if (build is null || !int.TryParse(targetVersion, CultureInfo.InvariantCulture, out var target))
+        {
+            return targetVersion;
+        }
+
+        if (target < build.MinimumBuildJdk)
+        {
+            return build.MinimumBuildJdk.ToString(CultureInfo.InvariantCulture);
+        }
+
+        return build.MaximumBuildJdk > 0 && target > build.MaximumBuildJdk
+            ? build.MaximumBuildJdk.ToString(CultureInfo.InvariantCulture)
             : targetVersion;
+    }
 
     /// <summary>
     /// The default <c>.dockerignore</c> content, with exceptions for files the image needs from the context.
@@ -460,6 +479,7 @@ internal static partial class JavaDockerfileGenerator
     /// <param name="RequiresUnzip">Whether the build image needs <c>unzip</c> installed before the wrapper runs.</param>
     /// <param name="ArtifactIsDirectory">Whether the staged artifact is a directory rather than a single JAR.</param>
     /// <param name="MinimumBuildJdk">The JDK release the pinned build tool needs to start, or 0 when unknown.</param>
+    /// <param name="MaximumBuildJdk">The newest JDK release the pinned build tool can run on, or 0 when unknown.</param>
     private sealed record JavaContainerBuild(
         JavaBuildTool Tool,
         string BuildCommand,
@@ -473,7 +493,8 @@ internal static partial class JavaDockerfileGenerator
         string WarmToolCommand,
         bool RequiresUnzip,
         bool ArtifactIsDirectory,
-        int MinimumBuildJdk)
+        int MinimumBuildJdk,
+        int MaximumBuildJdk)
     {
 
         public static JavaContainerBuild Resolve(JavaAppResource resource, string appDirectory)
@@ -523,6 +544,8 @@ internal static partial class JavaDockerfileGenerator
             // is how an application packaged as an uber JAR names its runner.
             var artifactIsDirectory = isQuarkus && !resource.HasAnnotationOfType<JavaJarArtifactAnnotation>();
 
+            var bounds = ResolveBuildJdkBounds(appDirectory, wrapperSupportPath, tool);
+
             return new JavaContainerBuild(
                 tool,
                 buildCommand,
@@ -544,18 +567,29 @@ internal static partial class JavaDockerfileGenerator
                 WarmToolCommand: $"{invocation} {warmArgs}",
                 RequiresUnzip: requiresUnzip,
                 ArtifactIsDirectory: artifactIsDirectory,
-                MinimumBuildJdk: ResolveMinimumBuildJdk(appDirectory, wrapperSupportPath, tool));
+                MinimumBuildJdk: bounds.Minimum,
+                MaximumBuildJdk: bounds.Maximum);
         }
 
         /// <summary>
-        /// Reads the minimum JDK the pinned build tool needs to start.
+        /// Reads the range of JDK releases the pinned build tool can run on.
         /// </summary>
         /// <remarks>
         /// The build tool's own JVM requirement is independent of the bytecode the project produces, and it
-        /// cuts both ways. Gradle 9 and Maven 4 refuse to start on anything below Java 17, so a project
-        /// targeting Java 8 cannot build on an <c>eclipse-temurin:8-jdk</c> stage. Gradle 6 refuses to run
-        /// <em>on</em> Java 17, so raising every build unconditionally would break the older wrappers that
-        /// usually accompany those same Java 8 projects.
+        /// bounds the build stage from both directions.
+        /// <para>
+        /// From below: Gradle 9 and Maven 4 refuse to start on anything under Java 17, so a project
+        /// targeting Java 8 cannot build on an <c>eclipse-temurin:8-jdk</c> stage. The requirement is read
+        /// from the pinned version rather than applied to every build, because Gradle 6 refuses to run
+        /// <em>on</em> Java 17 and those are exactly the wrappers an old Java 8 project tends to carry.
+        /// </para>
+        /// <para>
+        /// From above: each Gradle release only runs on the JDKs that existed when it shipped. Gradle 8.4
+        /// can target Java 21 through a toolchain but cannot itself run on Java 21 — that starts at 8.5 —
+        /// so a Java 21 project with an 8.4 wrapper would get a Java 21 build stage where Gradle dies on
+        /// startup. The bound follows the "Support for running Gradle" column of Gradle's compatibility
+        /// matrix. Maven has no equivalent ceiling, so none is modelled for it.
+        /// </para>
         /// <para>
         /// The version comes from the distribution the wrapper pins, for example:
         /// <code>
@@ -563,14 +597,14 @@ internal static partial class JavaDockerfileGenerator
         /// distributionUrl=https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.9.9/apache-maven-3.9.9-bin.zip
         /// </code>
         /// Note the escaped <c>\:</c> that the Gradle wrapper writes, and that the Maven URL carries the
-        /// version twice. Only the leading major version is needed, so both are read from the archive name.
+        /// version twice. Gradle's ceiling moves on minor releases, so major and minor are both read.
         /// </para>
-        /// A URL that cannot be parsed contributes no requirement, which leaves the target version in
+        /// A URL that cannot be parsed contributes no bound at all, which leaves the target version in
         /// charge — the behaviour before any of this existed.
         /// See https://docs.gradle.org/current/userguide/compatibility.html and
         /// https://maven.apache.org/docs/history.html.
         /// </remarks>
-        private static int ResolveMinimumBuildJdk(string appDirectory, string wrapperSupportPath, JavaBuildTool tool)
+        private static (int Minimum, int Maximum) ResolveBuildJdkBounds(string appDirectory, string wrapperSupportPath, JavaBuildTool tool)
         {
             var propertiesPath = Path.Combine(
                 appDirectory,
@@ -598,27 +632,66 @@ internal static partial class JavaDockerfileGenerator
             }
             catch (IOException)
             {
-                return 0;
+                return (0, 0);
             }
 
             if (distributionUrl is null)
             {
-                return 0;
+                return (0, 0);
             }
 
             var match = (tool is JavaBuildTool.Gradle ? GradleDistributionRegex() : MavenDistributionRegex()).Match(distributionUrl);
             if (!match.Success || !int.TryParse(match.Groups["major"].ValueSpan, CultureInfo.InvariantCulture, out var major))
             {
-                return 0;
+                return (0, 0);
             }
 
-            return tool switch
+            if (tool is JavaBuildTool.Maven)
             {
-                JavaBuildTool.Gradle when major >= 9 => 17,
-                JavaBuildTool.Maven when major >= 4 => 17,
-                _ => 0
-            };
+                return (major >= 4 ? 17 : 0, 0);
+            }
+
+            // A missing minor reads as 0, which lands on the first ceiling of that major - the conservative
+            // direction, because a wrapper is never pinned to a bare major version in practice.
+            _ = int.TryParse(match.Groups["minor"].ValueSpan, CultureInfo.InvariantCulture, out var minor);
+
+            return (major >= 9 ? 17 : 0, MaximumGradleRuntimeJdk(major, minor));
         }
+
+        /// <summary>
+        /// The newest JDK release a given Gradle version can run on.
+        /// </summary>
+        /// <remarks>
+        /// Inverted from the "Support for running Gradle" column of Gradle's compatibility matrix
+        /// (https://docs.gradle.org/current/userguide/compatibility.html):
+        /// Java 20 needs 8.3+, 21 needs 8.5+, 22 needs 8.8+, 23 needs 8.10+, 24 needs 8.14+, 25 needs
+        /// 9.1+, 26 needs 9.4+, 27 needs 9.8+.
+        /// <para>
+        /// Versions newer than the last row are given that row's ceiling rather than "unbounded", so a
+        /// Gradle release this table has not caught up with never blocks a publish: the check that
+        /// consumes this only fires when the target exceeds the ceiling, and an unknown-but-newer Gradle
+        /// always supports at least what the last known release did. Anything older than 7.3 is left
+        /// unbounded because those releases predate the JDKs this can select.
+        /// </para>
+        /// </remarks>
+        private static int MaximumGradleRuntimeJdk(int major, int minor) => (major, minor) switch
+        {
+            (>= 10, _) => 27,
+            (9, >= 8) => 27,
+            (9, >= 4) => 26,
+            (9, >= 1) => 25,
+            (9, _) => 24,
+            (8, >= 14) => 24,
+            (8, >= 10) => 23,
+            (8, >= 8) => 22,
+            (8, >= 5) => 21,
+            (8, >= 3) => 20,
+            (8, _) => 19,
+            (7, >= 6) => 19,
+            (7, >= 5) => 18,
+            (7, >= 3) => 17,
+            _ => 0
+        };
 
         /// <summary>
         /// Determines whether the Maven wrapper pins a checksum for the distribution it downloads.
@@ -922,7 +995,12 @@ internal static partial class JavaDockerfileGenerator
                 : ShellQuote(value);
     }
 
-    [GeneratedRegex(@"gradle-(?<major>\d+)(?:[.\-]|-bin|-all)")]
+    // Matches the version in a pinned distribution archive name, for example
+    //   .../gradle-9.0.0-bin.zip      -> major 9,  minor 0
+    //   .../gradle-8.4-bin.zip        -> major 8,  minor 4
+    //   .../gradle-8.14-rc-1-all.zip  -> major 8,  minor 14
+    // The minor group is optional so a hypothetical "gradle-9-bin.zip" still yields a major.
+    [GeneratedRegex(@"gradle-(?<major>\d+)(?:\.(?<minor>\d+))?(?:[.\-]|-bin|-all)")]
     private static partial Regex GradleDistributionRegex();
 
     [GeneratedRegex(@"apache-maven-(?<major>\d+)\.")]

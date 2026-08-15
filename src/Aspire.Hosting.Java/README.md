@@ -90,15 +90,9 @@ The build skips tests, because it runs every time the AppHost starts and a full 
 debug session gets old quickly. Call `WithMavenBuild`/`WithGradleBuild` afterwards to choose your own
 arguments.
 
-No health check is added. `/actuator/health` only responds when the application depends on
-`spring-boot-starter-actuator`, and adding it unconditionally would leave applications without that
-dependency permanently unhealthy — which silently stalls every `WaitFor` on them. Add it yourself when
-the actuator is present:
-
-```csharp
-builder.AddSpringBootApp("catalog", "../catalog")
-    .WithHttpHealthCheck("/actuator/health");
-```
+No health check is added: `/actuator/health` only responds when the application depends on
+`spring-boot-starter-actuator`, so adding one unconditionally would leave every other application
+permanently unhealthy. Add `.WithHttpHealthCheck("/actuator/health")` when the actuator is present.
 
 Use `AddJavaApp` directly for anything else: a different Spring Boot plugin goal, a project laid out so
 the build file is not in the app directory, or a framework that is not Spring Boot.
@@ -143,18 +137,8 @@ means both resolve the same `%dev.` configuration. It is not set when publishing
 resolve production configuration.
 
 No health check is added, for the same reason as Spring Boot: `/q/health` only responds when the
-application depends on `quarkus-smallrye-health`. Add it yourself when that extension is present:
-
-```csharp
-builder.AddQuarkusApp("inventory", "../inventory")
-    .WithHttpHealthCheck("/q/health");
-```
-
-`WithOtelAgent` is usually unnecessary for Quarkus, because the `quarkus-opentelemetry` extension is
-compiled into the application. It does not, however, read the standard `OTEL_*` environment variables —
-it reads its own `quarkus.otel.*` configuration — so `AddQuarkusApp` mirrors the values Aspire supplies
-onto the `QUARKUS_OTEL_*` names that SmallRye Config maps back to `quarkus.otel.*`. Under `aspire run`
-telemetry therefore works with no configuration at all.
+application depends on `quarkus-smallrye-health`. Add `.WithHttpHealthCheck("/q/health")` when that
+extension is present.
 
 A **published** container needs one thing more, in the application's own `application.properties`:
 
@@ -230,35 +214,8 @@ for Gradle, for example.
 | `WithMainClass(string mainClass)` | The fully qualified class the IDE launches when debugging |
 | `WithJarArtifact(string jarPath)` | Names the JAR the container build should deploy, when the build produces more than one |
 | `WithJvmArgs(params string[] args)` | Appends JVM arguments through `JAVA_TOOL_OPTIONS`. Also available on `AddJavaContainerApp` |
-| `WithOtelAgent(string agentPath)` | Runs the app under the OpenTelemetry Java agent |
+| `WithOtelAgent(string agentPath)` | Runs the app under the [OpenTelemetry Java agent](https://github.com/open-telemetry/opentelemetry-java-instrumentation). The agent is not downloaded for you: fetch it as a build dependency so it exists before the application starts |
 | `WithOtelAgent()` | Same, with the agent at `target/agent/` (Maven) or `build/agent/` (Gradle) |
-
-### Telemetry
-
-`AddJavaApp` configures the OTLP exporter environment on its own, which is all a manually instrumented
-application needs. `WithOtelAgent(...)` additionally runs the
-[OpenTelemetry Java agent](https://github.com/open-telemetry/opentelemetry-java-instrumentation), which
-instruments common frameworks with no code change:
-
-```csharp
-builder.AddSpringBootApp("catalog", "../catalog")
-    .WithOtelAgent("target/agent/opentelemetry-javaagent.jar");
-```
-
-The no-argument `WithOtelAgent()` uses the conventional location for the build tool in use —
-`target/agent/opentelemetry-javaagent.jar` for Maven, `build/agent/opentelemetry-javaagent.jar` for
-Gradle — so a build that copies the agent there needs no path:
-
-```csharp
-builder.AddSpringBootApp("catalog", "../catalog")
-    .WithOtelAgent();
-```
-
-The agent is not downloaded for you. Fetch it as a build dependency so it exists before the application
-starts — a relative path is resolved against the app directory when running locally, and the published
-container copies the build's agent into the image. Because the agent is applied through
-`JAVA_TOOL_OPTIONS`, which every JVM beneath the resource inherits, the build tool's own JVM is
-instrumented as well.
 
 ### Debugging
 

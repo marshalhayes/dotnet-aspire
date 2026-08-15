@@ -60,7 +60,7 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
         // published container starts a JVM pointing at a JAR that is not in the image and dies during VM
         // initialization with "Error opening zip file or JAR manifest missing".
         Assert.Contains(
-            "COPY --from=build --chown=app:app /app/target/agent/opentelemetry-javaagent.jar /app/agent.jar",
+            "COPY --from=build --chown=999:999 /app/target/agent/opentelemetry-javaagent.jar /app/agent.jar",
             content);
         await Verify(content);
     }
@@ -75,7 +75,7 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
                 .WithOtelAgent("./target/agent/opentelemetry-javaagent.jar"));
 
         Assert.Contains(
-            "COPY --from=build --chown=app:app /app/target/agent/opentelemetry-javaagent.jar /app/agent.jar",
+            "COPY --from=build --chown=999:999 /app/target/agent/opentelemetry-javaagent.jar /app/agent.jar",
             content);
     }
 
@@ -214,8 +214,8 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
 
         Assert.StartsWith("FROM --platform=$BUILDPLATFORM docker.io/library/amazoncorretto:21 AS build", content);
         Assert.Contains("\nFROM docker.io/library/amazoncorretto:21-alpine\n", content);
-        // Alpine's busybox tools take different switches than the glibc images the JRE default uses.
-        Assert.Contains("addgroup -S app && adduser -S -G app app", content);
+        // No user is created in the runtime stage, so an override needs no distro-specific handling.
+        Assert.DoesNotContain("adduser", content, StringComparison.Ordinal);
         await Verify(content);
     }
 
@@ -226,8 +226,10 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
             configureSource: source => WritePom(source, javaVersion: "21"),
             configureResource: app => app.WithMavenGoal("spring-boot:run"));
 
-        Assert.Contains("useradd --system --gid 999 --uid 999 --no-create-home app", content);
-        Assert.Contains("\nUSER app\n", content);
+        // A numeric id rather than a named account, so the same Dockerfile works on any runtime image
+        // including Alpine and distroless, none of which agree on the user-creation tools.
+        Assert.Contains("\nUSER 999:999\n", content);
+        Assert.DoesNotContain("useradd", content, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -395,6 +397,33 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
     [InlineData("sourceCompatibility = '17'", "17")]
     [InlineData("targetCompatibility = 1.8", "8")]
     [InlineData("", JavaVersionDetector.DefaultJavaVersion)]
+    // A commented-out setting must not win over the active one below it.
+    [InlineData("""
+        java {
+            toolchain {
+                // languageVersion = JavaLanguageVersion.of(17)
+                languageVersion = JavaLanguageVersion.of(21)
+            }
+        }
+        """, "21")]
+    [InlineData("""
+        /*
+        java { toolchain { languageVersion = JavaLanguageVersion.of(17) } }
+        */
+        java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
+        """, "21")]
+    // A "//" inside a string is not a comment, so the rest of that line still parses. Written on one
+    // line because the whole point is that the URL does not swallow what follows it.
+    [InlineData("""
+        repositories { maven { url "https://repo.example.com/m2" } }; sourceCompatibility = '17'
+        """, "17")]
+    // A "/*" inside a string would otherwise swallow the remainder of the file.
+    [InlineData("""
+        tasks.register("noop") { doLast { println("/*") } }
+        java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
+        """, "21")]
+    // A setting that only exists inside a comment leaves nothing to detect.
+    [InlineData("// languageVersion = JavaLanguageVersion.of(17)", JavaVersionDetector.DefaultJavaVersion)]
     public void JavaVersionDetector_ReadsTheTargetReleaseFromAGradleBuildScript(string script, string expected)
     {
         using var appDirectory = new TempJavaAppDirectory();
@@ -415,6 +444,72 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
         File.WriteAllText(Path.Combine(appDirectory.Path, "build.gradle"), "sourceCompatibility = '21'");
 
         Assert.Equal("17", JavaVersionDetector.Detect(appDirectory.Path));
+    }
+
+    [Fact]
+    public void JavaVersionDetector_IgnoresReleaseAndTargetOutsideTheCompilerPlugin()
+    {
+        using var appDirectory = new TempJavaAppDirectory();
+
+        // maven-antrun-plugin's <target> holds Ant XML, and any plugin may name a <release> of its own,
+        // so matching either element by its <configuration> parent alone picks up unrelated values.
+        File.WriteAllText(Path.Combine(appDirectory.Path, "pom.xml"), """
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+              <build><plugins>
+                <plugin>
+                  <artifactId>maven-antrun-plugin</artifactId>
+                  <configuration><target>11</target></configuration>
+                </plugin>
+                <plugin>
+                  <artifactId>maven-compiler-plugin</artifactId>
+                  <configuration><release>21</release></configuration>
+                </plugin>
+              </plugins></build>
+            </project>
+            """);
+
+        Assert.Equal("21", JavaVersionDetector.Detect(appDirectory.Path));
+    }
+
+    [Fact]
+    public void JavaVersionDetector_ReadsAnExecutionLevelCompilerConfiguration()
+    {
+        using var appDirectory = new TempJavaAppDirectory();
+
+        File.WriteAllText(Path.Combine(appDirectory.Path, "pom.xml"), """
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+              <build><plugins>
+                <plugin>
+                  <artifactId>maven-compiler-plugin</artifactId>
+                  <executions><execution>
+                    <id>default-compile</id>
+                    <configuration><release>17</release></configuration>
+                  </execution></executions>
+                </plugin>
+              </plugins></build>
+            </project>
+            """);
+
+        Assert.Equal("17", JavaVersionDetector.Detect(appDirectory.Path));
+    }
+
+    [Fact]
+    public void JavaVersionDetector_FallsBackWhenOnlyAnUnrelatedPluginDeclaresATarget()
+    {
+        using var appDirectory = new TempJavaAppDirectory();
+
+        File.WriteAllText(Path.Combine(appDirectory.Path, "pom.xml"), """
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+              <build><plugins>
+                <plugin>
+                  <artifactId>maven-antrun-plugin</artifactId>
+                  <configuration><target>11</target></configuration>
+                </plugin>
+              </plugins></build>
+            </project>
+            """);
+
+        Assert.Equal(JavaVersionDetector.DefaultJavaVersion, JavaVersionDetector.Detect(appDirectory.Path));
     }
 
     [Fact]
@@ -618,7 +713,7 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
         var content = await PublishDockerfileAsync(jarPath: "./target/worker.jar");
 
         // A leading "./" is a normal way to write a context-relative path and must survive normalization.
-        Assert.Contains("COPY --chown=app:app target/worker.jar /app/app.jar", content);
+        Assert.Contains("COPY --chown=999:999 target/worker.jar /app/app.jar", content);
     }
 
     [Fact]
@@ -721,7 +816,7 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
         // A runnable application must stay publishable. Requiring a build tool here made
         // AddJavaApp(name, dir, jarPath) unpublishable even though it runs.
         Assert.DoesNotContain("AS build", content);
-        Assert.Contains("COPY --chown=app:app target/worker.jar /app/app.jar", content);
+        Assert.Contains("COPY --chown=999:999 target/worker.jar /app/app.jar", content);
         await Verify(content);
     }
 
@@ -965,7 +1060,7 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
         // The fast JAR's manifest Class-Path names lib/, app/, and quarkus/ relatively, so copying only
         // quarkus-run.jar produces an image that starts and immediately fails to find its own classes.
         Assert.Contains("cp -r target/quarkus-app/. /build/app/", content, StringComparison.Ordinal);
-        Assert.Contains("COPY --from=build --chown=app:app /build/app /app", content, StringComparison.Ordinal);
+        Assert.Contains("COPY --from=build --chown=999:999 /build/app /app", content, StringComparison.Ordinal);
         Assert.Contains("ENTRYPOINT [\"java\",\"-jar\",\"/app/quarkus-run.jar\"]", content, StringComparison.Ordinal);
         await Verify(content);
     }
@@ -1009,7 +1104,7 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
             app => app.WithJarArtifact("target/api-runner.jar"));
 
         Assert.Contains("cp 'target/api-runner.jar' /build/app.jar", content, StringComparison.Ordinal);
-        Assert.Contains("COPY --from=build --chown=app:app /build/app.jar /app/app.jar", content, StringComparison.Ordinal);
+        Assert.Contains("COPY --from=build --chown=999:999 /build/app.jar /app/app.jar", content, StringComparison.Ordinal);
         Assert.Contains("ENTRYPOINT [\"java\",\"-jar\",\"/app/app.jar\"]", content, StringComparison.Ordinal);
     }
 
@@ -1089,6 +1184,41 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
 
         Assert.Contains("FROM --platform=$BUILDPLATFORM docker.io/library/eclipse-temurin:8-jdk AS build", content, StringComparison.Ordinal);
         Assert.Contains("FROM docker.io/library/eclipse-temurin:8-jre", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task VerifyPublish_CapsTheBuildJdkAtWhatTheGradleWrapperCanRunOn()
+    {
+        // Gradle 8.4 can target Java 21 through a toolchain but cannot run on it - that starts at 8.5 -
+        // so the build stage stays on 20 while the runtime image keeps the targeted 21.
+        // https://docs.gradle.org/current/userguide/compatibility.html
+        var content = await PublishDockerfileAsync(
+            configureSource: source => WriteGradleBuild(source, "sourceCompatibility = '21'", gradleVersion: "8.4"),
+            configureResource: app => app.WithGradleTask("bootRun"));
+
+        Assert.Contains("FROM --platform=$BUILDPLATFORM docker.io/library/eclipse-temurin:20-jdk AS build", content, StringComparison.Ordinal);
+        Assert.Contains("FROM docker.io/library/eclipse-temurin:21-jre", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task VerifyPublish_AcceptsTheFirstGradleReleaseThatRunsOnTheTargetedJdk()
+    {
+        var content = await PublishDockerfileAsync(
+            configureSource: source => WriteGradleBuild(source, "sourceCompatibility = '21'", gradleVersion: "8.5"),
+            configureResource: app => app.WithGradleTask("bootRun"));
+
+        Assert.Contains("FROM --platform=$BUILDPLATFORM docker.io/library/eclipse-temurin:21-jdk AS build", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task VerifyPublish_DoesNotApplyTheGradleCeilingToMaven()
+    {
+        // Maven has no equivalent runtime ceiling, so a Maven wrapper never blocks a newer target.
+        var content = await PublishDockerfileAsync(
+            configureSource: source => WritePom(source, javaVersion: "25", mavenVersion: "3.9.9"),
+            configureResource: app => app.WithMavenGoal("spring-boot:run"));
+
+        Assert.Contains("FROM --platform=$BUILDPLATFORM docker.io/library/eclipse-temurin:25-jdk AS build", content, StringComparison.Ordinal);
     }
 
     [Fact]

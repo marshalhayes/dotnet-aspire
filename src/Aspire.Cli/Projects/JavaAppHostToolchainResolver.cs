@@ -434,11 +434,18 @@ internal static class JavaAppHostToolchainResolver
         string[] addedArgs =
         [
             "-classpath", Path.Combine(dependencyDirectory, "*"),
-            // The AppHost directory is the working directory and is also the project's source root under
-            // both supported layouts, so this is what lets the AppHost reference the project's own
-            // classes. It has to be set explicitly because javac otherwise defaults the source path to
-            // the class path, which -classpath has just replaced.
-            "-sourcepath", ".",
+            // The AppHost directory is the working directory and is also a source root under both
+            // supported layouts, so this is what lets the AppHost reference the project's own classes.
+            // It has to be set explicitly because javac otherwise defaults the source path to the class
+            // path, which -classpath has just replaced.
+            //
+            // src/main/java is included as well for the flat layout, where AppHost.java sits beside
+            // pom.xml at the project root and the project's own sources are one source root down. The
+            // build tool only stages dependencies here - it never compiles - so without this entry a
+            // reference to the project's own class fails with "cannot find symbol". Under the
+            // conventional layout the working directory already is src/main/java, which makes the extra
+            // entry a path that does not exist; javac ignores those, so it costs nothing.
+            "-sourcepath", string.Join(Path.PathSeparator, ".", Path.Combine("src", "main", "java")),
             // Output goes to the build tool's own directory rather than the javac toolchain's
             // .java-build, so that `mvn clean` / `gradle clean` removes it and it is already ignored by
             // any Maven or Gradle .gitignore.
