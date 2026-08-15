@@ -31,6 +31,44 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
     }
 
     [Fact]
+    [SkipOnPlatform(TestPlatforms.Windows, "Runs the generated POSIX shell the container build would run")]
+    public async Task VerifyPublish_TheJarSelectionCopiesAnArtifactWhoseNameContainsWhitespace()
+    {
+        var content = await PublishDockerfileAsync(
+            configureSource: source => WriteGradleBuild(source, ""),
+            configureResource: app => app.WithGradleTask("bootRun"));
+
+        // Everything from the selection onwards, so the test runs the real generated shell rather than a
+        // paraphrase of it. The build invocation ahead of it needs Gradle and is not what is under test.
+        var selectionIndex = content.IndexOf("jars=$(ls ", StringComparison.Ordinal);
+        Assert.True(selectionIndex >= 0, "The generated Dockerfile no longer selects the JAR with a glob.");
+        var selection = content[selectionIndex..content.IndexOf('\n', selectionIndex)];
+
+        using var workspace = TemporaryWorkspace.Create(outputHelper);
+        Directory.CreateDirectory(Path.Combine(workspace.Path, "build", "libs"));
+
+        // Gradle's archiveFileName and archivesName are freely settable, as is Maven's finalName, so this
+        // is a legitimate single build output rather than a malformed one.
+        await File.WriteAllTextAsync(Path.Combine(workspace.Path, "build", "libs", "reports service.jar"), "");
+
+        var destination = Path.Combine(workspace.Path, "app.jar");
+        var command = selection.Replace("/build/app.jar", destination, StringComparison.Ordinal);
+
+        using var process = Process.Start(new ProcessStartInfo("sh")
+        {
+            ArgumentList = { "-c", command },
+            WorkingDirectory = workspace.Path,
+            RedirectStandardError = true
+        })!;
+
+        await process.WaitForExitAsync(CancellationToken.None);
+
+        Assert.Equal(string.Empty, await process.StandardError.ReadToEndAsync());
+        Assert.Equal(0, process.ExitCode);
+        Assert.True(File.Exists(destination));
+    }
+
+    [Fact]
     public async Task VerifyPublish_GeneratesAGradleBuild()
     {
         var content = await PublishDockerfileAsync(
@@ -1163,7 +1201,7 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
         var content = await PublishQuarkusDockerfileAsync(source => WritePom(source, javaVersion: "21"));
 
         Assert.Contains("if [ -d target/quarkus-app ]; then", content, StringComparison.Ordinal);
-        Assert.Contains("cp $jars /build/app/quarkus-run.jar", content, StringComparison.Ordinal);
+        Assert.Contains("cp \"$jars\" /build/app/quarkus-run.jar", content, StringComparison.Ordinal);
     }
 
     [Fact]

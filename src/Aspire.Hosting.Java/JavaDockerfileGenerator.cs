@@ -1156,14 +1156,17 @@ internal static partial class JavaDockerfileGenerator
 
         private static string SelectSingleJarCommand(string outputGlob, string destination, string resourceName)
         {
-            // Written as a single line because each Dockerfile RUN is one shell invocation. `ls` output is
-            // safe to iterate here: Maven and Gradle artifact names come from the artifact id and version,
-            // neither of which may contain whitespace.
+            // Written as a single line because each Dockerfile RUN is one shell invocation.
+            //
+            // $jars is quoted at the copy because the artifact name is not guaranteed to be whitespace-free:
+            // Gradle exposes archiveFileName and archivesName, and Maven exposes finalName, so a build can
+            // legitimately produce "reports service.jar". Quoting is safe precisely because the copy is only
+            // reached once the count check has established there is exactly one line.
             return string.Join(" && ",
                 $"jars=$(ls {outputGlob} 2>/dev/null | grep -Ev '(-plain|-sources|-javadoc)\\.jar$' || true)",
                 "count=$(printf '%s\\n' \"$jars\" | grep -c . || true)",
                 $"if [ \"$count\" != \"1\" ]; then echo \"Aspire: expected exactly one application JAR from the build of '{resourceName}' matching {outputGlob}, found $count:\" >&2; echo \"$jars\" >&2; echo \"Use WithJarArtifact(\\\"<relative path>\\\") to select one.\" >&2; exit 1; fi",
-                $"cp $jars {destination}");
+                $"cp \"$jars\" {destination}");
         }
 
         private static string ShellQuote(string value) => $"'{value.Replace("'", "'\\''")}'";
