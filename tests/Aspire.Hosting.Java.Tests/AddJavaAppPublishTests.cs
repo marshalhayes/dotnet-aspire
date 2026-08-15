@@ -424,6 +424,28 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
         """, "21")]
     // A setting that only exists inside a comment leaves nothing to detect.
     [InlineData("// languageVersion = JavaLanguageVersion.of(17)", JavaVersionDetector.DefaultJavaVersion)]
+    // A version-shaped fragment quoted inside a string is not a declaration, and appears first, so
+    // reading it would select a JRE too old to run the application's own bytecode.
+    [InlineData("""
+        tasks.register("noop") { doLast { println("JavaLanguageVersion.of(17)") } }
+        java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
+        """, "21")]
+    [InlineData("""
+        tasks.register("noop") { doLast { println("sourceCompatibility = JavaVersion.VERSION_17") } }
+        java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
+        """, "21")]
+    [InlineData("""
+        tasks.register("noop") { doLast { println("sourceCompatibility = '17'") } }
+        sourceCompatibility = '21'
+        """, "21")]
+    // Quoted and nothing else, so there is no declaration at all.
+    [InlineData("""println("JavaLanguageVersion.of(17)")""", JavaVersionDetector.DefaultJavaVersion)]
+    // An unterminated literal runs to the end of the file for the compiler, so a declaration after it is
+    // not in effect either and must not be read.
+    [InlineData("""
+        println("oops
+        java { toolchain { languageVersion = JavaLanguageVersion.of(17) } }
+        """, JavaVersionDetector.DefaultJavaVersion)]
     public void JavaVersionDetector_ReadsTheTargetReleaseFromAGradleBuildScript(string script, string expected)
     {
         using var appDirectory = new TempJavaAppDirectory();

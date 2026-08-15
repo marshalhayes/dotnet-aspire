@@ -1,6 +1,7 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
+using System.Collections.Immutable;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
@@ -191,19 +192,19 @@ internal static partial class JavaVersionDetector
             return null;
         }
 
-        contents = StripComments(contents);
+        var script = StripComments(contents);
 
-        if (ToolchainRegex().Match(contents) is { Success: true } toolchain)
+        if (FirstActiveMatch(ToolchainRegex(), script) is { } toolchain)
         {
             return Normalize(toolchain.Groups[1].Value);
         }
 
-        if (JavaVersionEnumRegex().Match(contents) is { Success: true } enumMatch)
+        if (FirstActiveMatch(JavaVersionEnumRegex(), script) is { } enumMatch)
         {
             return Normalize(enumMatch.Groups[1].Value.Replace('_', '.'));
         }
 
-        if (CompatibilityRegex().Match(contents) is { Success: true } compatibility)
+        if (FirstActiveMatch(CompatibilityRegex(), script) is { } compatibility)
         {
             return Normalize(compatibility.Groups[1].Value);
         }
@@ -212,7 +213,77 @@ internal static partial class JavaVersionDetector
     }
 
     /// <summary>
-    /// Blanks out line and block comments so a commented-out setting cannot be mistaken for an active one.
+    /// The first match that starts outside a string literal, or <c>null</c> when every match is inside one.
+    /// </summary>
+    /// <remarks>
+    /// The patterns run over the raw script rather than a parsed model, so a version-shaped fragment quoted
+    /// inside a string would otherwise be read as a declaration and win by appearing first:
+    /// <code>
+    /// println("JavaLanguageVersion.of(17)")
+    /// java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
+    /// </code>
+    /// That selects a Java 17 image for a Java 21 application, which fails at runtime with
+    /// <c>UnsupportedClassVersionError</c> rather than at publish time.
+    /// <para>
+    /// Only the match's start is tested, never the whole match. A declaration always begins outside the
+    /// quotes while its value may legitimately sit inside them — <c>sourceCompatibility = '17'</c> is the
+    /// ordinary Groovy spelling — so rejecting matches that merely overlap a literal would stop detecting
+    /// the quoted form that <see cref="CompatibilityRegex"/> exists to read.
+    /// </para>
+    /// </remarks>
+    private static Match? FirstActiveMatch(Regex regex, GradleScript script)
+    {
+        for (var match = regex.Match(script.Text); match.Success; match = match.NextMatch())
+        {
+            if (!script.IsInsideStringLiteral(match.Index))
+            {
+                return match;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// A Gradle build script with its comments removed, and the string literals that survived located.
+    /// </summary>
+    /// <param name="Text">The script with every comment blanked out.</param>
+    /// <param name="StringSpans">
+    /// The half-open interiors of the string literals in <paramref name="Text"/>, ascending and
+    /// non-overlapping, which lets a lookup binary search rather than rescan.
+    /// </param>
+    private readonly record struct GradleScript(string Text, ImmutableArray<Range> StringSpans)
+    {
+        internal bool IsInsideStringLiteral(int offset)
+        {
+            // Ascending and non-overlapping, so the last span starting at or before the offset is the only
+            // one that can contain it.
+            var low = 0;
+            var high = StringSpans.Length - 1;
+            var candidate = -1;
+
+            while (low <= high)
+            {
+                var middle = low + ((high - low) / 2);
+
+                if (StringSpans[middle].Start.Value <= offset)
+                {
+                    candidate = middle;
+                    low = middle + 1;
+                }
+                else
+                {
+                    high = middle - 1;
+                }
+            }
+
+            return candidate >= 0 && offset < StringSpans[candidate].End.Value;
+        }
+    }
+
+    /// <summary>
+    /// Blanks out line and block comments so a commented-out setting cannot be mistaken for an active one,
+    /// and locates the string literals that survive so a quoted one cannot be either.
     /// </summary>
     /// <remarks>
     /// The version patterns are applied to the raw script rather than a parsed model, so without this a
@@ -231,9 +302,10 @@ internal static partial class JavaVersionDetector
     /// Kotlin DSL. Groovy's slashy strings (<c>/pattern/</c>) are not recognized; they do not appear in the
     /// toolchain or compatibility declarations this reads.
     /// </remarks>
-    private static string StripComments(string contents)
+    private static GradleScript StripComments(string contents)
     {
         var builder = new StringBuilder(contents.Length);
+        var spans = ImmutableArray.CreateBuilder<Range>();
         var index = 0;
 
         while (index < contents.Length)
@@ -269,6 +341,11 @@ internal static partial class JavaVersionDetector
                 builder.Append(delimiter);
                 index += delimiter.Length;
 
+                // Recorded in output coordinates, and covering only the interior: a declaration starts
+                // outside the quotes, so keeping the delimiters active is what lets the value of
+                // sourceCompatibility = '17' stay readable while its surroundings stay inert.
+                var interiorStart = builder.Length;
+
                 // The literal's contents are copied through unchanged - only comments are removed - so a
                 // version written as a quoted string, such as sourceCompatibility = '17', still matches.
                 while (index < contents.Length)
@@ -282,6 +359,7 @@ internal static partial class JavaVersionDetector
 
                     if (contents.AsSpan(index).StartsWith(delimiter, StringComparison.Ordinal))
                     {
+                        spans.Add(new Range(interiorStart, builder.Length));
                         builder.Append(delimiter);
                         index += delimiter.Length;
                         break;
@@ -291,6 +369,14 @@ internal static partial class JavaVersionDetector
                     index++;
                 }
 
+                // An unterminated literal runs to the end of the file, which is what the Groovy and Kotlin
+                // compilers see too. Closing it at the last character keeps the rest of the script inert
+                // rather than letting a stray quote re-activate it.
+                if (index >= contents.Length && (spans.Count == 0 || spans[^1].End.Value != builder.Length))
+                {
+                    spans.Add(new Range(interiorStart, builder.Length));
+                }
+
                 continue;
             }
 
@@ -298,7 +384,7 @@ internal static partial class JavaVersionDetector
             index++;
         }
 
-        return builder.ToString();
+        return new GradleScript(builder.ToString(), spans.ToImmutable());
     }
 
     /// <summary>
