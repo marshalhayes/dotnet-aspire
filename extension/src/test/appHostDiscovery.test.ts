@@ -472,6 +472,7 @@ suite('AppHost discovery', () => {
                 assert.ok(watchedPatterns.includes('**/apphost.mjs'));
                 assert.ok(watchedPatterns.includes('**/apphost.cjs'));
                 assert.ok(watchedPatterns.includes('**/apphost.rs'));
+                assert.ok(watchedPatterns.includes('**/apphost.java'));
             }
             finally {
                 service.dispose();

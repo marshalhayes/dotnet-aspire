@@ -27,6 +27,10 @@ suite('appHostLanguage.summarizeAppHostLanguages', () => {
         assert.strictEqual(summarizeAppHostLanguages([c('javascript')]), 'typescript');
     });
 
+    test('returns java when every candidate is Java', () => {
+        assert.strictEqual(summarizeAppHostLanguages([c('java'), c('Java'), c('java/maven')]), 'java');
+    });
+
     test('returns rust when every candidate is Rust', () => {
         assert.strictEqual(summarizeAppHostLanguages([c('rust'), c('Rust'), c('rust/cargo')]), 'rust');
     });
@@ -38,6 +42,7 @@ suite('appHostLanguage.summarizeAppHostLanguages', () => {
     test('returns polyglot when Rust is mixed with another known language', () => {
         assert.strictEqual(summarizeAppHostLanguages([c('csharp'), c('rust')]), 'polyglot');
         assert.strictEqual(summarizeAppHostLanguages([c('typescript'), c('rust')]), 'polyglot');
+        assert.strictEqual(summarizeAppHostLanguages([c('java'), c('rust')]), 'polyglot');
     });
 
     test('returns polyglot when an unknown language is mixed with a known one', () => {
@@ -94,6 +99,7 @@ suite('appHostLanguage.classifyAppHostPath', () => {
         assert.strictEqual(classifyAppHostPath('APPHOST.CSPROJ'), 'csharp');
         assert.strictEqual(classifyAppHostPath('AppHost.TS'), 'typescript');
         assert.strictEqual(classifyAppHostPath('AppHost.RS'), 'rust');
+        assert.strictEqual(classifyAppHostPath('/abs/path/AppHost.java'), 'java');
     });
 });
 
@@ -162,6 +168,36 @@ suite('appHostLanguage.classifyAppHostDirectory', () => {
         const dir = makeTempDir();
         writeFileSync(join(dir, 'apphost.rs'), 'fn main() {}');
         assert.strictEqual(await classifyAppHostDirectory(dir), 'rust');
+    });
+
+    test('classifies directory containing an AppHost.java as java', async () => {
+        const dir = makeTempDir();
+        writeFileSync(join(dir, 'AppHost.java'), 'class AppHost {}');
+        assert.strictEqual(await classifyAppHostDirectory(dir), 'java');
+    });
+
+    test('classifies a Maven AppHost that keeps its source under src/main/java as java', async () => {
+        const dir = makeTempDir();
+        writeFileSync(join(dir, 'pom.xml'), '<project/>');
+        mkdirSync(join(dir, 'src', 'main', 'java'), { recursive: true });
+        writeFileSync(join(dir, 'src', 'main', 'java', 'AppHost.java'), 'class AppHost {}');
+        assert.strictEqual(await classifyAppHostDirectory(dir), 'java');
+    });
+
+    test('classifies a Gradle AppHost that keeps its source under src/main/java as java', async () => {
+        const dir = makeTempDir();
+        writeFileSync(join(dir, 'build.gradle.kts'), '');
+        mkdirSync(join(dir, 'src', 'main', 'java'), { recursive: true });
+        writeFileSync(join(dir, 'src', 'main', 'java', 'AppHost.java'), 'class AppHost {}');
+        assert.strictEqual(await classifyAppHostDirectory(dir), 'java');
+    });
+
+    test('does not classify an ordinary Maven project without an AppHost as java', async () => {
+        const dir = makeTempDir();
+        writeFileSync(join(dir, 'pom.xml'), '<project/>');
+        mkdirSync(join(dir, 'src', 'main', 'java'), { recursive: true });
+        writeFileSync(join(dir, 'src', 'main', 'java', 'Application.java'), 'class Application {}');
+        assert.strictEqual(await classifyAppHostDirectory(dir), 'unknown');
     });
 
     test('returns unknown for a directory with no recognized AppHost markers', async () => {
