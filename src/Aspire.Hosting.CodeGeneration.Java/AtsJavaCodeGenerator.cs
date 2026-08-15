@@ -955,7 +955,12 @@ internal sealed class AtsJavaCodeGenerator : ICodeGenerator
         string returnType,
         string methodName,
         IReadOnlyList<JavaMethodParameter> parameters,
-        bool hasReturn)
+        bool hasReturn,
+        // Signatures already emitted for this method. A caller that invokes this more than once for the
+        // same Java method - as the union expansion does, once per union member and once per arity - has
+        // to share one set, because two union members can both map to the same bridge parameter type and
+        // emitting that bridge twice is a duplicate-method compile error.
+        HashSet<string>? seenSignatures = null)
     {
         if (parameters.Count == 0)
         {
@@ -972,7 +977,7 @@ internal sealed class AtsJavaCodeGenerator : ICodeGenerator
             return;
         }
 
-        var seenSignatures = new HashSet<string>(StringComparer.Ordinal);
+        seenSignatures ??= new HashSet<string>(StringComparer.Ordinal);
         var combinationCount = 1 << convertibleParameters.Count;
 
         for (var mask = 1; mask < combinationCount; mask++)
@@ -1206,6 +1211,8 @@ internal sealed class AtsJavaCodeGenerator : ICodeGenerator
         }
 
         var unionParamName = ToCamelCase(unionParameter.Name);
+        // Shared for the same reason as the with-options path: two union members can map to one bridge.
+        var bridgeSignatures = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var unionType in unionTypes
             .Select(type => new { Type = type, JavaType = MapInputTypeToJava(type, unionParameter.IsOptional || unionParameter.IsNullable) })
@@ -1246,7 +1253,8 @@ internal sealed class AtsJavaCodeGenerator : ICodeGenerator
                 returnInfo.ReturnType,
                 methodName,
                 CreateUnionMethodParameters(parameters, unionParameter, unionType),
-                returnInfo.HasReturn);
+                returnInfo.HasReturn,
+                bridgeSignatures);
         }
     }
 
@@ -1392,6 +1400,9 @@ internal sealed class AtsJavaCodeGenerator : ICodeGenerator
         }
 
         var unionParamName = ToCamelCase(unionParameter.Name);
+        // One set for the whole method: the loop below emits a bridge overload per union member and
+        // per arity, and two members can map to the same bridge signature.
+        var bridgeSignatures = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var unionType in unionTypes
             .Select(type => new { Type = type, JavaType = MapInputTypeToJava(type, unionParameter.IsOptional || unionParameter.IsNullable) })
@@ -1440,7 +1451,8 @@ internal sealed class AtsJavaCodeGenerator : ICodeGenerator
                 returnInfo.ReturnType,
                 methodName,
                 bridgeParameters,
-                returnInfo.HasReturn);
+                returnInfo.HasReturn,
+                bridgeSignatures);
 
             WriteLine($"    public {returnInfo.ReturnType} {methodName}({string.Join(", ", requiredParameters.Select(parameter => ReferenceEquals(parameter, unionParameter) ? $"{MapInputTypeToJava(unionType, unionParameter.IsOptional || unionParameter.IsNullable)} {ToCamelCase(parameter.Name)}" : $"{MapParameterToJava(parameter)} {ToCamelCase(parameter.Name)}"))}) {{");
             if (returnInfo.HasReturn)
@@ -1453,6 +1465,17 @@ internal sealed class AtsJavaCodeGenerator : ICodeGenerator
             }
             WriteLine("    }");
             WriteLine();
+
+            // The options arity above gets a bridge that accepts a generated resource class, so this
+            // arity needs one too. Without it `frontend.withReference(app)` does not compile - the only
+            // single-argument overloads would be the handle wrapper, the endpoint reference, the string
+            // and the union, and a generated resource such as NodeAppResource is none of those.
+            GenerateResourceBuilderOverloads(
+                returnInfo.ReturnType,
+                methodName,
+                CreateUnionMethodParameters(requiredParameters, unionParameter, unionType),
+                returnInfo.HasReturn,
+                bridgeSignatures);
         }
     }
 

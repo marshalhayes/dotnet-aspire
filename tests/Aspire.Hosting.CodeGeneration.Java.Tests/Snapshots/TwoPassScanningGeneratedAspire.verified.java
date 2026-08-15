@@ -1986,6 +1986,10 @@ public class CSharpAppResource extends ProjectResource {
         return withReference(AspireUnion.of(source));
     }
 
+    public CSharpAppResource withReference(ResourceBuilderBase source) {
+        return withReference(new IResource(source.getHandle(), source.getClient()));
+    }
+
     public CSharpAppResource withReference(EndpointReference source, WithReferenceOptions options) {
         return withReference(AspireUnion.of(source), options);
     }
@@ -6120,6 +6124,10 @@ public class ContainerResource extends ResourceBuilderBase {
         return withReference(AspireUnion.of(source));
     }
 
+    public ContainerResource withReference(ResourceBuilderBase source) {
+        return withReference(new IResource(source.getHandle(), source.getClient()));
+    }
+
     public ContainerResource withReference(EndpointReference source, WithReferenceOptions options) {
         return withReference(AspireUnion.of(source), options);
     }
@@ -8788,6 +8796,10 @@ public class DotnetToolResource extends ExecutableResource {
         return withReference(AspireUnion.of(source));
     }
 
+    public DotnetToolResource withReference(ResourceBuilderBase source) {
+        return withReference(new IResource(source.getHandle(), source.getClient()));
+    }
+
     public DotnetToolResource withReference(EndpointReference source, WithReferenceOptions options) {
         return withReference(AspireUnion.of(source), options);
     }
@@ -11097,6 +11109,10 @@ public class ExecutableResource extends ResourceBuilderBase {
 
     public ExecutableResource withReference(IResource source) {
         return withReference(AspireUnion.of(source));
+    }
+
+    public ExecutableResource withReference(ResourceBuilderBase source) {
+        return withReference(new IResource(source.getHandle(), source.getClient()));
     }
 
     public ExecutableResource withReference(EndpointReference source, WithReferenceOptions options) {
@@ -19063,6 +19079,10 @@ public class ProjectResource extends ResourceBuilderBase {
         return withReference(AspireUnion.of(source));
     }
 
+    public ProjectResource withReference(ResourceBuilderBase source) {
+        return withReference(new IResource(source.getHandle(), source.getClient()));
+    }
+
     public ProjectResource withReference(EndpointReference source, WithReferenceOptions options) {
         return withReference(AspireUnion.of(source), options);
     }
@@ -21110,6 +21130,10 @@ public class ResourceCommandService extends HandleWrapperBase {
         return executeCommandAsync(AspireUnion.of(resource), commandName);
     }
 
+    public ExecuteCommandResult executeCommandAsync(ResourceBuilderBase resource, String commandName) {
+        return executeCommandAsync(new IResource(resource.getHandle(), resource.getClient()), commandName);
+    }
+
     /** Executes a command for the specified resource. */
     public ExecuteCommandResult executeCommandAsync(AspireUnion resource, String commandName, ExecuteCommandAsyncOptions optionsBag) {
         var arguments = optionsBag == null ? null : optionsBag.getArguments();
@@ -22454,6 +22478,10 @@ public class TestDatabaseResource extends ContainerResource {
 
     public TestDatabaseResource withReference(IResource source) {
         return withReference(AspireUnion.of(source));
+    }
+
+    public TestDatabaseResource withReference(ResourceBuilderBase source) {
+        return withReference(new IResource(source.getHandle(), source.getClient()));
     }
 
     public TestDatabaseResource withReference(EndpointReference source, WithReferenceOptions options) {
@@ -24633,6 +24661,10 @@ public class TestRedisResource extends ContainerResource {
 
     public TestRedisResource withReference(IResource source) {
         return withReference(AspireUnion.of(source));
+    }
+
+    public TestRedisResource withReference(ResourceBuilderBase source) {
+        return withReference(new IResource(source.getHandle(), source.getClient()));
     }
 
     public TestRedisResource withReference(EndpointReference source, WithReferenceOptions options) {
@@ -26848,6 +26880,10 @@ public class TestVaultResource extends ContainerResource {
 
     public TestVaultResource withReference(IResource source) {
         return withReference(AspireUnion.of(source));
+    }
+
+    public TestVaultResource withReference(ResourceBuilderBase source) {
+        return withReference(new IResource(source.getHandle(), source.getClient()));
     }
 
     public TestVaultResource withReference(EndpointReference source, WithReferenceOptions options) {
