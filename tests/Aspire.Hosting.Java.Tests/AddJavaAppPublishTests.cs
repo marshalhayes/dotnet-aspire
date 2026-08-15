@@ -756,8 +756,109 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
         }
     }
 
-    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunDockerCommandAsync(string arguments, string workingDirectory)
+    [Fact]
+    [RequiresFeature(TestFeature.Docker | TestFeature.ContainerImageBuild)]
+    [OuterloopTest("Builds a real Maven wrapper project inside the generated image and runs it")]
+    public async Task VerifyPublish_WrapperBuiltImageBuildsTheProjectAndRunsIt()
     {
+        // The prebuilt-JAR test above never exercises the build stage. This one covers the path almost
+        // every real project takes: the image runs the project's own wrapper, the wrapper downloads the
+        // pinned Maven, the build produces the JAR, and the runtime stage starts it as a non-root user.
+        using var workspace = TemporaryWorkspace.Create(outputHelper);
+        var sourceDir = workspace.CreateDirectory("source");
+        var outputDir = workspace.CreateDirectory("output");
+
+        await File.WriteAllTextAsync(
+            Path.Combine(sourceDir.FullName, "pom.xml"),
+            $"""
+            <?xml version="1.0" encoding="UTF-8"?>
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+              <modelVersion>4.0.0</modelVersion>
+              <groupId>com.example</groupId>
+              <artifactId>api</artifactId>
+              <version>1.0.0</version>
+              <properties>
+                <maven.compiler.release>{JavaVersionDetector.DefaultJavaVersion}</maven.compiler.release>
+                <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+              </properties>
+              <build>
+                <plugins>
+                  <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-jar-plugin</artifactId>
+                    <configuration>
+                      <archive>
+                        <manifest>
+                          <mainClass>App</mainClass>
+                        </manifest>
+                      </archive>
+                    </configuration>
+                  </plugin>
+                </plugins>
+              </build>
+            </project>
+            """,
+            TestContext.Current.CancellationToken);
+
+        var sourcePath = Directory.CreateDirectory(Path.Combine(sourceDir.FullName, "src", "main", "java"));
+        await File.WriteAllTextAsync(
+            Path.Combine(sourcePath.FullName, "App.java"),
+            """
+            public class App {
+                public static void main(String[] args) {
+                    System.out.println("wrapper build ok: " + System.getProperty("user.name"));
+                }
+            }
+            """,
+            TestContext.Current.CancellationToken);
+
+        // Generated with a real Maven so the wrapper and its properties file are the genuine article
+        // rather than a stub that would never prove the download-and-unpack layer works.
+        var wrapperResult = await RunDockerCommandAsync(
+            $"run --rm -v {sourceDir.FullName}:/work -w /work docker.io/library/maven:3.9-eclipse-temurin-{JavaVersionDetector.DefaultJavaVersion} " +
+            "mvn -B -q -N wrapper:wrapper",
+            sourceDir.FullName);
+        Assert.True(wrapperResult.ExitCode == 0, $"Generating the Maven wrapper failed.\nStdout: {wrapperResult.Stdout}\nStderr: {wrapperResult.Stderr}");
+
+        using (var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish, outputDir.FullName, step: "publish-manifest"))
+        {
+            builder.AddJavaApp("api", sourceDir.FullName)
+                   .WithMavenBuild()
+                   .WithJarArtifact("target/api-1.0.0.jar");
+
+            builder.Build().Run();
+        }
+
+        File.Copy(
+            Path.Combine(outputDir.FullName, "api.Dockerfile"),
+            Path.Combine(sourceDir.FullName, "Dockerfile"));
+        File.Copy(
+            Path.Combine(outputDir.FullName, "api.Dockerfile.dockerignore"),
+            Path.Combine(sourceDir.FullName, ".dockerignore"));
+
+        var imageName = $"aspire-java-wrapper-test-{Guid.NewGuid():N}";
+
+        try
+        {
+            // The build stage needs the network to download Maven and the plugins, so unlike the prebuilt
+            // JAR test this one cannot build offline.
+            var buildResult = await RunDockerCommandAsync($"build --network=host -t {imageName} -f Dockerfile .", sourceDir.FullName);
+            Assert.True(buildResult.ExitCode == 0, $"Docker build failed with exit code {buildResult.ExitCode}.\nStdout: {buildResult.Stdout}\nStderr: {buildResult.Stderr}");
+
+            var runResult = await RunDockerCommandAsync($"run --rm --network=none {imageName}", sourceDir.FullName);
+            Assert.True(runResult.ExitCode == 0, $"Docker run failed with exit code {runResult.ExitCode}.\nStdout: {runResult.Stdout}\nStderr: {runResult.Stderr}");
+
+            // The runtime stage creates and switches to an unprivileged "app" user, so seeing it here
+            // proves both that the wrapper build produced a runnable JAR and that USER took effect.
+            Assert.Contains("wrapper build ok: app", runResult.Stdout);
+        }
+        finally
+        {
+            await RunDockerCommandAsync($"rmi {imageName}", sourceDir.FullName);
+        }
+    }
+
+    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunDockerCommandAsync(string arguments, string workingDirectory)    {
         using var process = Process.Start(new ProcessStartInfo
         {
             FileName = "docker",

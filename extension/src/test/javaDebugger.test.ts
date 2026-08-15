@@ -4,8 +4,10 @@ import * as sinon from 'sinon';
 import * as vscode from 'vscode';
 import { getSupportedCapabilities } from '../capabilities';
 import { AspireDebugSession } from '../debugger/AspireDebugSession';
+import * as debuggerExtensionsModule from '../debugger/debuggerExtensions';
 import { getResourceDebuggerExtensions } from '../debugger/debuggerExtensions';
 import { javaDebuggerExtension, parseJavaAppHostCommand } from '../debugger/languages/java';
+import { javaAppHostCommandNotRecognized, javaDebuggerExtensionNotInstalled } from '../loc/strings';
 import { AspireResourceExtendedDebugConfiguration, GoLaunchConfiguration, JavaLaunchConfiguration } from '../dcp/types';
 
 suite('Java Debugger Extension Tests', () => {
@@ -312,6 +314,88 @@ suite('Java Debugger Extension Tests', () => {
 
     test('supports Java source files', () => {
         assert.deepStrictEqual(javaDebuggerExtension.getSupportedFileTypes(), ['.java']);
+    });
+
+    test('stops a Java AppHost launch with install guidance when the debug adapter is not installed', async () => {
+        // startAppHost builds the debugger descriptor directly instead of going through
+        // getResourceDebuggerExtensions, so without its own gate VS Code fails the session with the raw
+        // "configured debug type is not supported" rather than naming the extension to install.
+        stubInstalledExtensions([]);
+        const showErrorMessage = sinon.stub(vscode.window, 'showErrorMessage');
+        sinon.stub(vscode.debug, 'stopDebugging').resolves();
+        const createDebugSessionConfiguration = sinon.stub(debuggerExtensionsModule, 'createDebugSessionConfiguration');
+
+        const parentDebugSession = {
+            id: 'aspire-session',
+            type: 'aspire',
+            name: 'Aspire',
+            configuration: {
+                type: 'aspire',
+                request: 'launch',
+                name: 'Aspire',
+                program: '/workspace/AppHost.java',
+                command: 'run',
+            },
+        };
+
+        const debugSession = new AspireDebugSession(
+            parentDebugSession as unknown as vscode.DebugSession,
+            {} as any,
+            {} as any,
+            {} as any,
+            () => { });
+        sinon.stub(debugSession, 'createDebugAdapterTrackerCore');
+
+        await debugSession.startAppHost(
+            '/workspace/AppHost.java',
+            ['java', '-cp', 'target/classes', 'AppHost'],
+            [],
+            true,
+            { forceBuild: false });
+
+        sinon.assert.notCalled(createDebugSessionConfiguration);
+        sinon.assert.calledOnce(showErrorMessage);
+        assert.strictEqual(
+            showErrorMessage.firstCall.args[0],
+            javaDebuggerExtensionNotInstalled(javaDebuggerExtension.extensionId!));
+    });
+
+    test('stops a Java AppHost launch when the command cannot be parsed into a launch configuration', async () => {
+        // Guessing here would start a JVM with the wrong arguments, so an unrecognised command has to
+        // fail loudly rather than be approximated.
+        stubInstalledExtensions(['redhat.java', 'vscjava.vscode-java-debug']);
+        const showErrorMessage = sinon.stub(vscode.window, 'showErrorMessage');
+        sinon.stub(vscode.debug, 'stopDebugging').resolves();
+        const createDebugSessionConfiguration = sinon.stub(debuggerExtensionsModule, 'createDebugSessionConfiguration');
+
+        const parentDebugSession = {
+            id: 'aspire-session',
+            type: 'aspire',
+            name: 'Aspire',
+            configuration: {
+                type: 'aspire',
+                request: 'launch',
+                name: 'Aspire',
+                program: '/workspace/AppHost.java',
+                command: 'run',
+            },
+        };
+
+        const debugSession = new AspireDebugSession(
+            parentDebugSession as unknown as vscode.DebugSession,
+            {} as any,
+            {} as any,
+            {} as any,
+            () => { });
+        sinon.stub(debugSession, 'createDebugAdapterTrackerCore');
+
+        await debugSession.startAppHost('/workspace/AppHost.java', ['java', '-Xmx512m'], [], true, { forceBuild: false });
+
+        sinon.assert.notCalled(createDebugSessionConfiguration);
+        sinon.assert.calledOnce(showErrorMessage);
+        assert.strictEqual(
+            showErrorMessage.firstCall.args[0],
+            javaAppHostCommandNotRecognized('java -Xmx512m'));
     });
 });
 
