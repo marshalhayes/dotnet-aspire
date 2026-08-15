@@ -2144,7 +2144,7 @@ public class CSharpAppResource extends ProjectResource {
     }
 
     /** Adds a network endpoint */
-    private CSharpAppResource withEndpointImpl(Double port, Double targetPort, String scheme, String name, String env, Boolean isProxied, Boolean isExternal, ProtocolType protocol) {
+    private CSharpAppResource withEndpointImpl(Number port, Number targetPort, String scheme, String name, String env, Boolean isProxied, Boolean isExternal, ProtocolType protocol) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (port != null) {
@@ -2199,7 +2199,7 @@ public class CSharpAppResource extends ProjectResource {
     }
 
     /** Adds an HTTP endpoint */
-    private CSharpAppResource withHttpEndpointImpl(Double port, Double targetPort, String name, String env, Boolean isProxied) {
+    private CSharpAppResource withHttpEndpointImpl(Number port, Number targetPort, String name, String env, Boolean isProxied) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (port != null) {
@@ -2236,7 +2236,7 @@ public class CSharpAppResource extends ProjectResource {
     }
 
     /** Adds an HTTPS endpoint */
-    private CSharpAppResource withHttpsEndpointImpl(Double port, Double targetPort, String name, String env, Boolean isProxied) {
+    private CSharpAppResource withHttpsEndpointImpl(Number port, Number targetPort, String name, String env, Boolean isProxied) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (port != null) {
@@ -2427,7 +2427,7 @@ public class CSharpAppResource extends ProjectResource {
     }
 
     /** Waits for the dependency resource to enter the Exited or Finished state before starting the resource. */
-    public CSharpAppResource waitForCompletion(IResource dependency, Double exitCode) {
+    public CSharpAppResource waitForCompletion(IResource dependency, Number exitCode) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("dependency", AspireClient.serializeValue(dependency));
@@ -2438,7 +2438,7 @@ public class CSharpAppResource extends ProjectResource {
         return this;
     }
 
-    public CSharpAppResource waitForCompletion(ResourceBuilderBase dependency, Double exitCode) {
+    public CSharpAppResource waitForCompletion(ResourceBuilderBase dependency, Number exitCode) {
         return waitForCompletion(new IResource(dependency.getHandle(), dependency.getClient()), exitCode);
     }
 
@@ -2464,7 +2464,7 @@ public class CSharpAppResource extends ProjectResource {
     }
 
     /** Adds a health check to the resource which is mapped to a specific endpoint. */
-    private CSharpAppResource withHttpHealthCheckImpl(String path, Double statusCode, String endpointName) {
+    private CSharpAppResource withHttpHealthCheckImpl(String path, Number statusCode, String endpointName) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (path != null) {
@@ -2715,7 +2715,7 @@ public class CSharpAppResource extends ProjectResource {
     }
 
     /** Adds an HTTP health probe to the resource */
-    private CSharpAppResource withHttpProbeImpl(ProbeType probeType, String path, Double initialDelaySeconds, Double periodSeconds, Double timeoutSeconds, Double failureThreshold, Double successThreshold, String endpointName) {
+    private CSharpAppResource withHttpProbeImpl(ProbeType probeType, String path, Number initialDelaySeconds, Number periodSeconds, Number timeoutSeconds, Number failureThreshold, Number successThreshold, String endpointName) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("probeType", AspireClient.serializeValue(probeType));
@@ -2772,7 +2772,7 @@ public class CSharpAppResource extends ProjectResource {
     }
 
     /** Hides the resource from default resource lists after successful completion */
-    private CSharpAppResource withHiddenOnCompletionImpl(Double exitCode, double[] exitCodes) {
+    private CSharpAppResource withHiddenOnCompletionImpl(Number exitCode, double[] exitCodes) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (exitCode != null) {
@@ -3269,7 +3269,7 @@ public class CSharpAppResource extends ProjectResource {
     }
 
     /** Configures resource logging */
-    private CSharpAppResource withMergeLoggingImpl(String logLevel, Boolean enableConsole, Double maxFiles) {
+    private CSharpAppResource withMergeLoggingImpl(String logLevel, Boolean enableConsole, Number maxFiles) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("logLevel", AspireClient.serializeValue(logLevel));
@@ -3295,7 +3295,7 @@ public class CSharpAppResource extends ProjectResource {
     }
 
     /** Configures resource logging with file path */
-    private CSharpAppResource withMergeLoggingPathImpl(String logLevel, String logPath, Boolean enableConsole, Double maxFiles) {
+    private CSharpAppResource withMergeLoggingPathImpl(String logLevel, String logPath, Boolean enableConsole, Number maxFiles) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("logLevel", AspireClient.serializeValue(logLevel));
@@ -4218,7 +4218,7 @@ public class ContainerFileSystemCallbackContext extends HandleWrapperBase {
     }
 
     /** Creates a container file entry with inline contents or a host source path. */
-    private ContainerFileSystemItem createFileImpl(String name, String contents, String sourcePath, Double owner, Double group, Double mode, Boolean continueOnError) {
+    private ContainerFileSystemItem createFileImpl(String name, String contents, String sourcePath, Number owner, Number group, Number mode, Boolean continueOnError) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("context", AspireClient.serializeValue(getHandle()));
         reqArgs.put("name", AspireClient.serializeValue(name));
@@ -4260,7 +4260,7 @@ public class ContainerFileSystemCallbackContext extends HandleWrapperBase {
     }
 
     /** Creates a PEM container certificate file entry with the OpenSSL subject-hash symlink. */
-    private ContainerFileSystemItem createCertificateFileImpl(String name, String contents, String sourcePath, Double owner, Double group, Double mode, Boolean continueOnError) {
+    private ContainerFileSystemItem createCertificateFileImpl(String name, String contents, String sourcePath, Number owner, Number group, Number mode, Boolean continueOnError) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("context", AspireClient.serializeValue(getHandle()));
         reqArgs.put("name", AspireClient.serializeValue(name));
@@ -4299,7 +4299,7 @@ public class ContainerFileSystemCallbackContext extends HandleWrapperBase {
     }
 
     /** Creates a container directory entry containing the specified child entries. */
-    private ContainerFileSystemItem createDirectoryImpl(String name, ContainerFileSystemItem[] entries, Double owner, Double group, Double mode) {
+    private ContainerFileSystemItem createDirectoryImpl(String name, ContainerFileSystemItem[] entries, Number owner, Number group, Number mode) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("context", AspireClient.serializeValue(getHandle()));
         reqArgs.put("name", AspireClient.serializeValue(name));
@@ -4345,16 +4345,16 @@ import java.util.function.*;
 
 /** ContainerFilesOptions DTO. */
 public class ContainerFilesOptions implements JsonSerializable {
-    private Double defaultOwner;
-    private Double defaultGroup;
-    private Double umask;
+    private Number defaultOwner;
+    private Number defaultGroup;
+    private Number umask;
 
-    public Double getDefaultOwner() { return defaultOwner; }
-    public void setDefaultOwner(Double value) { this.defaultOwner = value; }
-    public Double getDefaultGroup() { return defaultGroup; }
-    public void setDefaultGroup(Double value) { this.defaultGroup = value; }
-    public Double getUmask() { return umask; }
-    public void setUmask(Double value) { this.umask = value; }
+    public Number getDefaultOwner() { return defaultOwner; }
+    public void setDefaultOwner(Number value) { this.defaultOwner = value; }
+    public Number getDefaultGroup() { return defaultGroup; }
+    public void setDefaultGroup(Number value) { this.defaultGroup = value; }
+    public Number getUmask() { return umask; }
+    public void setUmask(Number value) { this.umask = value; }
 
     @SuppressWarnings("unchecked")
     public static ContainerFilesOptions fromMap(Map<String, Object> map) {
@@ -5065,7 +5065,7 @@ public class ContainerRegistryResource extends ResourceBuilderBase {
     }
 
     /** Hides the resource from default resource lists after successful completion */
-    private ContainerRegistryResource withHiddenOnCompletionImpl(Double exitCode, double[] exitCodes) {
+    private ContainerRegistryResource withHiddenOnCompletionImpl(Number exitCode, double[] exitCodes) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (exitCode != null) {
@@ -5478,7 +5478,7 @@ public class ContainerRegistryResource extends ResourceBuilderBase {
     }
 
     /** Configures resource logging */
-    private ContainerRegistryResource withMergeLoggingImpl(String logLevel, Boolean enableConsole, Double maxFiles) {
+    private ContainerRegistryResource withMergeLoggingImpl(String logLevel, Boolean enableConsole, Number maxFiles) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("logLevel", AspireClient.serializeValue(logLevel));
@@ -5504,7 +5504,7 @@ public class ContainerRegistryResource extends ResourceBuilderBase {
     }
 
     /** Configures resource logging with file path */
-    private ContainerRegistryResource withMergeLoggingPathImpl(String logLevel, String logPath, Boolean enableConsole, Double maxFiles) {
+    private ContainerRegistryResource withMergeLoggingPathImpl(String logLevel, String logPath, Boolean enableConsole, Number maxFiles) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("logLevel", AspireClient.serializeValue(logLevel));
@@ -6282,7 +6282,7 @@ public class ContainerResource extends ResourceBuilderBase {
     }
 
     /** Adds a network endpoint */
-    private ContainerResource withEndpointImpl(Double port, Double targetPort, String scheme, String name, String env, Boolean isProxied, Boolean isExternal, ProtocolType protocol) {
+    private ContainerResource withEndpointImpl(Number port, Number targetPort, String scheme, String name, String env, Boolean isProxied, Boolean isExternal, ProtocolType protocol) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (port != null) {
@@ -6337,7 +6337,7 @@ public class ContainerResource extends ResourceBuilderBase {
     }
 
     /** Adds an HTTP endpoint */
-    private ContainerResource withHttpEndpointImpl(Double port, Double targetPort, String name, String env, Boolean isProxied) {
+    private ContainerResource withHttpEndpointImpl(Number port, Number targetPort, String name, String env, Boolean isProxied) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (port != null) {
@@ -6374,7 +6374,7 @@ public class ContainerResource extends ResourceBuilderBase {
     }
 
     /** Adds an HTTPS endpoint */
-    private ContainerResource withHttpsEndpointImpl(Double port, Double targetPort, String name, String env, Boolean isProxied) {
+    private ContainerResource withHttpsEndpointImpl(Number port, Number targetPort, String name, String env, Boolean isProxied) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (port != null) {
@@ -6551,7 +6551,7 @@ public class ContainerResource extends ResourceBuilderBase {
     }
 
     /** Waits for the dependency resource to enter the Exited or Finished state before starting the resource. */
-    public ContainerResource waitForCompletion(IResource dependency, Double exitCode) {
+    public ContainerResource waitForCompletion(IResource dependency, Number exitCode) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("dependency", AspireClient.serializeValue(dependency));
@@ -6562,7 +6562,7 @@ public class ContainerResource extends ResourceBuilderBase {
         return this;
     }
 
-    public ContainerResource waitForCompletion(ResourceBuilderBase dependency, Double exitCode) {
+    public ContainerResource waitForCompletion(ResourceBuilderBase dependency, Number exitCode) {
         return waitForCompletion(new IResource(dependency.getHandle(), dependency.getClient()), exitCode);
     }
 
@@ -6588,7 +6588,7 @@ public class ContainerResource extends ResourceBuilderBase {
     }
 
     /** Adds a health check to the resource which is mapped to a specific endpoint. */
-    private ContainerResource withHttpHealthCheckImpl(String path, Double statusCode, String endpointName) {
+    private ContainerResource withHttpHealthCheckImpl(String path, Number statusCode, String endpointName) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (path != null) {
@@ -6839,7 +6839,7 @@ public class ContainerResource extends ResourceBuilderBase {
     }
 
     /** Adds an HTTP health probe to the resource */
-    private ContainerResource withHttpProbeImpl(ProbeType probeType, String path, Double initialDelaySeconds, Double periodSeconds, Double timeoutSeconds, Double failureThreshold, Double successThreshold, String endpointName) {
+    private ContainerResource withHttpProbeImpl(ProbeType probeType, String path, Number initialDelaySeconds, Number periodSeconds, Number timeoutSeconds, Number failureThreshold, Number successThreshold, String endpointName) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("probeType", AspireClient.serializeValue(probeType));
@@ -6896,7 +6896,7 @@ public class ContainerResource extends ResourceBuilderBase {
     }
 
     /** Hides the resource from default resource lists after successful completion */
-    private ContainerResource withHiddenOnCompletionImpl(Double exitCode, double[] exitCodes) {
+    private ContainerResource withHiddenOnCompletionImpl(Number exitCode, double[] exitCodes) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (exitCode != null) {
@@ -7410,7 +7410,7 @@ public class ContainerResource extends ResourceBuilderBase {
     }
 
     /** Configures resource logging */
-    private ContainerResource withMergeLoggingImpl(String logLevel, Boolean enableConsole, Double maxFiles) {
+    private ContainerResource withMergeLoggingImpl(String logLevel, Boolean enableConsole, Number maxFiles) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("logLevel", AspireClient.serializeValue(logLevel));
@@ -7436,7 +7436,7 @@ public class ContainerResource extends ResourceBuilderBase {
     }
 
     /** Configures resource logging with file path */
-    private ContainerResource withMergeLoggingPathImpl(String logLevel, String logPath, Boolean enableConsole, Double maxFiles) {
+    private ContainerResource withMergeLoggingPathImpl(String logLevel, String logPath, Boolean enableConsole, Number maxFiles) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("logLevel", AspireClient.serializeValue(logLevel));
@@ -7596,9 +7596,9 @@ import java.util.function.*;
 public final class CreateCertificateFileOptions {
     private String contents;
     private String sourcePath;
-    private Double owner;
-    private Double group;
-    private Double mode;
+    private Number owner;
+    private Number group;
+    private Number mode;
     private Boolean continueOnError;
 
     public String getContents() { return contents; }
@@ -7613,20 +7613,20 @@ public final class CreateCertificateFileOptions {
         return this;
     }
 
-    public Double getOwner() { return owner; }
-    public CreateCertificateFileOptions owner(Double value) {
+    public Number getOwner() { return owner; }
+    public CreateCertificateFileOptions owner(Number value) {
         this.owner = value;
         return this;
     }
 
-    public Double getGroup() { return group; }
-    public CreateCertificateFileOptions group(Double value) {
+    public Number getGroup() { return group; }
+    public CreateCertificateFileOptions group(Number value) {
         this.group = value;
         return this;
     }
 
-    public Double getMode() { return mode; }
-    public CreateCertificateFileOptions mode(Double value) {
+    public Number getMode() { return mode; }
+    public CreateCertificateFileOptions mode(Number value) {
         this.mode = value;
         return this;
     }
@@ -7676,24 +7676,24 @@ import java.util.function.*;
 
 /** Options for CreateDirectory. */
 public final class CreateDirectoryOptions {
-    private Double owner;
-    private Double group;
-    private Double mode;
+    private Number owner;
+    private Number group;
+    private Number mode;
 
-    public Double getOwner() { return owner; }
-    public CreateDirectoryOptions owner(Double value) {
+    public Number getOwner() { return owner; }
+    public CreateDirectoryOptions owner(Number value) {
         this.owner = value;
         return this;
     }
 
-    public Double getGroup() { return group; }
-    public CreateDirectoryOptions group(Double value) {
+    public Number getGroup() { return group; }
+    public CreateDirectoryOptions group(Number value) {
         this.group = value;
         return this;
     }
 
-    public Double getMode() { return mode; }
-    public CreateDirectoryOptions mode(Double value) {
+    public Number getMode() { return mode; }
+    public CreateDirectoryOptions mode(Number value) {
         this.mode = value;
         return this;
     }
@@ -7712,9 +7712,9 @@ import java.util.function.*;
 public final class CreateFileOptions {
     private String contents;
     private String sourcePath;
-    private Double owner;
-    private Double group;
-    private Double mode;
+    private Number owner;
+    private Number group;
+    private Number mode;
     private Boolean continueOnError;
 
     public String getContents() { return contents; }
@@ -7729,20 +7729,20 @@ public final class CreateFileOptions {
         return this;
     }
 
-    public Double getOwner() { return owner; }
-    public CreateFileOptions owner(Double value) {
+    public Number getOwner() { return owner; }
+    public CreateFileOptions owner(Number value) {
         this.owner = value;
         return this;
     }
 
-    public Double getGroup() { return group; }
-    public CreateFileOptions group(Double value) {
+    public Number getGroup() { return group; }
+    public CreateFileOptions group(Number value) {
         this.group = value;
         return this;
     }
 
-    public Double getMode() { return mode; }
-    public CreateFileOptions mode(Double value) {
+    public Number getMode() { return mode; }
+    public CreateFileOptions mode(Number value) {
         this.mode = value;
         return this;
     }
@@ -7773,8 +7773,8 @@ public class CreateInteractionInputOptions implements JsonSerializable {
     private String value;
     private Boolean allowCustomChoice;
     private Boolean disabled;
-    private Double maxLength;
-    private Double maxFileSize;
+    private Number maxLength;
+    private Number maxFileSize;
     private Boolean allowMultipleFiles;
     private String fileFilter;
 
@@ -7794,10 +7794,10 @@ public class CreateInteractionInputOptions implements JsonSerializable {
     public void setAllowCustomChoice(Boolean value) { this.allowCustomChoice = value; }
     public Boolean getDisabled() { return disabled; }
     public void setDisabled(Boolean value) { this.disabled = value; }
-    public Double getMaxLength() { return maxLength; }
-    public void setMaxLength(Double value) { this.maxLength = value; }
-    public Double getMaxFileSize() { return maxFileSize; }
-    public void setMaxFileSize(Double value) { this.maxFileSize = value; }
+    public Number getMaxLength() { return maxLength; }
+    public void setMaxLength(Number value) { this.maxLength = value; }
+    public Number getMaxFileSize() { return maxFileSize; }
+    public void setMaxFileSize(Number value) { this.maxFileSize = value; }
     public Boolean getAllowMultipleFiles() { return allowMultipleFiles; }
     public void setAllowMultipleFiles(Boolean value) { this.allowMultipleFiles = value; }
     public String getFileFilter() { return fileFilter; }
@@ -8954,7 +8954,7 @@ public class DotnetToolResource extends ExecutableResource {
     }
 
     /** Adds a network endpoint */
-    private DotnetToolResource withEndpointImpl(Double port, Double targetPort, String scheme, String name, String env, Boolean isProxied, Boolean isExternal, ProtocolType protocol) {
+    private DotnetToolResource withEndpointImpl(Number port, Number targetPort, String scheme, String name, String env, Boolean isProxied, Boolean isExternal, ProtocolType protocol) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (port != null) {
@@ -9009,7 +9009,7 @@ public class DotnetToolResource extends ExecutableResource {
     }
 
     /** Adds an HTTP endpoint */
-    private DotnetToolResource withHttpEndpointImpl(Double port, Double targetPort, String name, String env, Boolean isProxied) {
+    private DotnetToolResource withHttpEndpointImpl(Number port, Number targetPort, String name, String env, Boolean isProxied) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (port != null) {
@@ -9046,7 +9046,7 @@ public class DotnetToolResource extends ExecutableResource {
     }
 
     /** Adds an HTTPS endpoint */
-    private DotnetToolResource withHttpsEndpointImpl(Double port, Double targetPort, String name, String env, Boolean isProxied) {
+    private DotnetToolResource withHttpsEndpointImpl(Number port, Number targetPort, String name, String env, Boolean isProxied) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (port != null) {
@@ -9223,7 +9223,7 @@ public class DotnetToolResource extends ExecutableResource {
     }
 
     /** Waits for the dependency resource to enter the Exited or Finished state before starting the resource. */
-    public DotnetToolResource waitForCompletion(IResource dependency, Double exitCode) {
+    public DotnetToolResource waitForCompletion(IResource dependency, Number exitCode) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("dependency", AspireClient.serializeValue(dependency));
@@ -9234,7 +9234,7 @@ public class DotnetToolResource extends ExecutableResource {
         return this;
     }
 
-    public DotnetToolResource waitForCompletion(ResourceBuilderBase dependency, Double exitCode) {
+    public DotnetToolResource waitForCompletion(ResourceBuilderBase dependency, Number exitCode) {
         return waitForCompletion(new IResource(dependency.getHandle(), dependency.getClient()), exitCode);
     }
 
@@ -9260,7 +9260,7 @@ public class DotnetToolResource extends ExecutableResource {
     }
 
     /** Adds a health check to the resource which is mapped to a specific endpoint. */
-    private DotnetToolResource withHttpHealthCheckImpl(String path, Double statusCode, String endpointName) {
+    private DotnetToolResource withHttpHealthCheckImpl(String path, Number statusCode, String endpointName) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (path != null) {
@@ -9511,7 +9511,7 @@ public class DotnetToolResource extends ExecutableResource {
     }
 
     /** Adds an HTTP health probe to the resource */
-    private DotnetToolResource withHttpProbeImpl(ProbeType probeType, String path, Double initialDelaySeconds, Double periodSeconds, Double timeoutSeconds, Double failureThreshold, Double successThreshold, String endpointName) {
+    private DotnetToolResource withHttpProbeImpl(ProbeType probeType, String path, Number initialDelaySeconds, Number periodSeconds, Number timeoutSeconds, Number failureThreshold, Number successThreshold, String endpointName) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("probeType", AspireClient.serializeValue(probeType));
@@ -9568,7 +9568,7 @@ public class DotnetToolResource extends ExecutableResource {
     }
 
     /** Hides the resource from default resource lists after successful completion */
-    private DotnetToolResource withHiddenOnCompletionImpl(Double exitCode, double[] exitCodes) {
+    private DotnetToolResource withHiddenOnCompletionImpl(Number exitCode, double[] exitCodes) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (exitCode != null) {
@@ -10056,7 +10056,7 @@ public class DotnetToolResource extends ExecutableResource {
     }
 
     /** Configures resource logging */
-    private DotnetToolResource withMergeLoggingImpl(String logLevel, Boolean enableConsole, Double maxFiles) {
+    private DotnetToolResource withMergeLoggingImpl(String logLevel, Boolean enableConsole, Number maxFiles) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("logLevel", AspireClient.serializeValue(logLevel));
@@ -10082,7 +10082,7 @@ public class DotnetToolResource extends ExecutableResource {
     }
 
     /** Configures resource logging with file path */
-    private DotnetToolResource withMergeLoggingPathImpl(String logLevel, String logPath, Boolean enableConsole, Double maxFiles) {
+    private DotnetToolResource withMergeLoggingPathImpl(String logLevel, String logPath, Boolean enableConsole, Number maxFiles) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("logLevel", AspireClient.serializeValue(logLevel));
@@ -11269,7 +11269,7 @@ public class ExecutableResource extends ResourceBuilderBase {
     }
 
     /** Adds a network endpoint */
-    private ExecutableResource withEndpointImpl(Double port, Double targetPort, String scheme, String name, String env, Boolean isProxied, Boolean isExternal, ProtocolType protocol) {
+    private ExecutableResource withEndpointImpl(Number port, Number targetPort, String scheme, String name, String env, Boolean isProxied, Boolean isExternal, ProtocolType protocol) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (port != null) {
@@ -11324,7 +11324,7 @@ public class ExecutableResource extends ResourceBuilderBase {
     }
 
     /** Adds an HTTP endpoint */
-    private ExecutableResource withHttpEndpointImpl(Double port, Double targetPort, String name, String env, Boolean isProxied) {
+    private ExecutableResource withHttpEndpointImpl(Number port, Number targetPort, String name, String env, Boolean isProxied) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (port != null) {
@@ -11361,7 +11361,7 @@ public class ExecutableResource extends ResourceBuilderBase {
     }
 
     /** Adds an HTTPS endpoint */
-    private ExecutableResource withHttpsEndpointImpl(Double port, Double targetPort, String name, String env, Boolean isProxied) {
+    private ExecutableResource withHttpsEndpointImpl(Number port, Number targetPort, String name, String env, Boolean isProxied) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (port != null) {
@@ -11538,7 +11538,7 @@ public class ExecutableResource extends ResourceBuilderBase {
     }
 
     /** Waits for the dependency resource to enter the Exited or Finished state before starting the resource. */
-    public ExecutableResource waitForCompletion(IResource dependency, Double exitCode) {
+    public ExecutableResource waitForCompletion(IResource dependency, Number exitCode) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("dependency", AspireClient.serializeValue(dependency));
@@ -11549,7 +11549,7 @@ public class ExecutableResource extends ResourceBuilderBase {
         return this;
     }
 
-    public ExecutableResource waitForCompletion(ResourceBuilderBase dependency, Double exitCode) {
+    public ExecutableResource waitForCompletion(ResourceBuilderBase dependency, Number exitCode) {
         return waitForCompletion(new IResource(dependency.getHandle(), dependency.getClient()), exitCode);
     }
 
@@ -11575,7 +11575,7 @@ public class ExecutableResource extends ResourceBuilderBase {
     }
 
     /** Adds a health check to the resource which is mapped to a specific endpoint. */
-    private ExecutableResource withHttpHealthCheckImpl(String path, Double statusCode, String endpointName) {
+    private ExecutableResource withHttpHealthCheckImpl(String path, Number statusCode, String endpointName) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (path != null) {
@@ -11826,7 +11826,7 @@ public class ExecutableResource extends ResourceBuilderBase {
     }
 
     /** Adds an HTTP health probe to the resource */
-    private ExecutableResource withHttpProbeImpl(ProbeType probeType, String path, Double initialDelaySeconds, Double periodSeconds, Double timeoutSeconds, Double failureThreshold, Double successThreshold, String endpointName) {
+    private ExecutableResource withHttpProbeImpl(ProbeType probeType, String path, Number initialDelaySeconds, Number periodSeconds, Number timeoutSeconds, Number failureThreshold, Number successThreshold, String endpointName) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("probeType", AspireClient.serializeValue(probeType));
@@ -11883,7 +11883,7 @@ public class ExecutableResource extends ResourceBuilderBase {
     }
 
     /** Hides the resource from default resource lists after successful completion */
-    private ExecutableResource withHiddenOnCompletionImpl(Double exitCode, double[] exitCodes) {
+    private ExecutableResource withHiddenOnCompletionImpl(Number exitCode, double[] exitCodes) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (exitCode != null) {
@@ -12371,7 +12371,7 @@ public class ExecutableResource extends ResourceBuilderBase {
     }
 
     /** Configures resource logging */
-    private ExecutableResource withMergeLoggingImpl(String logLevel, Boolean enableConsole, Double maxFiles) {
+    private ExecutableResource withMergeLoggingImpl(String logLevel, Boolean enableConsole, Number maxFiles) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("logLevel", AspireClient.serializeValue(logLevel));
@@ -12397,7 +12397,7 @@ public class ExecutableResource extends ResourceBuilderBase {
     }
 
     /** Configures resource logging with file path */
-    private ExecutableResource withMergeLoggingPathImpl(String logLevel, String logPath, Boolean enableConsole, Double maxFiles) {
+    private ExecutableResource withMergeLoggingPathImpl(String logLevel, String logPath, Boolean enableConsole, Number maxFiles) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("logLevel", AspireClient.serializeValue(logLevel));
@@ -12641,7 +12641,7 @@ public class ExternalServiceResource extends ResourceBuilderBase {
     }
 
     /** Adds an HTTP health check to the external service for polyglot app hosts. */
-    private ExternalServiceResource withHttpHealthCheckImpl(String path, Double statusCode, String endpointName) {
+    private ExternalServiceResource withHttpHealthCheckImpl(String path, Number statusCode, String endpointName) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (path != null) {
@@ -12975,7 +12975,7 @@ public class ExternalServiceResource extends ResourceBuilderBase {
     }
 
     /** Hides the resource from default resource lists after successful completion */
-    private ExternalServiceResource withHiddenOnCompletionImpl(Double exitCode, double[] exitCodes) {
+    private ExternalServiceResource withHiddenOnCompletionImpl(Number exitCode, double[] exitCodes) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (exitCode != null) {
@@ -13388,7 +13388,7 @@ public class ExternalServiceResource extends ResourceBuilderBase {
     }
 
     /** Configures resource logging */
-    private ExternalServiceResource withMergeLoggingImpl(String logLevel, Boolean enableConsole, Double maxFiles) {
+    private ExternalServiceResource withMergeLoggingImpl(String logLevel, Boolean enableConsole, Number maxFiles) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("logLevel", AspireClient.serializeValue(logLevel));
@@ -13414,7 +13414,7 @@ public class ExternalServiceResource extends ResourceBuilderBase {
     }
 
     /** Configures resource logging with file path */
-    private ExternalServiceResource withMergeLoggingPathImpl(String logLevel, String logPath, Boolean enableConsole, Double maxFiles) {
+    private ExternalServiceResource withMergeLoggingPathImpl(String logLevel, String logPath, Boolean enableConsole, Number maxFiles) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("logLevel", AspireClient.serializeValue(logLevel));
@@ -14880,7 +14880,7 @@ public class IDistributedApplicationBuilder extends HandleWrapperBase {
     }
 
     /** Adds a test Redis resource from ATS documentation. */
-    public TestRedisResource addTestRedis(String name, Double port) {
+    public TestRedisResource addTestRedis(String name, Number port) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("name", AspireClient.serializeValue(name));
@@ -16520,10 +16520,10 @@ public class InteractionInput implements JsonSerializable {
     private String placeholder;
     private Boolean allowCustomChoice;
     private boolean disabled;
-    private Double maxLength;
+    private Number maxLength;
     private Boolean allowMultipleFiles;
     private String fileFilter;
-    private Double maxFileSize;
+    private Number maxFileSize;
 
     public String getName() { return name; }
     public void setName(String value) { this.name = value; }
@@ -16547,14 +16547,14 @@ public class InteractionInput implements JsonSerializable {
     public void setAllowCustomChoice(Boolean value) { this.allowCustomChoice = value; }
     public boolean getDisabled() { return disabled; }
     public void setDisabled(boolean value) { this.disabled = value; }
-    public Double getMaxLength() { return maxLength; }
-    public void setMaxLength(Double value) { this.maxLength = value; }
+    public Number getMaxLength() { return maxLength; }
+    public void setMaxLength(Number value) { this.maxLength = value; }
     public Boolean getAllowMultipleFiles() { return allowMultipleFiles; }
     public void setAllowMultipleFiles(Boolean value) { this.allowMultipleFiles = value; }
     public String getFileFilter() { return fileFilter; }
     public void setFileFilter(String value) { this.fileFilter = value; }
-    public Double getMaxFileSize() { return maxFileSize; }
-    public void setMaxFileSize(Double value) { this.maxFileSize = value; }
+    public Number getMaxFileSize() { return maxFileSize; }
+    public void setMaxFileSize(Number value) { this.maxFileSize = value; }
 
     @SuppressWarnings("unchecked")
     public static InteractionInput fromMap(Map<String, Object> map) {
@@ -17181,7 +17181,7 @@ public class ParameterCustomInputOptions implements JsonSerializable {
     private String placeholder;
     private Boolean allowCustomChoice;
     private Boolean disabled;
-    private Double maxLength;
+    private Number maxLength;
 
     public InputType getInputType() { return inputType; }
     public void setInputType(InputType value) { this.inputType = value; }
@@ -17201,8 +17201,8 @@ public class ParameterCustomInputOptions implements JsonSerializable {
     public void setAllowCustomChoice(Boolean value) { this.allowCustomChoice = value; }
     public Boolean getDisabled() { return disabled; }
     public void setDisabled(Boolean value) { this.disabled = value; }
-    public Double getMaxLength() { return maxLength; }
-    public void setMaxLength(Double value) { this.maxLength = value; }
+    public Number getMaxLength() { return maxLength; }
+    public void setMaxLength(Number value) { this.maxLength = value; }
 
     @SuppressWarnings("unchecked")
     public static ParameterCustomInputOptions fromMap(Map<String, Object> map) {
@@ -17641,7 +17641,7 @@ public class ParameterResource extends ResourceBuilderBase {
     }
 
     /** Hides the resource from default resource lists after successful completion */
-    private ParameterResource withHiddenOnCompletionImpl(Double exitCode, double[] exitCodes) {
+    private ParameterResource withHiddenOnCompletionImpl(Number exitCode, double[] exitCodes) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (exitCode != null) {
@@ -18054,7 +18054,7 @@ public class ParameterResource extends ResourceBuilderBase {
     }
 
     /** Configures resource logging */
-    private ParameterResource withMergeLoggingImpl(String logLevel, Boolean enableConsole, Double maxFiles) {
+    private ParameterResource withMergeLoggingImpl(String logLevel, Boolean enableConsole, Number maxFiles) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("logLevel", AspireClient.serializeValue(logLevel));
@@ -18080,7 +18080,7 @@ public class ParameterResource extends ResourceBuilderBase {
     }
 
     /** Configures resource logging with file path */
-    private ParameterResource withMergeLoggingPathImpl(String logLevel, String logPath, Boolean enableConsole, Double maxFiles) {
+    private ParameterResource withMergeLoggingPathImpl(String logLevel, String logPath, Boolean enableConsole, Number maxFiles) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("logLevel", AspireClient.serializeValue(logLevel));
@@ -18549,7 +18549,7 @@ public class ProcessCommandExportOptions implements JsonSerializable {
     private Boolean killEntireProcessTree;
     private AspireFunc1<ExecuteCommandContext, ProcessCommandSpecExportData> createProcessSpec;
     private CommandOptions commandOptions;
-    private Double maxOutputLineCount;
+    private Number maxOutputLineCount;
     private Boolean displayImmediately;
     private double[] successExitCodes;
 
@@ -18571,8 +18571,8 @@ public class ProcessCommandExportOptions implements JsonSerializable {
     public void setCreateProcessSpec(AspireFunc1<ExecuteCommandContext, ProcessCommandSpecExportData> value) { this.createProcessSpec = value; }
     public CommandOptions getCommandOptions() { return commandOptions; }
     public void setCommandOptions(CommandOptions value) { this.commandOptions = value; }
-    public Double getMaxOutputLineCount() { return maxOutputLineCount; }
-    public void setMaxOutputLineCount(Double value) { this.maxOutputLineCount = value; }
+    public Number getMaxOutputLineCount() { return maxOutputLineCount; }
+    public void setMaxOutputLineCount(Number value) { this.maxOutputLineCount = value; }
     public Boolean getDisplayImmediately() { return displayImmediately; }
     public void setDisplayImmediately(Boolean value) { this.displayImmediately = value; }
     public double[] getSuccessExitCodes() { return successExitCodes; }
@@ -18638,14 +18638,14 @@ import java.util.function.*;
 /** ProcessCommandResultExportOptions DTO. */
 public class ProcessCommandResultExportOptions implements JsonSerializable {
     private CommandOptions commandOptions;
-    private Double maxOutputLineCount;
+    private Number maxOutputLineCount;
     private Boolean displayImmediately;
     private double[] successExitCodes;
 
     public CommandOptions getCommandOptions() { return commandOptions; }
     public void setCommandOptions(CommandOptions value) { this.commandOptions = value; }
-    public Double getMaxOutputLineCount() { return maxOutputLineCount; }
-    public void setMaxOutputLineCount(Double value) { this.maxOutputLineCount = value; }
+    public Number getMaxOutputLineCount() { return maxOutputLineCount; }
+    public void setMaxOutputLineCount(Number value) { this.maxOutputLineCount = value; }
     public Boolean getDisplayImmediately() { return displayImmediately; }
     public void setDisplayImmediately(Boolean value) { this.displayImmediately = value; }
     public double[] getSuccessExitCodes() { return successExitCodes; }
@@ -19237,7 +19237,7 @@ public class ProjectResource extends ResourceBuilderBase {
     }
 
     /** Adds a network endpoint */
-    private ProjectResource withEndpointImpl(Double port, Double targetPort, String scheme, String name, String env, Boolean isProxied, Boolean isExternal, ProtocolType protocol) {
+    private ProjectResource withEndpointImpl(Number port, Number targetPort, String scheme, String name, String env, Boolean isProxied, Boolean isExternal, ProtocolType protocol) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (port != null) {
@@ -19292,7 +19292,7 @@ public class ProjectResource extends ResourceBuilderBase {
     }
 
     /** Adds an HTTP endpoint */
-    private ProjectResource withHttpEndpointImpl(Double port, Double targetPort, String name, String env, Boolean isProxied) {
+    private ProjectResource withHttpEndpointImpl(Number port, Number targetPort, String name, String env, Boolean isProxied) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (port != null) {
@@ -19329,7 +19329,7 @@ public class ProjectResource extends ResourceBuilderBase {
     }
 
     /** Adds an HTTPS endpoint */
-    private ProjectResource withHttpsEndpointImpl(Double port, Double targetPort, String name, String env, Boolean isProxied) {
+    private ProjectResource withHttpsEndpointImpl(Number port, Number targetPort, String name, String env, Boolean isProxied) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (port != null) {
@@ -19520,7 +19520,7 @@ public class ProjectResource extends ResourceBuilderBase {
     }
 
     /** Waits for the dependency resource to enter the Exited or Finished state before starting the resource. */
-    public ProjectResource waitForCompletion(IResource dependency, Double exitCode) {
+    public ProjectResource waitForCompletion(IResource dependency, Number exitCode) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("dependency", AspireClient.serializeValue(dependency));
@@ -19531,7 +19531,7 @@ public class ProjectResource extends ResourceBuilderBase {
         return this;
     }
 
-    public ProjectResource waitForCompletion(ResourceBuilderBase dependency, Double exitCode) {
+    public ProjectResource waitForCompletion(ResourceBuilderBase dependency, Number exitCode) {
         return waitForCompletion(new IResource(dependency.getHandle(), dependency.getClient()), exitCode);
     }
 
@@ -19557,7 +19557,7 @@ public class ProjectResource extends ResourceBuilderBase {
     }
 
     /** Adds a health check to the resource which is mapped to a specific endpoint. */
-    private ProjectResource withHttpHealthCheckImpl(String path, Double statusCode, String endpointName) {
+    private ProjectResource withHttpHealthCheckImpl(String path, Number statusCode, String endpointName) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (path != null) {
@@ -19808,7 +19808,7 @@ public class ProjectResource extends ResourceBuilderBase {
     }
 
     /** Adds an HTTP health probe to the resource */
-    private ProjectResource withHttpProbeImpl(ProbeType probeType, String path, Double initialDelaySeconds, Double periodSeconds, Double timeoutSeconds, Double failureThreshold, Double successThreshold, String endpointName) {
+    private ProjectResource withHttpProbeImpl(ProbeType probeType, String path, Number initialDelaySeconds, Number periodSeconds, Number timeoutSeconds, Number failureThreshold, Number successThreshold, String endpointName) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("probeType", AspireClient.serializeValue(probeType));
@@ -19865,7 +19865,7 @@ public class ProjectResource extends ResourceBuilderBase {
     }
 
     /** Hides the resource from default resource lists after successful completion */
-    private ProjectResource withHiddenOnCompletionImpl(Double exitCode, double[] exitCodes) {
+    private ProjectResource withHiddenOnCompletionImpl(Number exitCode, double[] exitCodes) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (exitCode != null) {
@@ -20362,7 +20362,7 @@ public class ProjectResource extends ResourceBuilderBase {
     }
 
     /** Configures resource logging */
-    private ProjectResource withMergeLoggingImpl(String logLevel, Boolean enableConsole, Double maxFiles) {
+    private ProjectResource withMergeLoggingImpl(String logLevel, Boolean enableConsole, Number maxFiles) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("logLevel", AspireClient.serializeValue(logLevel));
@@ -20388,7 +20388,7 @@ public class ProjectResource extends ResourceBuilderBase {
     }
 
     /** Configures resource logging with file path */
-    private ProjectResource withMergeLoggingPathImpl(String logLevel, String logPath, Boolean enableConsole, Double maxFiles) {
+    private ProjectResource withMergeLoggingPathImpl(String logLevel, String logPath, Boolean enableConsole, Number maxFiles) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("logLevel", AspireClient.serializeValue(logLevel));
@@ -21270,7 +21270,7 @@ public class ResourceEventDto implements JsonSerializable {
     private String state;
     private String stateStyle;
     private String healthStatus;
-    private Double exitCode;
+    private Number exitCode;
 
     public String getResourceName() { return resourceName; }
     public void setResourceName(String value) { this.resourceName = value; }
@@ -21282,8 +21282,8 @@ public class ResourceEventDto implements JsonSerializable {
     public void setStateStyle(String value) { this.stateStyle = value; }
     public String getHealthStatus() { return healthStatus; }
     public void setHealthStatus(String value) { this.healthStatus = value; }
-    public Double getExitCode() { return exitCode; }
-    public void setExitCode(Double value) { this.exitCode = value; }
+    public Number getExitCode() { return exitCode; }
+    public void setExitCode(Number value) { this.exitCode = value; }
 
     @SuppressWarnings("unchecked")
     public static ResourceEventDto fromMap(Map<String, Object> map) {
@@ -22638,7 +22638,7 @@ public class TestDatabaseResource extends ContainerResource {
     }
 
     /** Adds a network endpoint */
-    private TestDatabaseResource withEndpointImpl(Double port, Double targetPort, String scheme, String name, String env, Boolean isProxied, Boolean isExternal, ProtocolType protocol) {
+    private TestDatabaseResource withEndpointImpl(Number port, Number targetPort, String scheme, String name, String env, Boolean isProxied, Boolean isExternal, ProtocolType protocol) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (port != null) {
@@ -22693,7 +22693,7 @@ public class TestDatabaseResource extends ContainerResource {
     }
 
     /** Adds an HTTP endpoint */
-    private TestDatabaseResource withHttpEndpointImpl(Double port, Double targetPort, String name, String env, Boolean isProxied) {
+    private TestDatabaseResource withHttpEndpointImpl(Number port, Number targetPort, String name, String env, Boolean isProxied) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (port != null) {
@@ -22730,7 +22730,7 @@ public class TestDatabaseResource extends ContainerResource {
     }
 
     /** Adds an HTTPS endpoint */
-    private TestDatabaseResource withHttpsEndpointImpl(Double port, Double targetPort, String name, String env, Boolean isProxied) {
+    private TestDatabaseResource withHttpsEndpointImpl(Number port, Number targetPort, String name, String env, Boolean isProxied) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (port != null) {
@@ -22907,7 +22907,7 @@ public class TestDatabaseResource extends ContainerResource {
     }
 
     /** Waits for the dependency resource to enter the Exited or Finished state before starting the resource. */
-    public TestDatabaseResource waitForCompletion(IResource dependency, Double exitCode) {
+    public TestDatabaseResource waitForCompletion(IResource dependency, Number exitCode) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("dependency", AspireClient.serializeValue(dependency));
@@ -22918,7 +22918,7 @@ public class TestDatabaseResource extends ContainerResource {
         return this;
     }
 
-    public TestDatabaseResource waitForCompletion(ResourceBuilderBase dependency, Double exitCode) {
+    public TestDatabaseResource waitForCompletion(ResourceBuilderBase dependency, Number exitCode) {
         return waitForCompletion(new IResource(dependency.getHandle(), dependency.getClient()), exitCode);
     }
 
@@ -22944,7 +22944,7 @@ public class TestDatabaseResource extends ContainerResource {
     }
 
     /** Adds a health check to the resource which is mapped to a specific endpoint. */
-    private TestDatabaseResource withHttpHealthCheckImpl(String path, Double statusCode, String endpointName) {
+    private TestDatabaseResource withHttpHealthCheckImpl(String path, Number statusCode, String endpointName) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (path != null) {
@@ -23195,7 +23195,7 @@ public class TestDatabaseResource extends ContainerResource {
     }
 
     /** Adds an HTTP health probe to the resource */
-    private TestDatabaseResource withHttpProbeImpl(ProbeType probeType, String path, Double initialDelaySeconds, Double periodSeconds, Double timeoutSeconds, Double failureThreshold, Double successThreshold, String endpointName) {
+    private TestDatabaseResource withHttpProbeImpl(ProbeType probeType, String path, Number initialDelaySeconds, Number periodSeconds, Number timeoutSeconds, Number failureThreshold, Number successThreshold, String endpointName) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("probeType", AspireClient.serializeValue(probeType));
@@ -23252,7 +23252,7 @@ public class TestDatabaseResource extends ContainerResource {
     }
 
     /** Hides the resource from default resource lists after successful completion */
-    private TestDatabaseResource withHiddenOnCompletionImpl(Double exitCode, double[] exitCodes) {
+    private TestDatabaseResource withHiddenOnCompletionImpl(Number exitCode, double[] exitCodes) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (exitCode != null) {
@@ -23766,7 +23766,7 @@ public class TestDatabaseResource extends ContainerResource {
     }
 
     /** Configures resource logging */
-    private TestDatabaseResource withMergeLoggingImpl(String logLevel, Boolean enableConsole, Double maxFiles) {
+    private TestDatabaseResource withMergeLoggingImpl(String logLevel, Boolean enableConsole, Number maxFiles) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("logLevel", AspireClient.serializeValue(logLevel));
@@ -23792,7 +23792,7 @@ public class TestDatabaseResource extends ContainerResource {
     }
 
     /** Configures resource logging with file path */
-    private TestDatabaseResource withMergeLoggingPathImpl(String logLevel, String logPath, Boolean enableConsole, Double maxFiles) {
+    private TestDatabaseResource withMergeLoggingPathImpl(String logLevel, String logPath, Boolean enableConsole, Number maxFiles) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("logLevel", AspireClient.serializeValue(logLevel));
@@ -23970,8 +23970,8 @@ public class TestMutableCollectionContext extends HandleWrapperBase {
     }
 
     /** Gets the Counts property */
-    private AspireDict<String, Double> countsField;
-    public AspireDict<String, Double> counts() {
+    private AspireDict<String, Number> countsField;
+    public AspireDict<String, Number> counts() {
         if (countsField == null) {
             countsField = new AspireDict<>(getHandle(), getClient(), "Aspire.Hosting.CodeGeneration.TypeScript.Tests.TestTypes/TestMutableCollectionContext.counts");
         }
@@ -23979,7 +23979,7 @@ public class TestMutableCollectionContext extends HandleWrapperBase {
     }
 
     /** Sets the Counts property */
-    public TestMutableCollectionContext setCounts(AspireDict<String, Double> value) {
+    public TestMutableCollectionContext setCounts(AspireDict<String, Number> value) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("context", AspireClient.serializeValue(getHandle()));
         reqArgs.put("value", AspireClient.serializeValue(value));
@@ -24002,7 +24002,7 @@ public class TestNestedDto implements JsonSerializable {
     private String id;
     private TestConfigDto config;
     private List<String> tags;
-    private Map<String, Double> counts;
+    private Map<String, Number> counts;
 
     public String getId() { return id; }
     public void setId(String value) { this.id = value; }
@@ -24010,8 +24010,8 @@ public class TestNestedDto implements JsonSerializable {
     public void setConfig(TestConfigDto value) { this.config = value; }
     public List<String> getTags() { return tags; }
     public void setTags(List<String> value) { this.tags = value; }
-    public Map<String, Double> getCounts() { return counts; }
-    public void setCounts(Map<String, Double> value) { this.counts = value; }
+    public Map<String, Number> getCounts() { return counts; }
+    public void setCounts(Map<String, Number> value) { this.counts = value; }
 
     @SuppressWarnings("unchecked")
     public static TestNestedDto fromMap(Map<String, Object> map) {
@@ -24023,7 +24023,7 @@ public class TestNestedDto implements JsonSerializable {
         var tagsValue = map.get("Tags");
         value.setTags(((List<Object>) tagsValue).stream().map(item0 -> (String) item0).toList());
         var countsValue = map.get("Counts");
-        value.setCounts((Map<String, Double>) countsValue);
+        value.setCounts((Map<String, Number>) countsValue);
         return value;
     }
 
@@ -24830,7 +24830,7 @@ public class TestRedisResource extends ContainerResource {
     }
 
     /** Adds a network endpoint */
-    private TestRedisResource withEndpointImpl(Double port, Double targetPort, String scheme, String name, String env, Boolean isProxied, Boolean isExternal, ProtocolType protocol) {
+    private TestRedisResource withEndpointImpl(Number port, Number targetPort, String scheme, String name, String env, Boolean isProxied, Boolean isExternal, ProtocolType protocol) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (port != null) {
@@ -24885,7 +24885,7 @@ public class TestRedisResource extends ContainerResource {
     }
 
     /** Adds an HTTP endpoint */
-    private TestRedisResource withHttpEndpointImpl(Double port, Double targetPort, String name, String env, Boolean isProxied) {
+    private TestRedisResource withHttpEndpointImpl(Number port, Number targetPort, String name, String env, Boolean isProxied) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (port != null) {
@@ -24922,7 +24922,7 @@ public class TestRedisResource extends ContainerResource {
     }
 
     /** Adds an HTTPS endpoint */
-    private TestRedisResource withHttpsEndpointImpl(Double port, Double targetPort, String name, String env, Boolean isProxied) {
+    private TestRedisResource withHttpsEndpointImpl(Number port, Number targetPort, String name, String env, Boolean isProxied) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (port != null) {
@@ -25099,7 +25099,7 @@ public class TestRedisResource extends ContainerResource {
     }
 
     /** Waits for the dependency resource to enter the Exited or Finished state before starting the resource. */
-    public TestRedisResource waitForCompletion(IResource dependency, Double exitCode) {
+    public TestRedisResource waitForCompletion(IResource dependency, Number exitCode) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("dependency", AspireClient.serializeValue(dependency));
@@ -25110,7 +25110,7 @@ public class TestRedisResource extends ContainerResource {
         return this;
     }
 
-    public TestRedisResource waitForCompletion(ResourceBuilderBase dependency, Double exitCode) {
+    public TestRedisResource waitForCompletion(ResourceBuilderBase dependency, Number exitCode) {
         return waitForCompletion(new IResource(dependency.getHandle(), dependency.getClient()), exitCode);
     }
 
@@ -25136,7 +25136,7 @@ public class TestRedisResource extends ContainerResource {
     }
 
     /** Adds a health check to the resource which is mapped to a specific endpoint. */
-    private TestRedisResource withHttpHealthCheckImpl(String path, Double statusCode, String endpointName) {
+    private TestRedisResource withHttpHealthCheckImpl(String path, Number statusCode, String endpointName) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (path != null) {
@@ -25387,7 +25387,7 @@ public class TestRedisResource extends ContainerResource {
     }
 
     /** Adds an HTTP health probe to the resource */
-    private TestRedisResource withHttpProbeImpl(ProbeType probeType, String path, Double initialDelaySeconds, Double periodSeconds, Double timeoutSeconds, Double failureThreshold, Double successThreshold, String endpointName) {
+    private TestRedisResource withHttpProbeImpl(ProbeType probeType, String path, Number initialDelaySeconds, Number periodSeconds, Number timeoutSeconds, Number failureThreshold, Number successThreshold, String endpointName) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("probeType", AspireClient.serializeValue(probeType));
@@ -25444,7 +25444,7 @@ public class TestRedisResource extends ContainerResource {
     }
 
     /** Hides the resource from default resource lists after successful completion */
-    private TestRedisResource withHiddenOnCompletionImpl(Double exitCode, double[] exitCodes) {
+    private TestRedisResource withHiddenOnCompletionImpl(Number exitCode, double[] exitCodes) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (exitCode != null) {
@@ -26131,7 +26131,7 @@ public class TestRedisResource extends ContainerResource {
     }
 
     /** Configures resource logging */
-    private TestRedisResource withMergeLoggingImpl(String logLevel, Boolean enableConsole, Double maxFiles) {
+    private TestRedisResource withMergeLoggingImpl(String logLevel, Boolean enableConsole, Number maxFiles) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("logLevel", AspireClient.serializeValue(logLevel));
@@ -26157,7 +26157,7 @@ public class TestRedisResource extends ContainerResource {
     }
 
     /** Configures resource logging with file path */
-    private TestRedisResource withMergeLoggingPathImpl(String logLevel, String logPath, Boolean enableConsole, Double maxFiles) {
+    private TestRedisResource withMergeLoggingPathImpl(String logLevel, String logPath, Boolean enableConsole, Number maxFiles) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("logLevel", AspireClient.serializeValue(logLevel));
@@ -27040,7 +27040,7 @@ public class TestVaultResource extends ContainerResource {
     }
 
     /** Adds a network endpoint */
-    private TestVaultResource withEndpointImpl(Double port, Double targetPort, String scheme, String name, String env, Boolean isProxied, Boolean isExternal, ProtocolType protocol) {
+    private TestVaultResource withEndpointImpl(Number port, Number targetPort, String scheme, String name, String env, Boolean isProxied, Boolean isExternal, ProtocolType protocol) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (port != null) {
@@ -27095,7 +27095,7 @@ public class TestVaultResource extends ContainerResource {
     }
 
     /** Adds an HTTP endpoint */
-    private TestVaultResource withHttpEndpointImpl(Double port, Double targetPort, String name, String env, Boolean isProxied) {
+    private TestVaultResource withHttpEndpointImpl(Number port, Number targetPort, String name, String env, Boolean isProxied) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (port != null) {
@@ -27132,7 +27132,7 @@ public class TestVaultResource extends ContainerResource {
     }
 
     /** Adds an HTTPS endpoint */
-    private TestVaultResource withHttpsEndpointImpl(Double port, Double targetPort, String name, String env, Boolean isProxied) {
+    private TestVaultResource withHttpsEndpointImpl(Number port, Number targetPort, String name, String env, Boolean isProxied) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (port != null) {
@@ -27309,7 +27309,7 @@ public class TestVaultResource extends ContainerResource {
     }
 
     /** Waits for the dependency resource to enter the Exited or Finished state before starting the resource. */
-    public TestVaultResource waitForCompletion(IResource dependency, Double exitCode) {
+    public TestVaultResource waitForCompletion(IResource dependency, Number exitCode) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("dependency", AspireClient.serializeValue(dependency));
@@ -27320,7 +27320,7 @@ public class TestVaultResource extends ContainerResource {
         return this;
     }
 
-    public TestVaultResource waitForCompletion(ResourceBuilderBase dependency, Double exitCode) {
+    public TestVaultResource waitForCompletion(ResourceBuilderBase dependency, Number exitCode) {
         return waitForCompletion(new IResource(dependency.getHandle(), dependency.getClient()), exitCode);
     }
 
@@ -27346,7 +27346,7 @@ public class TestVaultResource extends ContainerResource {
     }
 
     /** Adds a health check to the resource which is mapped to a specific endpoint. */
-    private TestVaultResource withHttpHealthCheckImpl(String path, Double statusCode, String endpointName) {
+    private TestVaultResource withHttpHealthCheckImpl(String path, Number statusCode, String endpointName) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (path != null) {
@@ -27597,7 +27597,7 @@ public class TestVaultResource extends ContainerResource {
     }
 
     /** Adds an HTTP health probe to the resource */
-    private TestVaultResource withHttpProbeImpl(ProbeType probeType, String path, Double initialDelaySeconds, Double periodSeconds, Double timeoutSeconds, Double failureThreshold, Double successThreshold, String endpointName) {
+    private TestVaultResource withHttpProbeImpl(ProbeType probeType, String path, Number initialDelaySeconds, Number periodSeconds, Number timeoutSeconds, Number failureThreshold, Number successThreshold, String endpointName) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("probeType", AspireClient.serializeValue(probeType));
@@ -27654,7 +27654,7 @@ public class TestVaultResource extends ContainerResource {
     }
 
     /** Hides the resource from default resource lists after successful completion */
-    private TestVaultResource withHiddenOnCompletionImpl(Double exitCode, double[] exitCodes) {
+    private TestVaultResource withHiddenOnCompletionImpl(Number exitCode, double[] exitCodes) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         if (exitCode != null) {
@@ -28177,7 +28177,7 @@ public class TestVaultResource extends ContainerResource {
     }
 
     /** Configures resource logging */
-    private TestVaultResource withMergeLoggingImpl(String logLevel, Boolean enableConsole, Double maxFiles) {
+    private TestVaultResource withMergeLoggingImpl(String logLevel, Boolean enableConsole, Number maxFiles) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("logLevel", AspireClient.serializeValue(logLevel));
@@ -28203,7 +28203,7 @@ public class TestVaultResource extends ContainerResource {
     }
 
     /** Configures resource logging with file path */
-    private TestVaultResource withMergeLoggingPathImpl(String logLevel, String logPath, Boolean enableConsole, Double maxFiles) {
+    private TestVaultResource withMergeLoggingPathImpl(String logLevel, String logPath, Boolean enableConsole, Number maxFiles) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("logLevel", AspireClient.serializeValue(logLevel));
@@ -28291,7 +28291,7 @@ public class UpdateCommandStateResourceSnapshot implements JsonSerializable {
     private String state;
     private String stateStyle;
     private HealthStatus healthStatus;
-    private Double exitCode;
+    private Number exitCode;
 
     public String getResourceType() { return resourceType; }
     public void setResourceType(String value) { this.resourceType = value; }
@@ -28301,8 +28301,8 @@ public class UpdateCommandStateResourceSnapshot implements JsonSerializable {
     public void setStateStyle(String value) { this.stateStyle = value; }
     public HealthStatus getHealthStatus() { return healthStatus; }
     public void setHealthStatus(HealthStatus value) { this.healthStatus = value; }
-    public Double getExitCode() { return exitCode; }
-    public void setExitCode(Double value) { this.exitCode = value; }
+    public Number getExitCode() { return exitCode; }
+    public void setExitCode(Number value) { this.exitCode = value; }
 
     @SuppressWarnings("unchecked")
     public static UpdateCommandStateResourceSnapshot fromMap(Map<String, Object> map) {
@@ -28611,8 +28611,8 @@ import java.util.function.*;
 
 /** Options for WithEndpoint. */
 public final class WithEndpointOptions {
-    private Double port;
-    private Double targetPort;
+    private Number port;
+    private Number targetPort;
     private String scheme;
     private String name;
     private String env;
@@ -28620,14 +28620,14 @@ public final class WithEndpointOptions {
     private Boolean isExternal;
     private ProtocolType protocol;
 
-    public Double getPort() { return port; }
-    public WithEndpointOptions port(Double value) {
+    public Number getPort() { return port; }
+    public WithEndpointOptions port(Number value) {
         this.port = value;
         return this;
     }
 
-    public Double getTargetPort() { return targetPort; }
-    public WithEndpointOptions targetPort(Double value) {
+    public Number getTargetPort() { return targetPort; }
+    public WithEndpointOptions targetPort(Number value) {
         this.targetPort = value;
         return this;
     }
@@ -28680,11 +28680,11 @@ import java.util.function.*;
 
 /** Options for WithHiddenOnCompletion. */
 public final class WithHiddenOnCompletionOptions {
-    private Double exitCode;
+    private Number exitCode;
     private double[] exitCodes;
 
-    public Double getExitCode() { return exitCode; }
-    public WithHiddenOnCompletionOptions exitCode(Double value) {
+    public Number getExitCode() { return exitCode; }
+    public WithHiddenOnCompletionOptions exitCode(Number value) {
         this.exitCode = value;
         return this;
     }
@@ -28734,20 +28734,20 @@ import java.util.function.*;
 
 /** Options for WithHttpEndpoint. */
 public final class WithHttpEndpointOptions {
-    private Double port;
-    private Double targetPort;
+    private Number port;
+    private Number targetPort;
     private String name;
     private String env;
     private Boolean isProxied;
 
-    public Double getPort() { return port; }
-    public WithHttpEndpointOptions port(Double value) {
+    public Number getPort() { return port; }
+    public WithHttpEndpointOptions port(Number value) {
         this.port = value;
         return this;
     }
 
-    public Double getTargetPort() { return targetPort; }
-    public WithHttpEndpointOptions targetPort(Double value) {
+    public Number getTargetPort() { return targetPort; }
+    public WithHttpEndpointOptions targetPort(Number value) {
         this.targetPort = value;
         return this;
     }
@@ -28783,7 +28783,7 @@ import java.util.function.*;
 /** Options for WithHttpHealthCheck. */
 public final class WithHttpHealthCheckOptions {
     private String path;
-    private Double statusCode;
+    private Number statusCode;
     private String endpointName;
 
     public String getPath() { return path; }
@@ -28792,8 +28792,8 @@ public final class WithHttpHealthCheckOptions {
         return this;
     }
 
-    public Double getStatusCode() { return statusCode; }
-    public WithHttpHealthCheckOptions statusCode(Double value) {
+    public Number getStatusCode() { return statusCode; }
+    public WithHttpHealthCheckOptions statusCode(Number value) {
         this.statusCode = value;
         return this;
     }
@@ -28817,11 +28817,11 @@ import java.util.function.*;
 /** Options for WithHttpProbe. */
 public final class WithHttpProbeOptions {
     private String path;
-    private Double initialDelaySeconds;
-    private Double periodSeconds;
-    private Double timeoutSeconds;
-    private Double failureThreshold;
-    private Double successThreshold;
+    private Number initialDelaySeconds;
+    private Number periodSeconds;
+    private Number timeoutSeconds;
+    private Number failureThreshold;
+    private Number successThreshold;
     private String endpointName;
 
     public String getPath() { return path; }
@@ -28830,32 +28830,32 @@ public final class WithHttpProbeOptions {
         return this;
     }
 
-    public Double getInitialDelaySeconds() { return initialDelaySeconds; }
-    public WithHttpProbeOptions initialDelaySeconds(Double value) {
+    public Number getInitialDelaySeconds() { return initialDelaySeconds; }
+    public WithHttpProbeOptions initialDelaySeconds(Number value) {
         this.initialDelaySeconds = value;
         return this;
     }
 
-    public Double getPeriodSeconds() { return periodSeconds; }
-    public WithHttpProbeOptions periodSeconds(Double value) {
+    public Number getPeriodSeconds() { return periodSeconds; }
+    public WithHttpProbeOptions periodSeconds(Number value) {
         this.periodSeconds = value;
         return this;
     }
 
-    public Double getTimeoutSeconds() { return timeoutSeconds; }
-    public WithHttpProbeOptions timeoutSeconds(Double value) {
+    public Number getTimeoutSeconds() { return timeoutSeconds; }
+    public WithHttpProbeOptions timeoutSeconds(Number value) {
         this.timeoutSeconds = value;
         return this;
     }
 
-    public Double getFailureThreshold() { return failureThreshold; }
-    public WithHttpProbeOptions failureThreshold(Double value) {
+    public Number getFailureThreshold() { return failureThreshold; }
+    public WithHttpProbeOptions failureThreshold(Number value) {
         this.failureThreshold = value;
         return this;
     }
 
-    public Double getSuccessThreshold() { return successThreshold; }
-    public WithHttpProbeOptions successThreshold(Double value) {
+    public Number getSuccessThreshold() { return successThreshold; }
+    public WithHttpProbeOptions successThreshold(Number value) {
         this.successThreshold = value;
         return this;
     }
@@ -28905,20 +28905,20 @@ import java.util.function.*;
 
 /** Options for WithHttpsEndpoint. */
 public final class WithHttpsEndpointOptions {
-    private Double port;
-    private Double targetPort;
+    private Number port;
+    private Number targetPort;
     private String name;
     private String env;
     private Boolean isProxied;
 
-    public Double getPort() { return port; }
-    public WithHttpsEndpointOptions port(Double value) {
+    public Number getPort() { return port; }
+    public WithHttpsEndpointOptions port(Number value) {
         this.port = value;
         return this;
     }
 
-    public Double getTargetPort() { return targetPort; }
-    public WithHttpsEndpointOptions targetPort(Double value) {
+    public Number getTargetPort() { return targetPort; }
+    public WithHttpsEndpointOptions targetPort(Number value) {
         this.targetPort = value;
         return this;
     }
@@ -28981,7 +28981,7 @@ import java.util.function.*;
 /** Options for WithMergeLogging. */
 public final class WithMergeLoggingOptions {
     private Boolean enableConsole;
-    private Double maxFiles;
+    private Number maxFiles;
 
     public Boolean getEnableConsole() { return enableConsole; }
     public WithMergeLoggingOptions enableConsole(Boolean value) {
@@ -28989,8 +28989,8 @@ public final class WithMergeLoggingOptions {
         return this;
     }
 
-    public Double getMaxFiles() { return maxFiles; }
-    public WithMergeLoggingOptions maxFiles(Double value) {
+    public Number getMaxFiles() { return maxFiles; }
+    public WithMergeLoggingOptions maxFiles(Number value) {
         this.maxFiles = value;
         return this;
     }
@@ -29008,7 +29008,7 @@ import java.util.function.*;
 /** Options for WithMergeLoggingPath. */
 public final class WithMergeLoggingPathOptions {
     private Boolean enableConsole;
-    private Double maxFiles;
+    private Number maxFiles;
 
     public Boolean getEnableConsole() { return enableConsole; }
     public WithMergeLoggingPathOptions enableConsole(Boolean value) {
@@ -29016,8 +29016,8 @@ public final class WithMergeLoggingPathOptions {
         return this;
     }
 
-    public Double getMaxFiles() { return maxFiles; }
-    public WithMergeLoggingPathOptions maxFiles(Double value) {
+    public Number getMaxFiles() { return maxFiles; }
+    public WithMergeLoggingPathOptions maxFiles(Number value) {
         this.maxFiles = value;
         return this;
     }

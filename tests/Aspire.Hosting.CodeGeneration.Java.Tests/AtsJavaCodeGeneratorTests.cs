@@ -2,6 +2,7 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System.Reflection;
+using System.Text.RegularExpressions;
 using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.RemoteHost;
 using Aspire.TypeSystem;
@@ -40,6 +41,34 @@ public class AtsJavaCodeGeneratorTests
 
         await Verify(JoinGeneratedFiles(files), extension: "java")
             .UseFileName("AtsGeneratedAspire");
+    }
+
+    [Fact]
+    public void GenerateDistributedApplication_DeclaresNumericParametersAsNumber()
+    {
+        var atsContext = CreateContextFromTestAssembly();
+
+        var files = _generator.GenerateDistributedApplication(atsContext);
+        var generated = JoinGeneratedFiles(files);
+
+        // ATS collapses every numeric to one Number type, so a C# int parameter such as a port or an exit
+        // code reaches the generator as a floating-point type. Java refuses to convert an int literal to a
+        // Double - widening then boxing is not a conversion the language performs - so declaring these as
+        // Double makes `targetPort(8080)` and `waitForCompletion(job, 0)` fail to compile with
+        // "int cannot be converted to Double". java.lang.Number accepts int, long and double literals,
+        // boxed values and null alike.
+        // https://docs.oracle.com/javase/specs/jls/se21/html/jls-5.html#jls-5.3
+        Assert.Contains("public TestRedisResource addTestRedis(String name, Number port)", generated, StringComparison.Ordinal);
+        Assert.Contains("private Map<String, Number> counts;", generated, StringComparison.Ordinal);
+        Assert.Contains("public Map<String, Number> getCounts() { return counts; }", generated, StringComparison.Ordinal);
+
+        // Casting the deserialized map to Map<String, Double> was also simply wrong: a JSON integer
+        // deserializes to Integer, so the first read of such an entry threw ClassCastException.
+        Assert.Contains("value.setCounts((Map<String, Number>) countsValue);", generated, StringComparison.Ordinal);
+
+        // Double.parseDouble in the hand-written JSON reader is the one legitimate use, so the check is
+        // scoped to declarations rather than the whole text.
+        Assert.Empty(Regex.Matches(generated, @"\bDouble\b(?!\.)"));
     }
 
     [Fact]

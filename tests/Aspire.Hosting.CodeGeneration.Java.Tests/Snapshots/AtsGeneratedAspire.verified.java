@@ -1383,7 +1383,7 @@ public class IDistributedApplicationBuilder extends HandleWrapperBase {
     }
 
     /** Adds a test Redis resource from ATS documentation. */
-    public TestRedisResource addTestRedis(String name, Double port) {
+    public TestRedisResource addTestRedis(String name, Number port) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("name", AspireClient.serializeValue(name));
@@ -2105,7 +2105,7 @@ public class TestDatabaseResource extends ResourceBuilderBase {
     }
 
     /** Configures resource logging */
-    private TestDatabaseResource withMergeLoggingImpl(String logLevel, Boolean enableConsole, Double maxFiles) {
+    private TestDatabaseResource withMergeLoggingImpl(String logLevel, Boolean enableConsole, Number maxFiles) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("logLevel", AspireClient.serializeValue(logLevel));
@@ -2131,7 +2131,7 @@ public class TestDatabaseResource extends ResourceBuilderBase {
     }
 
     /** Configures resource logging with file path */
-    private TestDatabaseResource withMergeLoggingPathImpl(String logLevel, String logPath, Boolean enableConsole, Double maxFiles) {
+    private TestDatabaseResource withMergeLoggingPathImpl(String logLevel, String logPath, Boolean enableConsole, Number maxFiles) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("logLevel", AspireClient.serializeValue(logLevel));
@@ -2309,8 +2309,8 @@ public class TestMutableCollectionContext extends HandleWrapperBase {
     }
 
     /** Gets the Counts property */
-    private AspireDict<String, Double> countsField;
-    public AspireDict<String, Double> counts() {
+    private AspireDict<String, Number> countsField;
+    public AspireDict<String, Number> counts() {
         if (countsField == null) {
             countsField = new AspireDict<>(getHandle(), getClient(), "Aspire.Hosting.CodeGeneration.TypeScript.Tests.TestTypes/TestMutableCollectionContext.counts");
         }
@@ -2318,7 +2318,7 @@ public class TestMutableCollectionContext extends HandleWrapperBase {
     }
 
     /** Sets the Counts property */
-    public TestMutableCollectionContext setCounts(AspireDict<String, Double> value) {
+    public TestMutableCollectionContext setCounts(AspireDict<String, Number> value) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("context", AspireClient.serializeValue(getHandle()));
         reqArgs.put("value", AspireClient.serializeValue(value));
@@ -2341,7 +2341,7 @@ public class TestNestedDto implements JsonSerializable {
     private String id;
     private TestConfigDto config;
     private List<String> tags;
-    private Map<String, Double> counts;
+    private Map<String, Number> counts;
 
     public String getId() { return id; }
     public void setId(String value) { this.id = value; }
@@ -2349,8 +2349,8 @@ public class TestNestedDto implements JsonSerializable {
     public void setConfig(TestConfigDto value) { this.config = value; }
     public List<String> getTags() { return tags; }
     public void setTags(List<String> value) { this.tags = value; }
-    public Map<String, Double> getCounts() { return counts; }
-    public void setCounts(Map<String, Double> value) { this.counts = value; }
+    public Map<String, Number> getCounts() { return counts; }
+    public void setCounts(Map<String, Number> value) { this.counts = value; }
 
     @SuppressWarnings("unchecked")
     public static TestNestedDto fromMap(Map<String, Object> map) {
@@ -2362,7 +2362,7 @@ public class TestNestedDto implements JsonSerializable {
         var tagsValue = map.get("Tags");
         value.setTags(((List<Object>) tagsValue).stream().map(item0 -> (String) item0).toList());
         var countsValue = map.get("Counts");
-        value.setCounts((Map<String, Double>) countsValue);
+        value.setCounts((Map<String, Number>) countsValue);
         return value;
     }
 
@@ -2840,7 +2840,7 @@ public class TestRedisResource extends ResourceBuilderBase {
     }
 
     /** Configures resource logging */
-    private TestRedisResource withMergeLoggingImpl(String logLevel, Boolean enableConsole, Double maxFiles) {
+    private TestRedisResource withMergeLoggingImpl(String logLevel, Boolean enableConsole, Number maxFiles) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("logLevel", AspireClient.serializeValue(logLevel));
@@ -2866,7 +2866,7 @@ public class TestRedisResource extends ResourceBuilderBase {
     }
 
     /** Configures resource logging with file path */
-    private TestRedisResource withMergeLoggingPathImpl(String logLevel, String logPath, Boolean enableConsole, Double maxFiles) {
+    private TestRedisResource withMergeLoggingPathImpl(String logLevel, String logPath, Boolean enableConsole, Number maxFiles) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("logLevel", AspireClient.serializeValue(logLevel));
@@ -3299,7 +3299,7 @@ public class TestVaultResource extends ResourceBuilderBase {
     }
 
     /** Configures resource logging */
-    private TestVaultResource withMergeLoggingImpl(String logLevel, Boolean enableConsole, Double maxFiles) {
+    private TestVaultResource withMergeLoggingImpl(String logLevel, Boolean enableConsole, Number maxFiles) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("logLevel", AspireClient.serializeValue(logLevel));
@@ -3325,7 +3325,7 @@ public class TestVaultResource extends ResourceBuilderBase {
     }
 
     /** Configures resource logging with file path */
-    private TestVaultResource withMergeLoggingPathImpl(String logLevel, String logPath, Boolean enableConsole, Double maxFiles) {
+    private TestVaultResource withMergeLoggingPathImpl(String logLevel, String logPath, Boolean enableConsole, Number maxFiles) {
         Map<String, Object> reqArgs = new HashMap<>();
         reqArgs.put("builder", AspireClient.serializeValue(getHandle()));
         reqArgs.put("logLevel", AspireClient.serializeValue(logLevel));
@@ -3419,7 +3419,7 @@ import java.util.function.*;
 /** Options for WithMergeLogging. */
 public final class WithMergeLoggingOptions {
     private Boolean enableConsole;
-    private Double maxFiles;
+    private Number maxFiles;
 
     public Boolean getEnableConsole() { return enableConsole; }
     public WithMergeLoggingOptions enableConsole(Boolean value) {
@@ -3427,8 +3427,8 @@ public final class WithMergeLoggingOptions {
         return this;
     }
 
-    public Double getMaxFiles() { return maxFiles; }
-    public WithMergeLoggingOptions maxFiles(Double value) {
+    public Number getMaxFiles() { return maxFiles; }
+    public WithMergeLoggingOptions maxFiles(Number value) {
         this.maxFiles = value;
         return this;
     }
@@ -3446,7 +3446,7 @@ import java.util.function.*;
 /** Options for WithMergeLoggingPath. */
 public final class WithMergeLoggingPathOptions {
     private Boolean enableConsole;
-    private Double maxFiles;
+    private Number maxFiles;
 
     public Boolean getEnableConsole() { return enableConsole; }
     public WithMergeLoggingPathOptions enableConsole(Boolean value) {
@@ -3454,8 +3454,8 @@ public final class WithMergeLoggingPathOptions {
         return this;
     }
 
-    public Double getMaxFiles() { return maxFiles; }
-    public WithMergeLoggingPathOptions maxFiles(Double value) {
+    public Number getMaxFiles() { return maxFiles; }
+    public WithMergeLoggingPathOptions maxFiles(Number value) {
         this.maxFiles = value;
         return this;
     }

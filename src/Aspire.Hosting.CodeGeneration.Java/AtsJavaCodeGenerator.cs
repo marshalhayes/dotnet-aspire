@@ -1957,21 +1957,21 @@ internal sealed class AtsJavaCodeGenerator : ICodeGenerator
         var wrapperType = isDict ? "AspireDict" : "AspireList";
 
         // Determine type arguments
+        // Boxing is requested from the mapper rather than applied afterwards to a primitive name, so
+        // these type arguments match the ones the List/Dict cases of MapTypeRefToJava produce. Boxing
+        // "double" to "Double" here instead would leave the collection accessor returning
+        // AspireDict<String, Double> while its own setter took AspireDict<String, Number>, and generic
+        // invariance would then reject ctx.setCounts(ctx.counts()).
         string typeArgs;
         if (isDict)
         {
-            var keyType = MapTypeRefToJava(returnType.KeyType, false);
-            var valueType = MapTypeRefToJava(returnType.ValueType, false);
-            // Use boxed types for generics
-            keyType = BoxPrimitiveType(keyType);
-            valueType = BoxPrimitiveType(valueType);
+            var keyType = MapTypeRefToJava(returnType.KeyType, false, useBoxedTypes: true);
+            var valueType = MapTypeRefToJava(returnType.ValueType, false, useBoxedTypes: true);
             typeArgs = $"<{keyType}, {valueType}>";
         }
         else
         {
-            var elementType = MapTypeRefToJava(returnType.ElementType, false);
-            // Use boxed types for generics
-            elementType = BoxPrimitiveType(elementType);
+            var elementType = MapTypeRefToJava(returnType.ElementType, false, useBoxedTypes: true);
             typeArgs = $"<{elementType}>";
         }
 
@@ -1993,22 +1993,6 @@ internal sealed class AtsJavaCodeGenerator : ICodeGenerator
         WriteLine($"        return {fieldName};");
         WriteLine("    }");
         WriteLine();
-    }
-
-    private static string BoxPrimitiveType(string type)
-    {
-        return type switch
-        {
-            "int" => "Integer",
-            "long" => "Long",
-            "double" => "Double",
-            "float" => "Float",
-            "boolean" => "Boolean",
-            "char" => "Character",
-            "byte" => "Byte",
-            "short" => "Short",
-            _ => type
-        };
     }
 
     private void GenerateHandleWrapperRegistrations(
@@ -2354,13 +2338,21 @@ internal sealed class AtsJavaCodeGenerator : ICodeGenerator
     private static string MapPrimitiveType(string typeId, bool useBoxedTypes) => typeId switch
     {
         AtsConstants.String or AtsConstants.Char => "String",
-        AtsConstants.Number => useBoxedTypes ? "Double" : "double",
+        // java.lang.Number rather than Double. ATS collapses every numeric to one Number type, so a C#
+        // int parameter such as a port or an exit code arrives here as a floating-point type, and Java
+        // will not convert an int literal to a Double: widening followed by boxing is not one of the
+        // conversions the language performs, so `targetPort(8080)` and `waitForCompletion(job, 0)` fail
+        // to compile with "int cannot be converted to Double". Declaring the supertype accepts int, long
+        // and double literals, boxed values and null alike, and the value is serialized through
+        // AspireClient.serializeValue(Object), which never needed a Double.
+        // https://docs.oracle.com/javase/specs/jls/se21/html/jls-5.html#jls-5.3
+        AtsConstants.Number => useBoxedTypes ? "Number" : "double",
         AtsConstants.Boolean => useBoxedTypes ? "Boolean" : "boolean",
         AtsConstants.Void => "void",
         AtsConstants.Any => "Object",
         AtsConstants.DateTime or AtsConstants.DateTimeOffset or
         AtsConstants.DateOnly or AtsConstants.TimeOnly => "String",
-        AtsConstants.TimeSpan => useBoxedTypes ? "Double" : "double",
+        AtsConstants.TimeSpan => useBoxedTypes ? "Number" : "double",
         AtsConstants.Guid or AtsConstants.Uri => "String",
         AtsConstants.CancellationToken => "CancellationToken",
         _ => "Object"
