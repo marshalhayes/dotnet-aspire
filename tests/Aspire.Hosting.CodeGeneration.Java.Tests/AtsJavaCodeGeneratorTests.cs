@@ -370,6 +370,131 @@ public class AtsJavaCodeGeneratorTests
         Assert.Contains("public class TestConfigDto implements JsonSerializable", testConfigDtoJava);
     }
 
+    [Fact]
+    public void GeneratedCode_SuppressesWarningsOnEveryGeneratedType()
+    {
+        var atsContext = CreateContextFromBothAssemblies();
+
+        var files = _generator.GenerateDistributedApplication(atsContext);
+
+        // Every token is load-bearing, because the two compilers that see this code disagree on what
+        // "all" covers. ECJ (which the Java language server, and so VS Code, compiles with) honours
+        // "all" and never reports it back as unnecessary. javac ignores "all" for its -Xlint
+        // categories, so "unchecked" and "serial" have to be named for `gradle build` and
+        // `mvn compile` to stay quiet.
+        var javaFiles = files.Where(kvp => kvp.Key.EndsWith(".java", StringComparison.Ordinal)).ToList();
+        Assert.NotEmpty(javaFiles);
+
+        var unsuppressed = javaFiles
+            .Where(kvp => !kvp.Value.Contains("@SuppressWarnings({\"all\", \"unchecked\", \"serial\"})", StringComparison.Ordinal))
+            .Select(kvp => kvp.Key)
+            .ToList();
+
+        Assert.Empty(unsuppressed);
+    }
+
+    [Fact]
+    public void GeneratedCode_DoesNotEmitWildcardImports()
+    {
+        var atsContext = CreateContextFromBothAssemblies();
+
+        var files = _generator.GenerateDistributedApplication(atsContext);
+
+        // A wildcard import cannot be filtered per file, so it lands in all of the generated files and
+        // is unused in nearly every one. That is what produced 300 "The import java.util is never
+        // used" warnings in the user's Problems panel before imports became explicit.
+        var withWildcards = files
+            .Where(kvp => kvp.Key.EndsWith(".java", StringComparison.Ordinal))
+            .Where(kvp => Regex.IsMatch(kvp.Value, @"^import\s+[\w.]+\.\*;", RegexOptions.Multiline))
+            .Select(kvp => kvp.Key)
+            .ToList();
+
+        Assert.Empty(withWildcards);
+    }
+
+    [Fact]
+    public void GeneratedCode_OnlyImportsTypesTheFileReferences()
+    {
+        var atsContext = CreateContextFromBothAssemblies();
+
+        var files = _generator.GenerateDistributedApplication(atsContext);
+
+        // The generator emits one large compilation unit and then splits it per top-level declaration.
+        // Without per-file filtering the whole import block is copied into all ~226 files, so this
+        // pins the filtering rather than the split.
+        var offenders = new List<string>();
+
+        foreach (var (path, content) in files.Where(kvp => kvp.Key.EndsWith(".java", StringComparison.Ordinal)))
+        {
+            foreach (Match import in Regex.Matches(content, @"^import\s+(?:static\s+)?([\w.]+)\.(\w+);", RegexOptions.Multiline))
+            {
+                var simpleName = import.Groups[2].Value;
+                var body = content[(import.Index + import.Length)..];
+
+                if (!Regex.IsMatch(body, $@"\b{Regex.Escape(simpleName)}\b"))
+                {
+                    offenders.Add($"{path}: {import.Groups[0].Value}");
+                }
+            }
+        }
+
+        Assert.Empty(offenders);
+    }
+
+    [Fact]
+    public void GeneratedCode_RegistersCollectionWrappersWithoutRawTypes()
+    {
+        var atsContext = CreateContextFromBothAssemblies();
+
+        var files = _generator.GenerateDistributedApplication(atsContext);
+        var registrations = files["aspire/AspireRegistrations.java"];
+
+        // The factory target is BiFunction<Handle, AspireClient, Object>, so a raw AspireList/AspireDict
+        // here raises a rawtypes warning in the consumer's IDE. The diamond infers the erased-equivalent
+        // element type instead.
+        Assert.DoesNotContain("new AspireList(h, c)", registrations, StringComparison.Ordinal);
+        Assert.DoesNotContain("new AspireDict(h, c)", registrations, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GeneratedCollectionWrappers_ExposeTheSameOperationsAsTheOtherLanguages()
+    {
+        var atsContext = CreateContextFromBothAssemblies();
+
+        var files = _generator.GenerateDistributedApplication(atsContext);
+        var aspireList = files["aspire/AspireList.java"];
+        var aspireDict = files["aspire/AspireDict.java"];
+
+        // The Go and TypeScript SDKs agree on this set, and the host exports every one of them from
+        // Aspire.Hosting/Ats/CollectionExports.cs. Java shipped AspireList with no operations at all,
+        // which made any list-valued property unusable from a Java AppHost.
+        string[] listCapabilities =
+        [
+            "Aspire.Hosting/List.length",
+            "Aspire.Hosting/List.get",
+            "Aspire.Hosting/List.add",
+            "Aspire.Hosting/List.removeAt",
+            "Aspire.Hosting/List.clear",
+            "Aspire.Hosting/List.toArray",
+        ];
+
+        string[] dictCapabilities =
+        [
+            "Aspire.Hosting/Dict.count",
+            "Aspire.Hosting/Dict.get",
+            "Aspire.Hosting/Dict.set",
+            "Aspire.Hosting/Dict.remove",
+            "Aspire.Hosting/Dict.has",
+            "Aspire.Hosting/Dict.keys",
+            "Aspire.Hosting/Dict.values",
+            "Aspire.Hosting/Dict.clear",
+            "Aspire.Hosting/Dict.toObject",
+        ];
+
+        Assert.All(listCapabilities, capability => Assert.Contains(capability, aspireList, StringComparison.Ordinal));
+        Assert.All(dictCapabilities, capability => Assert.Contains(capability, aspireDict, StringComparison.Ordinal));
+    }
+
     private static string JoinGeneratedFiles(Dictionary<string, string> files)
     {
         return string.Join(

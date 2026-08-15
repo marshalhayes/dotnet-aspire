@@ -397,6 +397,129 @@ internal sealed class AtsJavaCodeGenerator : ICodeGenerator
         return delta;
     }
 
+    /// <summary>
+    /// Finds the line the top-level type is declared on, skipping the javadoc and comments that
+    /// precede it.
+    /// </summary>
+    /// <remarks>
+    /// Java has no file-level warning suppression, so <c>@SuppressWarnings</c> has to go on the type
+    /// itself, and it has to go <em>below</em> any javadoc: an annotation between a doc comment and
+    /// the type it documents is legal, but a doc comment that is not immediately followed by the
+    /// declaration stops being attached to it.
+    /// </remarks>
+    private static int FindDeclarationLineIndex(List<string> declarationLines)
+    {
+        var inBlockComment = false;
+
+        for (var i = 0; i < declarationLines.Count; i++)
+        {
+            var trimmed = declarationLines[i].Trim();
+
+            if (inBlockComment)
+            {
+                if (trimmed.EndsWith("*/", StringComparison.Ordinal))
+                {
+                    inBlockComment = false;
+                }
+
+                continue;
+            }
+
+            if (trimmed.Length == 0 || trimmed.StartsWith("//", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (trimmed.StartsWith("/*", StringComparison.Ordinal))
+            {
+                // A one-line "/** Foo DTO. */" opens and closes on the same line.
+                if (!trimmed.EndsWith("*/", StringComparison.Ordinal))
+                {
+                    inBlockComment = true;
+                }
+
+                continue;
+            }
+
+            return i;
+        }
+
+        return declarationLines.Count;
+    }
+
+    /// <summary>
+    /// Returns the subset of <paramref name="importLines"/> that <paramref name="declarationLines"/>
+    /// actually references.
+    /// </summary>
+    /// <remarks>
+    /// Every declaration is split out of one generated compilation unit, so without filtering it
+    /// inherits that unit's entire import block. Copying all of it into all 226 files is what made
+    /// the Java language server report an unused import on nearly every file of a project-style
+    /// AppHost. Each import the generator emits names a single type, so "is it used" reduces to a
+    /// whole-word search of the declaration.
+    /// </remarks>
+    private static List<string> FilterImports(List<string> importLines, List<string> declarationLines)
+    {
+        var body = string.Join('\n', declarationLines);
+        var used = new List<string>();
+
+        foreach (var importLine in importLines)
+        {
+            // "import java.util.Map;" -> "java.util.Map", "import static a.B.c;" -> "static a.B.c".
+            var imported = importLine["import ".Length..].TrimEnd(';').Trim();
+
+            // A wildcard cannot be matched against a simple name without knowing every type the
+            // package exports, so it is kept rather than risk dropping one the declaration needs.
+            if (imported.EndsWith('*'))
+            {
+                used.Add(importLine);
+                continue;
+            }
+
+            var simpleName = imported[(imported.LastIndexOf('.') + 1)..];
+
+            if (ContainsWord(body, simpleName))
+            {
+                used.Add(importLine);
+            }
+        }
+
+        return used;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="word"/> appears in <paramref name="text"/> delimited by characters
+    /// that cannot be part of a Java identifier.
+    /// </summary>
+    /// <remarks>
+    /// Substring matching would keep <c>java.util.List</c> alive for a file that only mentions
+    /// <c>AspireList</c>, and dropping a needed import breaks the build, so the boundary check errs
+    /// toward keeping imports: <c>$</c> and <c>_</c> count as identifier characters because Java
+    /// allows them in names.
+    /// </remarks>
+    private static bool ContainsWord(string text, string word)
+    {
+        var index = text.IndexOf(word, StringComparison.Ordinal);
+
+        while (index >= 0)
+        {
+            var beforeIsBoundary = index == 0 || !IsJavaIdentifierChar(text[index - 1]);
+            var afterIndex = index + word.Length;
+            var afterIsBoundary = afterIndex == text.Length || !IsJavaIdentifierChar(text[afterIndex]);
+
+            if (beforeIsBoundary && afterIsBoundary)
+            {
+                return true;
+            }
+
+            index = text.IndexOf(word, index + 1, StringComparison.Ordinal);
+        }
+
+        return false;
+
+        static bool IsJavaIdentifierChar(char c) => char.IsLetterOrDigit(c) || c == '_' || c == '$';
+    }
+
     private static string CreateJavaSourceFile(string fileName, string packageLine, List<string> importLines, List<string> declarationLines)
     {
         var builder = new StringBuilder();
@@ -407,19 +530,48 @@ internal sealed class AtsJavaCodeGenerator : ICodeGenerator
         builder.AppendLine(packageLine);
         builder.AppendLine();
 
-        foreach (var importLine in importLines)
+        var usedImports = FilterImports(importLines, declarationLines);
+
+        foreach (var importLine in usedImports)
         {
             builder.AppendLine(importLine);
         }
 
-        if (importLines.Count > 0)
+        if (usedImports.Count > 0)
         {
             builder.AppendLine();
         }
 
-        foreach (var line in declarationLines)
+        var declarationIndex = FindDeclarationLineIndex(declarationLines);
+
+        for (var i = 0; i < declarationLines.Count; i++)
         {
-            builder.AppendLine(line);
+            if (i == declarationIndex)
+            {
+                // This file is regenerated on every run and is not the user's to edit, so a warning
+                // reported against it is noise they cannot act on. Emitting clean code is not enough
+                // on its own: editors compile with ECJ, whose warning set is far broader than javac's
+                // -Xlint (neither "Unnecessary @SuppressWarnings" nor "The import X is never used"
+                // exists in javac), and the alternative of marking the source folder generated lives
+                // in the user's own pom.xml/build.gradle rather than anywhere Aspire controls.
+                //
+                // All three tokens are required, because the two compilers disagree on what "all"
+                // means. ECJ honours "all" as a blanket, and it is the one token ECJ never reports
+                // back as unnecessary. javac does not apply "all" to its -Xlint categories at all, so
+                // it needs each category named: "unchecked" for the Map<String, Object> casts in the
+                // generated callback adapters, and "serial" for CapabilityError, which extends
+                // RuntimeException without a serialVersionUID. Naming them also silences the
+                // "Note: Some input files use unchecked or unsafe operations" that javac otherwise
+                // prints on every `gradle build` and `mvn compile`. The redundancy is safe in the
+                // other direction: ECJ does not flag the extra tokens, because "all" suppresses its
+                // unnecessary-suppression diagnostic too.
+                //
+                // An annotation on the top-level type also covers the compilation unit's imports.
+                // protobuf-java, Dagger, and MapStruct all annotate their output the same way.
+                builder.AppendLine("@SuppressWarnings({\"all\", \"unchecked\", \"serial\"})");
+            }
+
+            builder.AppendLine(declarationLines[i]);
         }
 
         return builder.ToString();
@@ -475,8 +627,20 @@ internal sealed class AtsJavaCodeGenerator : ICodeGenerator
         WriteLine();
         WriteLine("package aspire;");
         WriteLine();
-        WriteLine("import java.util.*;");
-        WriteLine("import java.util.function.*;");
+        // Explicit rather than wildcard imports: CreateJavaSourceFile keeps an import only when the
+        // declaration it lands on references the simple name, and that decision is only exact when the
+        // import names one type. A wildcard would have to be matched against every name the package
+        // exports, so it gets copied into files that never use it.
+        WriteLine("import java.util.ArrayList;");
+        WriteLine("import java.util.HashMap;");
+        WriteLine("import java.util.LinkedHashMap;");
+        WriteLine("import java.util.List;");
+        WriteLine("import java.util.Map;");
+        WriteLine("import java.util.Set;");
+        WriteLine("import java.util.UUID;");
+        WriteLine("import java.util.function.BiFunction;");
+        WriteLine("import java.util.function.Consumer;");
+        WriteLine("import java.util.function.Function;");
         WriteLine();
     }
 
@@ -2042,7 +2206,13 @@ internal sealed class AtsJavaCodeGenerator : ICodeGenerator
         foreach (var (typeId, isDict) in collectionTypes)
         {
             var wrapperType = isDict ? "AspireDict" : "AspireList";
-            WriteLine($"        AspireClient.registerHandleWrapper(\"{typeId}\", (h, c) -> new {wrapperType}(h, c));");
+            // The diamond is required rather than cosmetic: the factory is a
+            // BiFunction<Handle, AspireClient, Object>, so a raw AspireList/AspireDict here would
+            // raise a rawtypes warning in every consumer's IDE. Element types are not known at
+            // registration time, so inference against the Object target yields the erased-equivalent
+            // AspireList<Object>/AspireDict<Object, Object>, which is exactly what callers re-cast
+            // through the typed accessors generated by GenerateListOrDictProperty.
+            WriteLine($"        AspireClient.registerHandleWrapper(\"{typeId}\", (h, c) -> new {wrapperType}<>(h, c));");
         }
 
         WriteLine("    }");

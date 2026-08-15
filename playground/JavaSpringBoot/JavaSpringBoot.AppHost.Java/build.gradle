@@ -13,6 +13,14 @@ java {
         // editor report the AppHost's own entry point as a syntax error.
         languageVersion = JavaLanguageVersion.of(25)
     }
+
+    // The toolchain alone is not enough for the IDE. Buildship reads sourceCompatibility/
+    // targetCompatibility to pick the Eclipse compliance level it hands the Java language server, and
+    // it does not derive them from the toolchain. Without these, the language server compiles at its
+    // own default and reports "'Compact Source Files and Instance Main Methods' is only available with
+    // source level 25 and above" against AppHost.java, even though `gradle build` succeeds.
+    sourceCompatibility = JavaVersion.VERSION_25
+    targetCompatibility = JavaVersion.VERSION_25
 }
 
 repositories {
@@ -44,6 +52,16 @@ sourceSets {
             // exclude it from that root; the excludes are relative to each source root, which is why this
             // does not also exclude the SDK from its own root.
             exclude 'src/**', 'build/**', 'bin/**', '.gradle/**', '.aspire/**'
+        }
+
+        // Rooting the java source set at '.' also points the resources source set at '.', because the
+        // java plugin defaults both to the same convention. processResources would then copy every
+        // non-.java file in this directory — .gradle/, .aspire/, gradlew, the wrapper jar — into
+        // build/resources/main and bin/main. The Java language server digests those copies, and throws
+        // "Problem refreshing workspace ... NoSuchFileException: .../bin/main/.gradle" as soon as Gradle
+        // deletes the originals. The AppHost ships no resources, so give the set no roots at all.
+        resources {
+            srcDirs = []
         }
     }
 }

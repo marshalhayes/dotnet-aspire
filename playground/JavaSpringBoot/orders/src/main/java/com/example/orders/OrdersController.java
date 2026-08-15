@@ -32,11 +32,16 @@ public class OrdersController {
 	}
 
 	@GetMapping("/orders")
-	@SuppressWarnings("unchecked")
 	public Map<String, Object> orders() {
 		// Calling across resources is what produces a distributed trace spanning both services, which is
 		// the whole point of running the OpenTelemetry agent on each of them.
-		var products = restTemplate.getForObject(catalogUrl + "/products", List.class);
+		//
+		// RestTemplate can only be handed a raw Class token, so there is no way to ask it for a
+		// List<Map<String, Object>> directly; the suppression covers the unchecked conversion that
+		// assigning its raw List result to a parameterized type performs.
+		@SuppressWarnings("unchecked")
+		List<Map<String, Object>> products =
+			restTemplate.getForObject(catalogUrl + "/products", List.class);
 
 		return Map.of(
 			"orderId", "ORD-1001",
