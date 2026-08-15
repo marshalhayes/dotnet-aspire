@@ -202,7 +202,16 @@ internal sealed partial class CliTemplateFactory : ITemplateFactory
                 cmd => AddOptionIfMissing(cmd, _localhostTldOption),
                 ApplyGoStarterTemplateAsync,
                 runtime: TemplateRuntime.Cli,
-                languageId: KnownLanguageId.Go)
+                languageId: KnownLanguageId.Go),
+
+            new CallbackTemplate(
+                KnownTemplateId.JavaStarter,
+                "Starter App (Express/React, Java AppHost)",
+                (ctx, projectName) => OutputPathHelper.GetUniqueDefaultOutputPath(projectName, ctx.WorkingDirectory.FullName),
+                cmd => AddOptionIfMissing(cmd, _localhostTldOption),
+                ApplyJavaStarterTemplateAsync,
+                runtime: TemplateRuntime.Cli,
+                languageId: KnownLanguageId.Java)
         ];
 
         return templates.Where(IsTemplateAvailable);
