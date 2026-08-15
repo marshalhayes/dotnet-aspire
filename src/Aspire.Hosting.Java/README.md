@@ -118,12 +118,24 @@ builder.AddJavaApp("inventory", "../inventory")
     .WithMavenBuild("-B", "-ntp", "-DskipTests", "package")
     .WithMavenGoal("quarkus:dev")
     .WithEnvironment("QUARKUS_PROFILE", "dev")
+    .WithEnvironment("QUARKUS_OBSERVABILITY_ENABLED", "false")
     .WithHttpEndpoint(env: "QUARKUS_HTTP_PORT");
 ```
 
 The application runs in Quarkus dev mode, so live coding works while the AppHost is running. Quarkus Dev
 Services stay enabled but do not activate for anything Aspire supplies, because a Dev Service only starts
 when the configuration it would provide is absent — and `WithReference` supplies it.
+
+The observability Dev Service is the exception, and is turned off. Left on, an application that depends on
+`quarkus-opentelemetry` pulls `grafana/otel-lgtm` (roughly 600 MB), starts it through Testcontainers, and
+then repoints the exporter at that container — so telemetry never reaches the Aspire dashboard and a
+container is left behind. Aspire is already the observability stack, so the Dev Service has nothing to add.
+
+`AddQuarkusApp` also mirrors the OTLP endpoint, protocol, headers and service name onto the
+`QUARKUS_OTEL_*` environment variables. `quarkus-opentelemetry` reads its own `quarkus.otel.*`
+configuration and ignores the standard `OTEL_*` names, so without this it keeps exporting to its
+`localhost:4317` default and every export fails. No Java agent is needed for a Quarkus application, and
+`WithOtelAgent` should not be combined with the extension.
 
 `QUARKUS_PROFILE=dev` is set as an environment variable rather than left to the goal, because the VS Code
 debugger launches the packaged application directly rather than through `quarkus:dev`; setting it here

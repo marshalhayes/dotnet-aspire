@@ -414,9 +414,66 @@ public static partial class JavaHostingExtensions
         if (builder.ExecutionContext.IsRunMode)
         {
             resourceBuilder.WithEnvironment("QUARKUS_PROFILE", "dev");
+
+            // Quarkus dev mode starts an "observability" Dev Service when an application depends on
+            // quarkus-opentelemetry and no exporter endpoint is configured in the application itself. That
+            // Dev Service pulls grafana/otel-lgtm (roughly 600 MB), starts it through Testcontainers, and
+            // then *overrides* the exporter configuration to point at the container it just started:
+            //
+            //   Dev Service Lgtm started, config: {quarkus.otel.exporter.otlp.endpoint=http://localhost:51845, ...}
+            //
+            // Aspire is already the observability stack here, so that override sends every span and metric
+            // somewhere the Aspire dashboard cannot see, leaves an orphaned container behind, and costs a
+            // large image pull on first run. Turning the Dev Service off lets the exporter configuration
+            // below win, which is what an Aspire user expects.
+            // See https://quarkus.io/guides/observability-devservices-lgtm.
+            resourceBuilder.WithEnvironment("QUARKUS_OBSERVABILITY_ENABLED", "false");
         }
 
+        // The quarkus-opentelemetry extension does not read the standard OTEL_* environment variables that
+        // Aspire sets. It reads its own quarkus.otel.* configuration, so an application with the extension
+        // compiled in silently keeps its default endpoint and fails every export:
+        //
+        //   WARNING [io.quarkus.opentelemetry.runtime.exporter.otlp.sender.VertxGrpcSender]
+        //     Failed to export . The request could not be executed.
+        //     Full error message: Connection refused: localhost/127.0.0.1:4317
+        //
+        // SmallRye Config maps QUARKUS_OTEL_EXPORTER_OTLP_ENDPOINT onto quarkus.otel.exporter.otlp.endpoint,
+        // so mirroring the values Aspire already resolved is enough to point the extension at the dashboard.
+        // See https://quarkus.io/guides/opentelemetry-tracing#create-the-configuration.
+        //
+        // The callback runs after the one WithOtlpExporter installed in AddJavaApp, so the OTEL_* entries are
+        // already present and carry the resolved endpoint reference rather than a literal. An application that
+        // does not use the extension ignores these, at the cost of a "unrecognized configuration key" warning.
+        resourceBuilder.WithEnvironment(context =>
+        {
+            MirrorOtelVariable(context, KnownOtelConfigNames.ExporterOtlpEndpoint, "QUARKUS_OTEL_EXPORTER_OTLP_ENDPOINT");
+            MirrorOtelVariable(context, KnownOtelConfigNames.ExporterOtlpProtocol, "QUARKUS_OTEL_EXPORTER_OTLP_PROTOCOL");
+            MirrorOtelVariable(context, KnownOtelConfigNames.ExporterOtlpHeaders, "QUARKUS_OTEL_EXPORTER_OTLP_HEADERS");
+            MirrorOtelVariable(context, KnownOtelConfigNames.ResourceAttributes, "QUARKUS_OTEL_RESOURCE_ATTRIBUTES");
+            MirrorOtelVariable(context, KnownOtelConfigNames.ServiceName, "QUARKUS_OTEL_SERVICE_NAME");
+            MirrorOtelVariable(context, KnownOtelConfigNames.BspScheduleDelay, "QUARKUS_OTEL_BSP_SCHEDULE_DELAY");
+            MirrorOtelVariable(context, KnownOtelConfigNames.BlrpScheduleDelay, "QUARKUS_OTEL_BLRP_SCHEDULE_DELAY");
+            MirrorOtelVariable(context, KnownOtelConfigNames.MetricExportInterval, "QUARKUS_OTEL_METRIC_EXPORT_INTERVAL");
+            MirrorOtelVariable(context, KnownOtelConfigNames.TracesSampler, "QUARKUS_OTEL_TRACES_SAMPLER");
+        });
+
         return resourceBuilder.WithHttpEndpoint(env: "QUARKUS_HTTP_PORT");
+    }
+
+    /// <summary>
+    /// Copies an OpenTelemetry environment variable Aspire already resolved to the name Quarkus reads it under.
+    /// </summary>
+    /// <remarks>
+    /// The value is copied by reference rather than converted to a string: several of these are endpoint
+    /// references or DCP templates that only resolve once the resource starts.
+    /// </remarks>
+    private static void MirrorOtelVariable(EnvironmentCallbackContext context, string standardName, string quarkusName)
+    {
+        if (context.EnvironmentVariables.TryGetValue(standardName, out var value))
+        {
+            context.EnvironmentVariables[quarkusName] = value;
+        }
     }
 
     /// <summary>

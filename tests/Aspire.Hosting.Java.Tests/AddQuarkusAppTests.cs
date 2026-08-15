@@ -119,6 +119,65 @@ public class AddQuarkusAppTests
     }
 
     [Fact]
+    public async Task AddQuarkusApp_DisablesTheObservabilityDevServiceInRunMode()
+    {
+        // Left on, the Dev Service pulls grafana/otel-lgtm and repoints the exporter at that container,
+        // so every span and metric lands somewhere the Aspire dashboard cannot see.
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.Write("pom.xml", "<project/>");
+
+        var app = builder.AddQuarkusApp("inventory", tempDir.Path);
+
+        AllocateEndpoints(app.Resource);
+
+        var envVars = await EnvironmentVariableEvaluator.GetEnvironmentVariablesAsync(
+            app.Resource, DistributedApplicationOperation.Run, TestServiceProvider.Instance);
+
+        Assert.Equal("false", envVars["QUARKUS_OBSERVABILITY_ENABLED"]);
+    }
+
+    [Fact]
+    public async Task AddQuarkusApp_MirrorsTheOtlpConfigurationOntoTheNamesQuarkusReads()
+    {
+        // quarkus-opentelemetry reads quarkus.otel.*, not the standard OTEL_* names, so without the mirror
+        // it keeps exporting to its own localhost:4317 default.
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.Write("pom.xml", "<project/>");
+
+        var app = builder.AddQuarkusApp("inventory", tempDir.Path);
+
+        AllocateEndpoints(app.Resource);
+
+        var envVars = await EnvironmentVariableEvaluator.GetEnvironmentVariablesAsync(
+            app.Resource, DistributedApplicationOperation.Run, TestServiceProvider.Instance);
+
+        Assert.Equal(envVars["OTEL_EXPORTER_OTLP_ENDPOINT"], envVars["QUARKUS_OTEL_EXPORTER_OTLP_ENDPOINT"]);
+        Assert.Equal(envVars["OTEL_EXPORTER_OTLP_PROTOCOL"], envVars["QUARKUS_OTEL_EXPORTER_OTLP_PROTOCOL"]);
+        Assert.Equal(envVars["OTEL_SERVICE_NAME"], envVars["QUARKUS_OTEL_SERVICE_NAME"]);
+        Assert.Equal(envVars["OTEL_RESOURCE_ATTRIBUTES"], envVars["QUARKUS_OTEL_RESOURCE_ATTRIBUTES"]);
+    }
+
+    [Fact]
+    public async Task AddQuarkusApp_DoesNotMirrorTheOtlpConfigurationWhenPublishing()
+    {
+        // WithOtlpExporter contributes nothing in publish mode, so there is nothing to mirror and the
+        // published image must not carry a stale endpoint.
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.Write("pom.xml", "<project/>");
+
+        var app = builder.AddQuarkusApp("inventory", tempDir.Path);
+
+        var envVars = await EnvironmentVariableEvaluator.GetEnvironmentVariablesAsync(
+            app.Resource, DistributedApplicationOperation.Publish, TestServiceProvider.Instance);
+
+        Assert.False(envVars.ContainsKey("QUARKUS_OTEL_EXPORTER_OTLP_ENDPOINT"));
+        Assert.False(envVars.ContainsKey("QUARKUS_OBSERVABILITY_ENABLED"));
+    }
+
+    [Fact]
     public void AddQuarkusApp_AddsNoHealthCheck()
     {
         // /q/health only exists with the smallrye-health extension. Adding it unconditionally would leave

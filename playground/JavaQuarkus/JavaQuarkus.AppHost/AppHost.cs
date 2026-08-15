@@ -12,7 +12,7 @@ builder.AddDockerComposeEnvironment("compose");
 // dev mode so live coding works, and declares an HTTP endpoint through QUARKUS_HTTP_PORT.
 //
 // There is no WithOtelAgent call anywhere in this file: the quarkus-opentelemetry extension is compiled
-// into both applications and reads the OTEL_* environment variables Aspire already supplies.
+// into both applications, and AddQuarkusApp points that extension at the Aspire dashboard.
 var pricing = builder.AddQuarkusApp("pricing", "../pricing")
     // /q/health is served by the smallrye-health extension, which both services depend on.
     .WithHttpHealthCheck("/q/health")
