@@ -53,10 +53,11 @@ public static partial class JavaHostingExtensions
     /// </summary>
     /// <param name="builder">The <see cref="IDistributedApplicationBuilder"/> to add the resource to.</param>
     /// <param name="name">The name of the resource.</param>
-    /// <param name="workingDirectory">The working directory to use for the command. Relative paths are resolved against the AppHost directory.</param>
+    /// <param name="appDirectory">The application directory. Relative paths are resolved against the AppHost directory.</param>
     /// <returns>A reference to the <see cref="IResourceBuilder{T}"/>.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="builder"/> is <see langword="null"/>.</exception>
-    /// <exception cref="ArgumentException"><paramref name="name"/> or <paramref name="workingDirectory"/> is <see langword="null"/>, empty, or whitespace.</exception>
+    /// <exception cref="ArgumentException"><paramref name="name"/> or <paramref name="appDirectory"/> is <see langword="null"/>, empty, or whitespace.</exception>
+    /// <exception cref="InvalidOperationException">No launch mode was configured. Raised when the resource starts, not when this is called.</exception>
     /// <remarks>
     /// Combine with <see cref="WithMavenGoal{T}(IResourceBuilder{T}, string, string[])"/> or
     /// <see cref="WithGradleTask{T}(IResourceBuilder{T}, string, string[])"/> to run the application through a build tool,
@@ -80,17 +81,17 @@ public static partial class JavaHostingExtensions
     public static IResourceBuilder<JavaAppResource> AddJavaApp(
         this IDistributedApplicationBuilder builder,
         [ResourceName] string name,
-        string workingDirectory)
+        string appDirectory)
     {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        ArgumentException.ThrowIfNullOrWhiteSpace(workingDirectory);
+        ArgumentException.ThrowIfNullOrWhiteSpace(appDirectory);
 
         // Accept both slash styles so an AppHost authored on Windows resolves the same paths on Linux.
-        workingDirectory = PathNormalizer.NormalizePathForCurrentPlatform(
-            Path.Combine(builder.AppHostDirectory, workingDirectory));
+        appDirectory = PathNormalizer.NormalizePathForCurrentPlatform(
+            Path.Combine(builder.AppHostDirectory, appDirectory));
 
-        var resource = new JavaAppResource(name, workingDirectory);
+        var resource = new JavaAppResource(name, appDirectory);
 
         var resourceBuilder = builder.AddResource(resource)
             .WithIconName(JavaIconName)
@@ -111,13 +112,13 @@ public static partial class JavaHostingExtensions
                 // An authored Dockerfile in the application directory is the author's deployment contract.
                 // Generating over it would silently discard base image pins, extra runtime packages, and
                 // anything else the project depends on.
-                if (File.Exists(Path.Combine(workingDirectory, "Dockerfile")))
+                if (File.Exists(Path.Combine(appDirectory, "Dockerfile")))
                 {
                     return;
                 }
 
                 containerBuilder.WithDockerfileBuilder(
-                    workingDirectory,
+                    appDirectory,
                     ctx =>
                     {
                         // The build context was fixed when PublishAsDockerFile ran, which is during
@@ -126,16 +127,16 @@ public static partial class JavaHostingExtensions
                         // runs without moving what is uploaded to the daemon, and the image would be built
                         // from the original directory. Saying so is far better than producing an image
                         // whose sources come from somewhere the author no longer points at.
-                        if (!ArePathsEquivalent(resource.WorkingDirectory, workingDirectory))
+                        if (!ArePathsEquivalent(resource.WorkingDirectory, appDirectory))
                         {
                             throw new DistributedApplicationException(
                                 $"Java application '{resource.Name}' cannot be published because its working " +
                                 $"directory was changed to '{resource.WorkingDirectory}' after the container " +
-                                $"build context was set to '{workingDirectory}'. Pass the directory to " +
+                                $"build context was set to '{appDirectory}'. Pass the directory to " +
                                 "AddJavaApp instead of calling WithWorkingDirectory afterwards.");
                         }
 
-                        JavaDockerfileGenerator.Write(resource, workingDirectory, ctx);
+                        JavaDockerfileGenerator.Write(resource, appDirectory, ctx);
                     });
             });
 
@@ -163,12 +164,12 @@ public static partial class JavaHostingExtensions
     /// </summary>
     /// <param name="builder">The <see cref="IDistributedApplicationBuilder"/> to add the resource to.</param>
     /// <param name="name">The name of the resource.</param>
-    /// <param name="workingDirectory">The working directory for the Java application. Relative paths are resolved against the AppHost directory.</param>
-    /// <param name="jarPath">The path to the JAR file to execute. Relative paths are resolved against <paramref name="workingDirectory"/>.</param>
-    /// <param name="args">Optional arguments passed to the Java application after the JAR path.</param>
+    /// <param name="appDirectory">The application directory. Relative paths are resolved against the AppHost directory.</param>
+    /// <param name="jarPath">The path to the JAR file to execute. Relative paths are resolved against <paramref name="appDirectory"/>.</param>
+    /// <param name="args">Arguments passed to the Java application after the JAR path.</param>
     /// <returns>A reference to the <see cref="IResourceBuilder{T}"/>.</returns>
-    /// <exception cref="ArgumentNullException"><paramref name="builder"/> is <see langword="null"/>.</exception>
-    /// <exception cref="ArgumentException"><paramref name="name"/>, <paramref name="workingDirectory"/>, or <paramref name="jarPath"/> is <see langword="null"/>, empty, or whitespace.</exception>
+    /// <exception cref="ArgumentNullException"><paramref name="builder"/> or <paramref name="args"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException"><paramref name="name"/>, <paramref name="appDirectory"/>, or <paramref name="jarPath"/> is <see langword="null"/>, empty, or whitespace.</exception>
     /// <example>
     /// Build the JAR with Maven, then run it:
     /// <code language="csharp">
@@ -180,16 +181,17 @@ public static partial class JavaHostingExtensions
     public static IResourceBuilder<JavaAppResource> AddJavaApp(
         this IDistributedApplicationBuilder builder,
         [ResourceName] string name,
-        string workingDirectory,
+        string appDirectory,
         string jarPath,
-        string[]? args = null)
+        params string[] args)
     {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        ArgumentException.ThrowIfNullOrWhiteSpace(workingDirectory);
+        ArgumentException.ThrowIfNullOrWhiteSpace(appDirectory);
         ArgumentException.ThrowIfNullOrWhiteSpace(jarPath);
+        ArgumentNullException.ThrowIfNull(args);
 
-        var rb = builder.AddJavaApp(name, workingDirectory);
+        var rb = builder.AddJavaApp(name, appDirectory);
 
         rb.WithAnnotation(
             // Only the separators are normalized. The path is deliberately not made absolute: the process
@@ -198,7 +200,7 @@ public static partial class JavaHostingExtensions
             new JavaJarPathAnnotation(jarPath.Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar)),
             ResourceAnnotationMutationBehavior.Replace);
 
-        if (args is { Length: > 0 })
+        if (args.Length > 0)
         {
             rb.WithArgs(args);
         }
@@ -212,7 +214,7 @@ public static partial class JavaHostingExtensions
     /// <param name="builder">The <see cref="IDistributedApplicationBuilder"/> to add the resource to.</param>
     /// <param name="name">The name of the resource.</param>
     /// <param name="image">The container image that runs the application, for example <c>mycompany/catalog</c>.</param>
-    /// <param name="imageTag">The image tag. Defaults to the image's <c>latest</c> tag.</param>
+    /// <param name="tag">The image tag. Defaults to the image's <c>latest</c> tag.</param>
     /// <returns>A reference to the <see cref="IResourceBuilder{T}"/>.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="builder"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException"><paramref name="name"/> or <paramref name="image"/> is <see langword="null"/>, empty, or whitespace.</exception>
@@ -235,7 +237,7 @@ public static partial class JavaHostingExtensions
     ///
     /// var db = builder.AddPostgres("pg").AddDatabase("catalogdb");
     ///
-    /// builder.AddJavaContainerApp("catalog", "mycompany/catalog", "1.4.0")
+    /// builder.AddJavaContainer("catalog", "mycompany/catalog", "1.4.0")
     ///        .WithHttpEndpoint(targetPort: 8080)
     ///        .WithReference(db)
     ///        .WithJvmArgs("-Xmx512m");
@@ -244,20 +246,20 @@ public static partial class JavaHostingExtensions
     /// </code>
     /// </example>
     [AspireExport]
-    public static IResourceBuilder<JavaAppContainerResource> AddJavaContainerApp(
+    public static IResourceBuilder<JavaContainerResource> AddJavaContainer(
         this IDistributedApplicationBuilder builder,
         [ResourceName] string name,
         string image,
-        string? imageTag = null)
+        string? tag = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentException.ThrowIfNullOrWhiteSpace(image);
 
-        var resource = new JavaAppContainerResource(name);
+        var resource = new JavaContainerResource(name);
 
         return builder.AddResource(resource)
-            .WithImage(image, imageTag)
+            .WithImage(image, tag)
             .WithIconName(JavaIconName)
             .WithOtlpExporter()
             // Requested explicitly because the JVM's trust store setting replaces the default certificate
@@ -530,7 +532,6 @@ public static partial class JavaHostingExtensions
     /// The wrapper defaults to <c>mvnw</c> (<c>mvnw.cmd</c> on Windows) in the resource's working directory
     /// and can be overridden with <see cref="WithWrapperPath{T}(IResourceBuilder{T}, string)"/>.
     /// </remarks>
-
     [AspireExport]
     public static IResourceBuilder<T> WithMavenGoal<T>(
         this IResourceBuilder<T> builder,
@@ -616,10 +617,15 @@ public static partial class JavaHostingExtensions
     /// <param name="args">Arguments passed to the Maven wrapper. Defaults to <c>clean package</c>.</param>
     /// <returns>A reference to the <see cref="IResourceBuilder{T}"/>.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="builder"/> or <paramref name="args"/> is <see langword="null"/>.</exception>
+    /// <exception cref="InvalidOperationException">The application is already configured to build with Gradle.</exception>
     /// <remarks>
     /// The build step is a child resource that the application waits for. It is created only in run mode:
     /// when publishing, the generated container image performs the build, so a host-side build step would
     /// build the application twice.
+    /// <para>
+    /// This runs a build before the application starts. To launch the application <em>through</em> Maven,
+    /// use <see cref="WithMavenGoal{T}(IResourceBuilder{T}, string, string[])"/> instead.
+    /// </para>
     /// </remarks>
     [AspireExport]
     public static IResourceBuilder<T> WithMavenBuild<T>(
@@ -632,7 +638,7 @@ public static partial class JavaHostingExtensions
         return builder.WithJavaBuildStep(
             JavaBuildTool.Maven,
             buildResourceName: $"{builder.Resource.Name}-maven-build",
-            createResource: static (name, wrapperScript, workingDirectory) => new MavenBuildResource(name, wrapperScript, workingDirectory),
+            createResource: static (name, wrapperPath, workingDirectory) => new MavenBuildResource(name, wrapperPath, workingDirectory),
             buildArgs: args.Length > 0 ? args : ["clean", "package"]);
     }
 
@@ -644,10 +650,15 @@ public static partial class JavaHostingExtensions
     /// <param name="args">Arguments passed to the Gradle wrapper. Defaults to <c>clean build</c>.</param>
     /// <returns>A reference to the <see cref="IResourceBuilder{T}"/>.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="builder"/> or <paramref name="args"/> is <see langword="null"/>.</exception>
+    /// <exception cref="InvalidOperationException">The application is already configured to build with Maven.</exception>
     /// <remarks>
     /// The build step is a child resource that the application waits for. It is created only in run mode:
     /// when publishing, the generated container image performs the build, so a host-side build step would
     /// build the application twice.
+    /// <para>
+    /// This runs a build before the application starts. To launch the application <em>through</em> Gradle,
+    /// use <see cref="WithGradleTask{T}(IResourceBuilder{T}, string, string[])"/> instead.
+    /// </para>
     /// </remarks>
     [AspireExport]
     public static IResourceBuilder<T> WithGradleBuild<T>(
@@ -660,7 +671,7 @@ public static partial class JavaHostingExtensions
         return builder.WithJavaBuildStep(
             JavaBuildTool.Gradle,
             buildResourceName: $"{builder.Resource.Name}-gradle-build",
-            createResource: static (name, wrapperScript, workingDirectory) => new GradleBuildResource(name, wrapperScript, workingDirectory),
+            createResource: static (name, wrapperPath, workingDirectory) => new GradleBuildResource(name, wrapperPath, workingDirectory),
             buildArgs: args.Length > 0 ? args : ["clean", "build"]);
     }
 
@@ -737,10 +748,10 @@ public static partial class JavaHostingExtensions
     /// </summary>
     /// <typeparam name="T">The Java application resource type.</typeparam>
     /// <param name="builder">The <see cref="IResourceBuilder{T}"/> to configure.</param>
-    /// <param name="wrapperScript">The path to the wrapper script, absolute or relative to the resource's working directory.</param>
+    /// <param name="wrapperPath">The path to the wrapper script, absolute or relative to the resource's working directory.</param>
     /// <returns>A reference to the <see cref="IResourceBuilder{T}"/>.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="builder"/> is <see langword="null"/>.</exception>
-    /// <exception cref="ArgumentException"><paramref name="wrapperScript"/> is <see langword="null"/>, empty, or whitespace.</exception>
+    /// <exception cref="ArgumentException"><paramref name="wrapperPath"/> is <see langword="null"/>, empty, or whitespace.</exception>
     /// <remarks>
     /// May be called before or after the build tool is configured. A later call re-points anything that
     /// already resolved the default wrapper, so the result does not depend on the order of builder calls.
@@ -748,21 +759,21 @@ public static partial class JavaHostingExtensions
     [AspireExport]
     public static IResourceBuilder<T> WithWrapperPath<T>(
         this IResourceBuilder<T> builder,
-        string wrapperScript) where T : JavaAppResource
+        string wrapperPath) where T : JavaAppResource
     {
         ArgumentNullException.ThrowIfNull(builder);
-        ArgumentException.ThrowIfNullOrWhiteSpace(wrapperScript);
+        ArgumentException.ThrowIfNullOrWhiteSpace(wrapperPath);
 
-        var wrapperPath = PathNormalizer.NormalizePathForCurrentPlatform(
-            Path.Combine(builder.Resource.WorkingDirectory, wrapperScript));
+        var resolvedWrapperPath = PathNormalizer.NormalizePathForCurrentPlatform(
+            Path.Combine(builder.Resource.WorkingDirectory, wrapperPath));
 
-        builder.WithAnnotation(new WrapperAnnotation(wrapperPath), ResourceAnnotationMutationBehavior.Replace);
+        builder.WithAnnotation(new WrapperAnnotation(resolvedWrapperPath), ResourceAnnotationMutationBehavior.Replace);
 
         // Re-point anything that already captured the default wrapper. Without this, calling
         // WithWrapperPath after WithMavenGoal was silently ignored.
         if (builder.Resource.HasAnnotationOfType<JavaBuildToolAnnotation>())
         {
-            builder.WithCommand(wrapperPath);
+            builder.WithCommand(resolvedWrapperPath);
         }
 
         foreach (var buildStep in builder.Resource.Annotations.OfType<JavaBuildStepAnnotation>())
@@ -779,7 +790,7 @@ public static partial class JavaHostingExtensions
 
             if (buildResource is not null)
             {
-                builder.ApplicationBuilder.CreateResourceBuilder(buildResource).WithCommand(wrapperPath);
+                builder.ApplicationBuilder.CreateResourceBuilder(buildResource).WithCommand(resolvedWrapperPath);
             }
         }
 
@@ -787,7 +798,8 @@ public static partial class JavaHostingExtensions
     }
 
     /// <summary>
-    /// Sets the class the IDE launches when running or debugging the application.
+    /// Sets the main class an IDE launches when running or debugging this application. Has no effect on
+    /// how Aspire starts the process, which is decided by the JAR path, Maven goal, or Gradle task.
     /// </summary>
     /// <typeparam name="T">The Java application resource type.</typeparam>
     /// <param name="builder">The resource builder for the Java application.</param>
@@ -815,23 +827,29 @@ public static partial class JavaHostingExtensions
     /// </summary>
     /// <typeparam name="T">The Java application resource type.</typeparam>
     /// <param name="builder">The resource builder for the Java application.</param>
-    /// <param name="relativePath">The path to the JAR produced by the build, relative to the application directory, for example <c>target/app.jar</c>.</param>
+    /// <param name="jarPath">The path to the JAR produced by the build, relative to the application directory, for example <c>target/app.jar</c>.</param>
     /// <returns>A reference to the <see cref="IResourceBuilder{T}"/>.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="builder"/> is <see langword="null"/>.</exception>
-    /// <exception cref="ArgumentException"><paramref name="relativePath"/> is <see langword="null"/>, empty, or whitespace.</exception>
+    /// <exception cref="ArgumentException"><paramref name="jarPath"/> is <see langword="null"/>, empty, or whitespace.</exception>
     /// <remarks>
-    /// Only affects publishing. Without it the container build selects the single JAR that is not a
-    /// <c>-plain</c>, <c>-sources</c>, or <c>-javadoc</c> artifact, and fails the build if that is ambiguous.
+    /// Only affects publishing, and only when the application is built in the image. Without it the
+    /// container build selects the single JAR that is not a <c>-plain</c>, <c>-sources</c>, or
+    /// <c>-javadoc</c> artifact, and fails the build if that is ambiguous.
+    /// <para>
+    /// An application added with the <c>jarPath</c> overload of
+    /// <see cref="AddJavaApp(IDistributedApplicationBuilder, string, string, string, string[])"/> already
+    /// names the JAR it runs, so it is published from that JAR and this has no effect.
+    /// </para>
     /// </remarks>
     [AspireExport]
     public static IResourceBuilder<T> WithJarArtifact<T>(
         this IResourceBuilder<T> builder,
-        string relativePath) where T : JavaAppResource
+        string jarPath) where T : JavaAppResource
     {
         ArgumentNullException.ThrowIfNull(builder);
-        ArgumentException.ThrowIfNullOrWhiteSpace(relativePath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(jarPath);
 
-        return builder.WithAnnotation(new JavaJarArtifactAnnotation(relativePath), ResourceAnnotationMutationBehavior.Replace);
+        return builder.WithAnnotation(new JavaJarArtifactAnnotation(jarPath), ResourceAnnotationMutationBehavior.Replace);
     }
 
     /// <summary>
@@ -877,13 +895,17 @@ public static partial class JavaHostingExtensions
     /// <param name="builder">The resource builder.</param>
     /// <returns>A reference to the <see cref="IResourceBuilder{T}"/>.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="builder"/> is <see langword="null"/>.</exception>
-    /// <exception cref="InvalidOperationException">The resource has no Maven or Gradle build configured, so the agent location cannot be inferred.</exception>
+    /// <exception cref="InvalidOperationException">The resource has no Maven or Gradle build configured, so the agent location cannot be inferred. Raised when the application model is built, not when this is called.</exception>
     /// <remarks>
     /// The agent is expected at <c>target/agent/opentelemetry-javaagent.jar</c> for Maven and
     /// <c>build/agent/opentelemetry-javaagent.jar</c> for Gradle — the conventional output directory of each tool
     /// with an <c>agent</c> subdirectory. The build has to put it there; nothing is downloaded. With Maven, copy it
     /// with <c>maven-dependency-plugin</c>'s <c>copy</c> goal bound to <c>process-resources</c>; with Gradle,
     /// declare the agent in its own configuration and add a <c>Copy</c> task that <c>compileJava</c> depends on.
+    /// <para>
+    /// May be called before or after the build tool is configured: which directory the agent is read from is
+    /// decided when the application model is built, so the result does not depend on the order of builder calls.
+    /// </para>
     /// <para>
     /// Use <see cref="WithOtelAgent{T}(IResourceBuilder{T}, string)"/> when the agent lives anywhere else, including
     /// when it is committed to the repository or supplied by the container base image.
@@ -895,18 +917,37 @@ public static partial class JavaHostingExtensions
     {
         ArgumentNullException.ThrowIfNull(builder);
 
-        // The launch tool is not consulted, only the build: a resource can be launched from a prebuilt JAR and
-        // still be built by Maven, and it is the build that decides whether the agent lands in target or build.
-        if (!builder.Resource.TryGetLastAnnotation<JavaBuildStepAnnotation>(out var buildStep))
+        // Deliberately not resolved here. WithMavenBuild may not have been called yet, and an eager read
+        // would make .WithOtelAgent().WithMavenBuild() throw while .WithMavenBuild().WithOtelAgent()
+        // worked - exactly the order dependence WithWrapperPath goes out of its way to avoid.
+        return builder.WithOtelAgentCore(agentPath: null);
+    }
+
+    /// <summary>
+    /// The agent path to use, resolving the build tool's conventional location when none was authored.
+    /// </summary>
+    /// <remarks>
+    /// The launch tool is not consulted, only the build: a resource can be launched from a prebuilt JAR and
+    /// still be built by Maven, and it is the build that decides whether the agent lands in <c>target</c> or
+    /// <c>build</c>.
+    /// </remarks>
+    internal static string ResolveOtelAgentPath(IResource resource, JavaOtelAgentAnnotation annotation)
+    {
+        if (annotation.AgentPath is { } authored)
+        {
+            return authored;
+        }
+
+        if (!resource.TryGetLastAnnotation<JavaBuildStepAnnotation>(out var buildStep))
         {
             throw new InvalidOperationException(
-                $"Resource '{builder.Resource.Name}' has no Maven or Gradle build configured, so the OpenTelemetry agent location cannot be inferred. " +
-                $"Call WithMavenBuild or WithGradleBuild first, or pass the agent path to WithOtelAgent.");
+                $"Resource '{resource.Name}' has no Maven or Gradle build configured, so the OpenTelemetry agent location cannot be inferred. " +
+                $"Call WithMavenBuild or WithGradleBuild, or pass the agent path to WithOtelAgent.");
         }
 
         var outputDirectory = buildStep.Tool is JavaBuildTool.Gradle ? "build" : "target";
 
-        return builder.WithOtelAgent(Path.Combine(outputDirectory, "agent", "opentelemetry-javaagent.jar"));
+        return Path.Combine(outputDirectory, "agent", "opentelemetry-javaagent.jar");
     }
 
     /// <summary>
@@ -946,6 +987,13 @@ public static partial class JavaHostingExtensions
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentException.ThrowIfNullOrWhiteSpace(agentPath);
 
+        return builder.WithOtelAgentCore(agentPath);
+    }
+
+    private static IResourceBuilder<T> WithOtelAgentCore<T>(
+        this IResourceBuilder<T> builder,
+        string? agentPath) where T : JavaAppResource
+    {
         // Recorded so the container build can copy the agent forward. The environment variable alone
         // would leave a published image pointing at a JAR that is not in it.
         var isFirstCall = !builder.Resource.HasAnnotationOfType<JavaOtelAgentAnnotation>();
@@ -966,11 +1014,13 @@ public static partial class JavaHostingExtensions
                 return;
             }
 
+            var authored = ResolveOtelAgentPath(builder.Resource, agent);
+
             string resolved;
 
             if (context.ExecutionContext.IsRunMode)
             {
-                resolved = Path.GetFullPath(Path.Combine(builder.Resource.WorkingDirectory, agent.AgentPath));
+                resolved = Path.GetFullPath(Path.Combine(builder.Resource.WorkingDirectory, authored));
             }
             else if (JavaDockerfileGenerator.TryGetBuildProducedAgentPath(builder.Resource, out _))
             {
@@ -978,7 +1028,7 @@ public static partial class JavaHostingExtensions
             }
             else
             {
-                resolved = agent.AgentPath;
+                resolved = authored;
             }
 
             AppendJavaToolOptions(context.EnvironmentVariables, [$"-javaagent:{resolved}"]);
@@ -1023,22 +1073,20 @@ public static partial class JavaHostingExtensions
     /// <see cref="WithWrapperPath{T}(IResourceBuilder{T}, string)"/>.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// A wrapper is required; a globally installed <c>mvn</c> or <c>gradle</c> is deliberately not used as
     /// a fallback. The wrapper pins the exact tool version in the repository, so the AppHost, CI, and the
     /// published container image all build with the same one. Falling back to whatever happens to be on
     /// <c>PATH</c> would make the build depend on each developer's machine and silently change behaviour
     /// when that version differs, which is precisely what the wrapper exists to prevent.
-    /// </remarks>
-    /// <exception cref="DistributedApplicationException">No wrapper is present and none was configured.</exception>
-    /// <summary>
-    /// Computes the wrapper script path for a resource, without checking that it exists.
-    /// </summary>
-    /// <remarks>
+    /// </para>
+    /// <para>
     /// Existence is deliberately not checked here. This runs while the AppHost is still being authored,
     /// and <see cref="WithWrapperPath{T}(IResourceBuilder{T}, string)"/> is documented as usable after the
     /// build tool is configured — so a project whose only wrapper is a custom one would otherwise fail
     /// inside <c>WithMavenGoal</c>/<c>WithGradleTask</c>, before the override could be applied.
     /// <see cref="ValidateWrapperExists"/> performs the check once the configuration is final.
+    /// </para>
     /// </remarks>
     private static string ResolveWrapperPath(JavaAppResource resource, JavaBuildTool tool)
     {

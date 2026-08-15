@@ -143,15 +143,52 @@ public class AddSpringBootAppTests
         Assert.Equal($"-javaagent:{expected}", envVars["JAVA_TOOL_OPTIONS"]);
     }
 
+    [Theory]
+    [InlineData("pom.xml", "target")]
+    [InlineData("build.gradle", "build")]
+    public async Task WithOtelAgent_NoPath_ResolvesTheBuildToolConfiguredAfterIt(string buildFile, string outputDirectory)
+    {
+        // The build tool is deliberately configured after the agent. WithWrapperPath promises order
+        // independence, and the agent overload has no reason to be the one method that does not.
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.Write(buildFile, "");
+
+        var app = builder.AddJavaApp("catalog", tempDir.Path).WithOtelAgent();
+
+        if (buildFile is "pom.xml")
+        {
+            app.WithMavenGoal("spring-boot:run").WithMavenBuild();
+        }
+        else
+        {
+            app.WithGradleTask("bootRun").WithGradleBuild();
+        }
+
+        AllocateEndpoints(app.Resource);
+
+        var envVars = await EnvironmentVariableEvaluator.GetEnvironmentVariablesAsync(
+            app.Resource, DistributedApplicationOperation.Run, TestServiceProvider.Instance);
+
+        var expected = Path.GetFullPath(Path.Combine(tempDir.Path, outputDirectory, "agent", "opentelemetry-javaagent.jar"));
+        Assert.Equal($"-javaagent:{expected}", envVars["JAVA_TOOL_OPTIONS"]);
+    }
+
     [Fact]
-    public void WithOtelAgent_NoPath_WithoutABuild_Throws()
+    public async Task WithOtelAgent_NoPath_WithoutABuild_Throws()
     {
         using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
         using var tempDir = new TempJavaAppDirectory();
 
-        var app = builder.AddJavaApp("api", tempDir.Path);
+        // Resolution is deferred so the build tool can be configured afterwards, so the failure for a
+        // resource that never configures one surfaces when the environment is evaluated.
+        var app = builder.AddJavaApp("api", tempDir.Path).WithOtelAgent();
 
-        var ex = Assert.Throws<InvalidOperationException>(() => app.WithOtelAgent());
+        AllocateEndpoints(app.Resource);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await EnvironmentVariableEvaluator.GetEnvironmentVariablesAsync(
+                app.Resource, DistributedApplicationOperation.Run, TestServiceProvider.Instance));
 
         Assert.Contains("has no Maven or Gradle build configured", ex.Message, StringComparison.Ordinal);
     }

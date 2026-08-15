@@ -60,8 +60,13 @@ internal sealed record JavaBuildStepAnnotation(string? ResourceName, JavaBuildTo
 /// Without this the published container starts a JVM pointing at an agent JAR that is not in the image
 /// and dies during VM initialization.
 /// </remarks>
-/// <param name="AgentPath">The agent path exactly as authored, before any resolution.</param>
-internal sealed record JavaOtelAgentAnnotation(string AgentPath) : IResourceAnnotation;
+/// <param name="AgentPath">
+/// The agent path exactly as authored, before any resolution, or <see langword="null"/> when the caller
+/// asked for the location the build tool writes the agent to. That location is resolved on demand rather
+/// than when the annotation is added, so <c>WithOtelAgent()</c> and <c>WithMavenBuild()</c> can be called
+/// in either order.
+/// </param>
+internal sealed record JavaOtelAgentAnnotation(string? AgentPath) : IResourceAnnotation;
 
 /// <summary>
 /// Records that a Java application is a Quarkus application, which packages differently from every other

@@ -423,7 +423,7 @@ public class AddJavaAppTests
     }
 
     [Fact]
-    public void WithWrapperPathShouldThrowWhenWrapperScriptIsNullOrEmpty()
+    public void WithWrapperPathShouldThrowWhenWrapperPathIsNullOrEmpty()
     {
         using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
         var app = builder.AddJavaApp("api", AppContext.BaseDirectory);
@@ -432,10 +432,10 @@ public class AddJavaAppTests
         var emptyAction = () => app.WithWrapperPath(string.Empty);
 
         var nullEx = Assert.Throws<ArgumentNullException>(nullAction);
-        Assert.Equal("wrapperScript", nullEx.ParamName);
+        Assert.Equal("wrapperPath", nullEx.ParamName);
 
         var emptyEx = Assert.Throws<ArgumentException>(emptyAction);
-        Assert.Equal("wrapperScript", emptyEx.ParamName);
+        Assert.Equal("wrapperPath", emptyEx.ParamName);
     }
 
     [Fact]

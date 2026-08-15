@@ -175,11 +175,11 @@ to drop the wrapper's arguments when it launches the JVM directly to debug it.
 ### Running an image someone else built
 
 When the application ships as a container image — built by a separate pipeline, or by a team that hands
-you an image rather than source — use `AddJavaContainerApp` instead. Aspire runs the image as-is and
+you an image rather than source — use `AddJavaContainer` instead. Aspire runs the image as-is and
 never rebuilds it, so the JAR, the JDK, and any OpenTelemetry agent all come from the image:
 
 ```csharp
-builder.AddJavaContainerApp("catalog", "mycompany/catalog", "1.4.0")
+builder.AddJavaContainer("catalog", "mycompany/catalog", "1.4.0")
     .WithHttpEndpoint(targetPort: 8080)
     .WithReference(db)
     .WithJvmArgs("-Xmx512m");
@@ -210,10 +210,10 @@ for Gradle, for example.
 | `WithGradleTask(string task, params string[] args)` | Launches through `gradlew` with the given task |
 | `WithMavenBuild(params string[] args)` | Builds with Maven before the app runs, and in the published container |
 | `WithGradleBuild(params string[] args)` | Builds with Gradle before the app runs, and in the published container |
-| `WithWrapperPath(string wrapperScript)` | Selects a custom wrapper path. May be called before or after the build tool is configured. Must stay inside the app directory for an app that will be published, because that directory is the container build context |
+| `WithWrapperPath(string wrapperPath)` | Selects a custom wrapper path. May be called before or after the build tool is configured. Must stay inside the app directory for an app that will be published, because that directory is the container build context |
 | `WithMainClass(string mainClass)` | The fully qualified class the IDE launches when debugging |
 | `WithJarArtifact(string jarPath)` | Names the JAR the container build should deploy, when the build produces more than one |
-| `WithJvmArgs(params string[] args)` | Appends JVM arguments through `JAVA_TOOL_OPTIONS`. Also available on `AddJavaContainerApp` |
+| `WithJvmArgs(params string[] args)` | Appends JVM arguments through `JAVA_TOOL_OPTIONS`. Also available on `AddJavaContainer` |
 | `WithOtelAgent(string agentPath)` | Runs the app under the [OpenTelemetry Java agent](https://github.com/open-telemetry/opentelemetry-java-instrumentation). The agent is not downloaded for you: fetch it as a build dependency so it exists before the application starts |
 | `WithOtelAgent()` | Same, with the agent at `target/agent/` (Maven) or `build/agent/` (Gradle) |
 

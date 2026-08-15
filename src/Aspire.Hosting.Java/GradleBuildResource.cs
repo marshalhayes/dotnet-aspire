@@ -9,7 +9,7 @@ namespace Aspire.Hosting.Java;
 /// A resource that represents a Gradle build step that runs before its parent Java application starts.
 /// </summary>
 /// <param name="name">The name of the resource.</param>
-/// <param name="wrapperScript">The full path to the Gradle wrapper script.</param>
+/// <param name="wrapperPath">The full path to the Gradle wrapper script.</param>
 /// <param name="workingDirectory">The working directory to use for the command.</param>
-internal sealed class GradleBuildResource(string name, string wrapperScript, string workingDirectory)
-    : ExecutableResource(name, wrapperScript, workingDirectory);
+internal sealed class GradleBuildResource(string name, string wrapperPath, string workingDirectory)
+    : ExecutableResource(name, wrapperPath, workingDirectory);

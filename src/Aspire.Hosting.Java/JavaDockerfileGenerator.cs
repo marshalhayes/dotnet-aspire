@@ -469,7 +469,7 @@ internal static partial class JavaDockerfileGenerator
             return false;
         }
 
-        var authored = annotation.AgentPath;
+        var authored = JavaHostingExtensions.ResolveOtelAgentPath(resource, annotation);
 
         if (Path.IsPathRooted(authored))
         {
@@ -492,7 +492,7 @@ internal static partial class JavaDockerfileGenerator
         if (normalized.Split('/').Any(segment => segment == ".."))
         {
             throw new DistributedApplicationException(
-                $"The OpenTelemetry agent path '{annotation.AgentPath}' configured on resource '{resource.Name}' " +
+                $"The OpenTelemetry agent path '{authored}' configured on resource '{resource.Name}' " +
                 $"points outside the application directory, which is the Docker build context, so it cannot be " +
                 $"published. Use a path inside '{resource.WorkingDirectory}', or an absolute path that the base " +
                 $"image or a mount provides at runtime.");
@@ -504,7 +504,7 @@ internal static partial class JavaDockerfileGenerator
         if (normalized.Any(char.IsWhiteSpace))
         {
             throw new DistributedApplicationException(
-                $"The OpenTelemetry agent path '{annotation.AgentPath}' configured on resource '{resource.Name}' " +
+                $"The OpenTelemetry agent path '{authored}' configured on resource '{resource.Name}' " +
                 $"contains whitespace, which a Dockerfile COPY instruction cannot express, so it cannot be " +
                 $"published. Move the agent to a path without spaces.");
         }

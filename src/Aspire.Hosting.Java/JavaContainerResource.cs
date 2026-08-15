@@ -11,5 +11,5 @@ namespace Aspire.Hosting.Java;
 /// <param name="name">The name of the resource in the application model.</param>
 /// <param name="entrypoint">An optional entrypoint that replaces the image's own.</param>
 [AspireExport(ExposeProperties = true)]
-public class JavaAppContainerResource(string name, string? entrypoint = null)
+public class JavaContainerResource(string name, string? entrypoint = null)
     : ContainerResource(name, entrypoint), IJavaAppResource, IResourceWithServiceDiscovery;
