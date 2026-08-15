@@ -348,7 +348,7 @@ internal static partial class JavaDockerfileGenerator
             return false;
         }
 
-        if (Path.IsPathRooted(annotation.JarPath) || normalized.Split('/').Contains(".."))
+        if (IsPathRootedOnAnyPlatform(annotation.JarPath) || normalized.Split('/').Contains(".."))
         {
             throw new DistributedApplicationException(
                 $"Java application '{resource.Name}' cannot be published because its jarPath " +
@@ -384,6 +384,29 @@ internal static partial class JavaDockerfileGenerator
     /// </para>
     /// </remarks>
     /// <exception cref="DistributedApplicationException">The path reaches outside the build context or contains whitespace.</exception>
+    /// <summary>
+    /// Whether the authored path is absolute under either platform's rules.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Path.IsPathRooted(string)"/> applies only the rules of the host it runs on, so an AppHost
+    /// authored on Windows with <c>C:\artifacts\app.jar</c> looks relative when that same AppHost is
+    /// published from Linux CI. Publishing then rewrites the backslashes for the container and accepts the
+    /// result as if it named a file the build produced, so the image is built against a path that cannot
+    /// exist instead of the author being told the path is outside the build context. Publishing has to
+    /// reach the same verdict wherever it runs, so both forms are rejected on both platforms.
+    /// <para>
+    /// A leading backslash covers Windows root-relative and UNC paths, and a drive qualifier is matched
+    /// with or without a following separator because <c>C:app.jar</c> is drive-relative rather than
+    /// context-relative. The drive test would also match a Unix directory named with a single letter and a
+    /// colon, which is not a name any build tool produces.
+    /// </para>
+    /// </remarks>
+    private static bool IsPathRootedOnAnyPlatform(string path)
+        => Path.IsPathRooted(path)
+            || path.StartsWith('/')
+            || path.StartsWith('\\')
+            || (path.Length >= 2 && char.IsAsciiLetter(path[0]) && path[1] == ':');
+
     private static string NormalizeContextRelativePath(string authored, string resourceName, string appDirectory, string description)
     {
         // Container paths are POSIX even when the AppHost authored a Windows-style relative path.
@@ -394,7 +417,7 @@ internal static partial class JavaDockerfileGenerator
             normalized = normalized[2..];
         }
 
-        if (Path.IsPathRooted(authored) || normalized.Split('/').Contains(".."))
+        if (IsPathRootedOnAnyPlatform(authored) || normalized.Split('/').Contains(".."))
         {
             throw new DistributedApplicationException(
                 $"Java application '{resourceName}' cannot be published because {description} '{authored}' " +
@@ -528,7 +551,7 @@ internal static partial class JavaDockerfileGenerator
 
         var authored = JavaHostingExtensions.ResolveOtelAgentPath(resource, annotation);
 
-        if (Path.IsPathRooted(authored))
+        if (IsPathRootedOnAnyPlatform(authored))
         {
             return false;
         }
@@ -589,7 +612,12 @@ internal static partial class JavaDockerfileGenerator
     /// <param name="MinimumBuildJdk">The JDK release the pinned build tool needs to start, or 0 when unknown.</param>
     /// <param name="MaximumBuildJdk">The newest JDK release the pinned build tool can run on, or 0 when unknown.</param>
     /// <param name="BuildOnTargetPlatform">Whether the build produces an architecture-specific artifact and so cannot run on the build machine's platform.</param>
-    private sealed record JavaContainerBuild(
+    /// <remarks>
+    /// Internal rather than private so tests can exercise the whole resolution directly. Failures raised
+    /// during publishing surface as a missing Dockerfile once the pipeline has swallowed them, which hides
+    /// the message being asserted.
+    /// </remarks>
+    internal sealed record JavaContainerBuild(
         JavaBuildTool Tool,
         string BuildCommand,
         string SelectArtifactCommand,
@@ -979,10 +1007,12 @@ internal static partial class JavaDockerfileGenerator
             if (resource.TryGetLastAnnotation<WrapperAnnotation>(out var configured))
             {
                 // WithWrapperPath stores an absolute path, so this is what decides whether the file is
-                // inside the context that was uploaded.
+                // inside the context that was uploaded. A Windows-absolute path combined on Linux stays
+                // inside the working directory as a literal segment, so it needs the same cross-platform
+                // test as every other authored path.
                 var relative = Path.GetRelativePath(appDirectory, configured.WrapperPath).Replace('\\', '/');
 
-                if (relative.StartsWith("../", StringComparison.Ordinal) || Path.IsPathRooted(relative))
+                if (relative.StartsWith("../", StringComparison.Ordinal) || IsPathRootedOnAnyPlatform(relative))
                 {
                     throw new DistributedApplicationException(
                         $"Java application '{resource.Name}' cannot be published because its wrapper " +

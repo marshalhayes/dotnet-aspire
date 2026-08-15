@@ -1596,6 +1596,60 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
         Assert.Contains("../shared/worker.jar", exception.Message, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(@"C:\artifacts\app.jar")]
+    [InlineData(@"\\build-server\artifacts\app.jar")]
+    [InlineData("C:app.jar")]
+    public void VerifyPublish_AWindowsAbsoluteJarPathIsRejectedOnEveryPlatform(string jarPath)
+    {
+        // Path.IsPathRooted only applies the host's rules, so publishing an AppHost authored on Windows
+        // from Linux CI used to accept these as build-relative, rewrite the backslashes for the container
+        // and build an image against a path that cannot exist. The verdict has to be the same everywhere.
+        using var appDirectory = new TempJavaAppDirectory();
+        WritePom(appDirectory.Path, javaVersion: "21");
+
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish);
+        var app = builder.AddJavaApp("api", appDirectory.Path, jarPath).WithMavenBuild();
+
+        var exception = Assert.Throws<DistributedApplicationException>(
+            () => JavaDockerfileGenerator.TryGetBuildOutputJarPath(app.Resource, out _));
+
+        // The stored path is normalized for the host, so the message carries the separators the author
+        // will recognize rather than the exact literal they typed.
+        Assert.Contains("outside the directory the build runs in", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("app.jar", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void VerifyPublish_AWindowsAbsoluteJarArtifactIsRejectedOnEveryPlatform()
+    {
+        using var appDirectory = new TempJavaAppDirectory();
+        WritePom(appDirectory.Path, javaVersion: "21");
+
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish);
+        var app = builder.AddJavaApp("api", appDirectory.Path).WithMavenBuild().WithJarArtifact(@"C:\out\app.jar");
+
+        var exception = Assert.Throws<DistributedApplicationException>(
+            () => JavaDockerfileGenerator.JavaContainerBuild.Resolve(app.Resource, appDirectory.Path));
+
+        Assert.Contains("outside the build context", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void VerifyPublish_AWindowsAbsoluteWrapperIsRejectedOnEveryPlatform()
+    {
+        using var appDirectory = new TempJavaAppDirectory();
+        WritePom(appDirectory.Path, javaVersion: "21");
+
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish);
+        var app = builder.AddJavaApp("api", appDirectory.Path).WithMavenBuild().WithWrapperPath(@"C:\tools\mvnw");
+
+        var exception = Assert.Throws<DistributedApplicationException>(
+            () => JavaDockerfileGenerator.JavaContainerBuild.Resolve(app.Resource, appDirectory.Path));
+
+        Assert.Contains("outside the build context", exception.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task VerifyPublish_ExplicitJarArtifactWinsOverTheNamedJar()
     {
