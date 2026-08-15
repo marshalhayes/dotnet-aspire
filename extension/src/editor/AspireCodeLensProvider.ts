@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { AppHostResourceParser, getParserForDocument } from './parsers/AppHostResourceParser';
+import { filterActiveOffsetsInPlainText } from './parsers/plainTextInactiveOffsets';
 // Import parsers to trigger self-registration
 import './parsers/csharpAppHostParser';
 import './parsers/jsTsAppHostParser';
@@ -94,7 +95,14 @@ export class AspireCodeLensProvider implements vscode.CodeLensProvider {
         }
 
         if (!parser) {
-            return [];
+            // Java, Python and Go AppHosts have no resource parser, so none of the state or action
+            // lenses apply. The Spring Boot warning still does: it is about the Java resource being
+            // declared, not about the language declaring it, and a Java AppHost is the likeliest place
+            // for `withMavenGoal("spring-boot:run")` to appear at all.
+            const warningOnlyLenses: vscode.CodeLens[] = [];
+            await this._addSpringBootDashboardLenses(warningOnlyLenses, document, parser);
+
+            return warningOnlyLenses;
         }
 
         const resources = await parser.parseResources(document);
@@ -197,7 +205,7 @@ export class AspireCodeLensProvider implements vscode.CodeLensProvider {
     private async _addSpringBootDashboardLenses(
         lenses: vscode.CodeLens[],
         document: vscode.TextDocument,
-        parser: AppHostResourceParser,
+        parser: AppHostResourceParser | undefined,
     ): Promise<void> {
         if (!this._isExtensionInstalled(springBootDashboardExtensionId)) {
             return;
@@ -217,9 +225,12 @@ export class AspireCodeLensProvider implements vscode.CodeLensProvider {
             return;
         }
 
-        const activeOffsets = parser.filterActiveOffsets
+        // Without a parser the same question is answered by scanning the text. Skipping the filter
+        // entirely would make a commented-out call warn, which is the behaviour the parser-backed
+        // languages deliberately do not have.
+        const activeOffsets = parser?.filterActiveOffsets
             ? await parser.filterActiveOffsets(document, offsets)
-            : offsets;
+            : filterActiveOffsetsInPlainText(document.languageId, text, offsets);
 
         const warnedLines = new Set<number>();
         for (const offset of activeOffsets) {

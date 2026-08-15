@@ -5,6 +5,7 @@ import { AspireTerminalProvider, shellArg } from '../utils/AspireTerminalProvide
 import { AspireCodeLensProvider } from '../editor/AspireCodeLensProvider';
 import { AspireEditorCommandProvider } from '../editor/AspireEditorCommandProvider';
 import { getSupportedLanguageIds } from '../editor/parsers/AppHostResourceParser';
+import { getPlainTextScannableLanguageIds } from '../editor/parsers/plainTextInactiveOffsets';
 import { AspireAppHostTreeProvider } from '../views/AspireAppHostTreeProvider';
 import { isEnabledCommand } from '../views/treePresentation';
 import { collectResourceCommandArguments } from '../views/ResourceCommandArguments';
@@ -22,7 +23,11 @@ export function registerCodeLensCommands(
   secretWarningState: vscode.Memento,
 ): vscode.Disposable[] {
   const codeLensProvider = new AspireCodeLensProvider(appHostTreeProvider, dataRepository);
-  const languageFilters = getSupportedLanguageIds().map(lang => ({ language: lang, scheme: 'file' }));
+  // Languages without a resource parser are registered too. They produce no state or action lenses,
+  // but they can declare a Java resource that launches through Spring Boot, and that warning is the
+  // one lens that does not need a parsed resource model.
+  const lensLanguageIds = new Set([...getSupportedLanguageIds(), ...getPlainTextScannableLanguageIds()]);
+  const languageFilters = [...lensLanguageIds].map(lang => ({ language: lang, scheme: 'file' }));
   const codeLensRegistration = vscode.languages.registerCodeLensProvider(languageFilters, codeLensProvider);
   const codeLensDebugPipelineStepRegistration = registerInstrumentedCommand('aspire-vscode.codeLensDebugPipelineStep', 'codelens', (stepName: string) => editorCommandProvider.tryExecuteDoAppHost(false, stepName));
   const codeLensResourceActionRegistration = registerInstrumentedCommand('aspire-vscode.codeLensResourceAction', 'codelens', async (resourceName: string, action: string, appHostPath: string, resourceCommand?: ResourceCommandJson) => {

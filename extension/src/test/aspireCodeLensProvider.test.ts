@@ -26,13 +26,23 @@ function p(...segments: string[]): string {
     return path.join(path.sep, ...segments);
 }
 
+function languageIdForPath(filePath: string): string {
+    if (filePath.endsWith('.cs')) { return 'csharp'; }
+    if (filePath.endsWith('.ts')) { return 'typescript'; }
+    if (filePath.endsWith('.rs')) { return 'rust'; }
+    if (filePath.endsWith('.java')) { return 'java'; }
+    if (filePath.endsWith('.py')) { return 'python'; }
+    if (filePath.endsWith('.go')) { return 'go'; }
+    return 'javascript';
+}
+
 function createMockDocument(content: string, filePath: string): vscode.TextDocument {
     const lines = content.split('\n');
     return {
         uri: vscode.Uri.file(filePath),
         fileName: filePath,
         isUntitled: false,
-        languageId: filePath.endsWith('.cs') ? 'csharp' : filePath.endsWith('.ts') ? 'typescript' : filePath.endsWith('.rs') ? 'rust' : 'javascript',
+        languageId: languageIdForPath(filePath),
         version: 1,
         isDirty: false,
         isClosed: false,
@@ -1255,6 +1265,74 @@ suite('AspireCodeLensProvider resource lens anchoring', () => {
                 assert.strictEqual(lenses.length, 1, `expected a warning for ${appHostPath}`);
                 harness.dispose();
             }
+        });
+
+        test('warns in AppHost languages that have no resource parser', async () => {
+            // These languages produce no state or action lenses because nothing parses their resource
+            // model, but a Java AppHost is exactly where a Spring Boot launch is most likely to appear.
+            const cases: ReadonlyArray<readonly [string, string]> = [
+                [p('repo', 'AppHost', 'AppHost.java'), 'public class AppHost {\n    public static void main(String[] args) {\n        builder.addJavaApp("api", "../api").withMavenGoal("spring-boot:run");\n    }\n}'],
+                [p('repo', 'AppHost', 'apphost.py'), 'builder = create_builder()\nbuilder.add_java_app("api", "../api").with_gradle_task("bootRun")'],
+                [p('repo', 'AppHost', 'apphost.go'), 'func main() {\n\tbuilder.AddJavaApp("api", "../api").WithMavenGoal("spring-boot:run")\n}'],
+            ];
+
+            for (const [appHostPath, content] of cases) {
+                const harness = createHarness({ installedExtensions: [springBootDashboard] });
+                const lenses = springBootLenses(await harness.provider.provideCodeLenses(createMockDocument(content, appHostPath), cancellationToken) as vscode.CodeLens[]);
+                assert.strictEqual(lenses.length, 1, `expected a warning for ${appHostPath}`);
+                harness.dispose();
+            }
+        });
+
+        test('stays silent for a commented-out launch in a language that has no parser', async () => {
+            const cases: ReadonlyArray<readonly [string, string]> = [
+                [p('repo', 'AppHost', 'AppHost.java'), 'public class AppHost {\n    // builder.addJavaApp("api", "../api").withMavenGoal("spring-boot:run");\n    /* builder.addJavaApp("b", "../b").withGradleTask("bootRun"); */\n}'],
+                [p('repo', 'AppHost', 'apphost.py'), '# builder.add_java_app("api", "../api").with_maven_goal("spring-boot:run")'],
+                [p('repo', 'AppHost', 'apphost.go'), 'func main() {\n\t// builder.AddJavaApp("api", "../api").WithMavenGoal("spring-boot:run")\n}'],
+            ];
+
+            for (const [appHostPath, content] of cases) {
+                const harness = createHarness({ installedExtensions: [springBootDashboard] });
+                const lenses = springBootLenses(await harness.provider.provideCodeLenses(createMockDocument(content, appHostPath), cancellationToken) as vscode.CodeLens[]);
+                assert.strictEqual(lenses.length, 0, `expected no warning for ${appHostPath}`);
+                harness.dispose();
+            }
+        });
+
+        test('still warns on a live launch that follows a commented-out one without a parser', async () => {
+            const appHostPath = p('repo', 'AppHost', 'AppHost.java');
+            const content = [
+                'public class AppHost {',
+                '    public static void main(String[] args) {',
+                '        // builder.addJavaApp("old", "../old").withMavenGoal("spring-boot:run");',
+                '        builder.addJavaApp("api", "../api").withMavenGoal("spring-boot:run");',
+                '    }',
+                '}',
+            ].join('\n');
+            const harness = createHarness({ installedExtensions: [springBootDashboard] });
+
+            const lenses = springBootLenses(await harness.provider.provideCodeLenses(createMockDocument(content, appHostPath), cancellationToken) as vscode.CodeLens[]);
+
+            assert.strictEqual(lenses.length, 1);
+            assert.strictEqual(lenses[0].range.start.line, 3);
+            harness.dispose();
+        });
+
+        test('stays silent for a launch quoted inside a Java text block', async () => {
+            const appHostPath = p('repo', 'AppHost', 'AppHost.java');
+            const content = [
+                'public class AppHost {',
+                '    static final String DOCS = """',
+                '        builder.addJavaApp("api", "../api").withMavenGoal("spring-boot:run");',
+                '        """;',
+                '}',
+            ].join('\n');
+            const harness = createHarness({ installedExtensions: [springBootDashboard] });
+
+            const lenses = springBootLenses(await harness.provider.provideCodeLenses(createMockDocument(content, appHostPath), cancellationToken) as vscode.CodeLens[]);
+
+            assert.strictEqual(lenses.length, 0);
+            harness.dispose();
         });
 
         test('warns once per line and once per resource', async () => {
