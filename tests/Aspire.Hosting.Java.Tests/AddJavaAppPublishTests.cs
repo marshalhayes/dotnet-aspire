@@ -177,6 +177,38 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
         await Verify(content);
     }
 
+    [Theory]
+    [InlineData("../shared/app.jar")]
+    [InlineData("target/../../app.jar")]
+    [InlineData("/opt/build/app.jar")]
+    public void PublishingAJarPathThatEscapesTheBuildDirectoryIsRejectedRatherThanGlobbed(string jarPath)
+    {
+        // Falling back to the output glob here would publish whichever JAR the build happened to emit
+        // instead of the one the AppHost named, and the divergence from run mode would be silent.
+        using var appDirectory = new TempJavaAppDirectory();
+
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish);
+        var app = builder.AddJavaApp("api", appDirectory.Path, jarPath);
+
+        var exception = Assert.Throws<DistributedApplicationException>(
+            () => JavaDockerfileGenerator.TryGetBuildOutputJarPath(app.Resource, out _));
+
+        Assert.Contains(jarPath, exception.Message);
+        Assert.Contains("outside the directory the build runs in", exception.Message);
+    }
+
+    [Fact]
+    public async Task PublishingAJarPathContainingWhitespaceQuotesItRatherThanFallingBackToTheGlob()
+    {
+        // Unlike a Dockerfile COPY, the artifact is selected by a RUN shell command, which can quote.
+        var content = await PublishDockerfileAsync(
+            configureSource: source => WritePom(source, javaVersion: "21"),
+            jarPath: "target/my worker.jar");
+
+        Assert.Contains("cp 'target/my worker.jar' /build/app.jar", content);
+        Assert.DoesNotContain("expected exactly one application JAR", content);
+    }
+
     [Fact]
     public async Task VerifyPublish_CopiesTheExplicitArtifactWhenWithJarArtifactIsUsed()
     {
@@ -1492,16 +1524,20 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
     }
 
     [Fact]
-    public async Task VerifyPublish_NamedJarOutsideTheContextFallsBackToTheGlob()
+    public void VerifyPublish_NamedJarOutsideTheContextIsRejected()
     {
-        // The path is meaningful on the host in run mode, and such a resource publishes today. Turning
-        // that into a hard failure would be a regression, so the glob is used instead.
-        var content = await PublishDockerfileAsync(
-            configureSource: source => WritePom(source, javaVersion: "21"),
-            jarPath: "../shared/worker.jar",
-            configureResource: app => app.WithMavenBuild());
+        // Falling back to the glob would publish whichever JAR the build emitted rather than the one the
+        // AppHost named, so the image would quietly run different code than run mode does.
+        using var appDirectory = new TempJavaAppDirectory();
+        WritePom(appDirectory.Path, javaVersion: "21");
 
-        Assert.Contains("expected exactly one application JAR", content, StringComparison.Ordinal);
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish);
+        var app = builder.AddJavaApp("api", appDirectory.Path, "../shared/worker.jar").WithMavenBuild();
+
+        var exception = Assert.Throws<DistributedApplicationException>(
+            () => JavaDockerfileGenerator.TryGetBuildOutputJarPath(app.Resource, out _));
+
+        Assert.Contains("../shared/worker.jar", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]

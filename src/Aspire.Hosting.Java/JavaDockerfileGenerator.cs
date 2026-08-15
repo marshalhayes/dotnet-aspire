@@ -316,12 +316,17 @@ internal static partial class JavaDockerfileGenerator
     /// than one JAR — a shade plugin leaves <c>original-*.jar</c> beside the shaded one — fails the glob's
     /// "expected exactly one" check even though the AppHost already named the file.
     /// <para>
-    /// A path that reaches outside the build context is not an error here, only unusable: it is meaningful
-    /// on the host in run mode, and today such a resource publishes successfully by falling back to the
-    /// glob. Rejecting it would turn a working publish into a failure for no gain.
+    /// A path that reaches outside the build directory is rejected rather than ignored. Falling back to the
+    /// glob would publish whichever JAR the build happened to emit, which is not the one the AppHost named,
+    /// and the divergence from run mode would be silent — the image would start and serve the wrong code.
+    /// </para>
+    /// <para>
+    /// Whitespace is allowed, unlike <see cref="NormalizeContextRelativePath"/>. That method feeds a
+    /// Dockerfile <c>COPY</c>, which splits its arguments on whitespace and has no quoting form. This one
+    /// feeds a <c>RUN</c> shell command, where <c>SelectNamedJarCommand</c> quotes the path.
     /// </para>
     /// </remarks>
-    private static bool TryGetBuildOutputJarPath(JavaAppResource resource, [NotNullWhen(true)] out string? jarPath)
+    internal static bool TryGetBuildOutputJarPath(JavaAppResource resource, [NotNullWhen(true)] out string? jarPath)
     {
         jarPath = null;
 
@@ -338,14 +343,19 @@ internal static partial class JavaDockerfileGenerator
             normalized = normalized[2..];
         }
 
-        if (normalized.Length == 0
-            || Path.IsPathRooted(annotation.JarPath)
-            || normalized.Split('/').Contains("..")
-            // A COPY/cp argument is split on whitespace, and the path is not worth quoting into a
-            // different shape than the glob path would have taken.
-            || normalized.Any(char.IsWhiteSpace))
+        if (normalized.Length == 0)
         {
             return false;
+        }
+
+        if (Path.IsPathRooted(annotation.JarPath) || normalized.Split('/').Contains(".."))
+        {
+            throw new DistributedApplicationException(
+                $"Java application '{resource.Name}' cannot be published because its jarPath " +
+                $"'{annotation.JarPath}' is outside the directory the build runs in. The path is resolved " +
+                "against the application directory inside the container, so it has to name a file the " +
+                "build produces there. Pass a jarPath relative to the application directory, or use " +
+                "WithJarArtifact to name the published artifact separately from the one run locally.");
         }
 
         jarPath = normalized;

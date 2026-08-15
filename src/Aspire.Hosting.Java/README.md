@@ -8,7 +8,15 @@ Use this integration to model, configure, and orchestrate a Java application res
 
 A **JDK** must be available on the PATH of the machine running the AppHost, for every resource that runs a
 JVM locally. Aspire does not install one. `AddJavaContainer` is the exception, because it runs a prebuilt
-image and the JDK comes from inside that image.
+image and the JDK comes from inside that image. Any JDK the application itself targets will do — a service
+built for Java 17 needs only a Java 17 JDK.
+
+Writing the **AppHost itself in Java** is a separate requirement: that needs **JDK 25 or later**, because the
+AppHost is a compact source file with an instance `main` method, finalized in Java 25 by
+[JEP 512](https://openjdk.org/jeps/512), and is compiled with `--release 25`. On an older JDK it fails to
+compile with `error: release version 25 not supported`. This applies only to a Java AppHost; the Java
+resources it orchestrates are unaffected, and a C#, TypeScript or Python AppHost can host Java resources on
+any JDK.
 
 A **Maven or Gradle wrapper** (`mvnw`/`gradlew`) checked into the project is required only by the resources
 that invoke one: the `WithMavenGoal`/`WithGradleTask` launch modes, and the `WithMavenBuild`/`WithGradleBuild`
