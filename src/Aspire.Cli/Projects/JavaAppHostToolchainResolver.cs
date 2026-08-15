@@ -165,9 +165,11 @@ internal static class JavaAppHostToolchainResolver
     {
         return toolchain switch
         {
+            // javac is required for every toolchain: a Maven or Gradle AppHost resolves its dependencies
+            // with the build tool but is still compiled with javac. See CreateCompileCommand.
             JavaAppHostToolchain.Javac => ["javac", "java"],
-            JavaAppHostToolchain.Maven => ["mvn", "java"],
-            JavaAppHostToolchain.Gradle => ["gradle", "java"],
+            JavaAppHostToolchain.Maven => ["mvn", "javac", "java"],
+            JavaAppHostToolchain.Gradle => ["gradle", "javac", "java"],
             _ => throw new ArgumentOutOfRangeException(nameof(toolchain), toolchain, null)
         };
     }
@@ -267,7 +269,7 @@ internal static class JavaAppHostToolchainResolver
             DetectionPatterns = baseRuntimeSpec.DetectionPatterns,
             Initialize = baseRuntimeSpec.Initialize,
             InstallDependencies = CreateInstallCommand(toolchain, invocation, projectPath),
-            PreExecute = [CreateCompileCommand(toolchain, invocation, projectPath)],
+            PreExecute = [CreateCompileCommand(baseRuntimeSpec, classesDirectory, dependencyDirectory)],
             Execute = CreateExecuteCommand(classesDirectory, dependencyDirectory),
             WatchExecute = baseRuntimeSpec.WatchExecute,
             PublishExecute = baseRuntimeSpec.PublishExecute,
@@ -398,16 +400,64 @@ internal static class JavaAppHostToolchainResolver
         return invocation.CreateCommand(toolArgs);
     }
 
-    private static CommandSpec CreateCompileCommand(JavaAppHostToolchain toolchain, JavaToolInvocation invocation, string? projectPath)
+    /// <summary>
+    /// Compiles the AppHost with javac, against the dependency classpath the build tool staged.
+    /// </summary>
+    /// <remarks>
+    /// The build tool resolves dependencies but does not compile, because neither Maven nor Gradle can
+    /// be told from the command line about the generated SDK under <c>.aspire/modules</c>. Maven has no
+    /// user property for an extra source root or compiler argument — <c>compilerArgs</c>,
+    /// <c>compilerArgument</c>, and the source roots are all pom-only — so <c>mvnw compile</c> fails with
+    /// "package aspire does not exist" no matter what is passed after the goal. Editing the user's
+    /// <c>pom.xml</c> to add a source root is not an option either: the build file belongs to them.
+    /// <para>
+    /// Compiling with javac instead keeps the AppHost building the same way under all three toolchains,
+    /// and the build tool keeps the two jobs it is actually needed for: resolving third-party
+    /// dependencies, and giving the IDE a real project model.
+    /// </para>
+    /// <para>
+    /// The consequence, which is worth knowing: compiler configuration in <c>pom.xml</c> or
+    /// <c>build.gradle</c> — annotation processors such as Lombok, custom lint settings, an alternative
+    /// compiler — does not apply to <c>AppHost.java</c>.
+    /// </para>
+    /// </remarks>
+    private static CommandSpec CreateCompileCommand(RuntimeSpec baseRuntimeSpec, string classesDirectory, string dependencyDirectory)
     {
-        var toolArgs = toolchain switch
-        {
-            JavaAppHostToolchain.Maven => (string[])["-B", "-q", .. GetProjectSelectionArgs(toolchain, projectPath), "compile"],
-            JavaAppHostToolchain.Gradle => ["-q", .. GetProjectSelectionArgs(toolchain, projectPath), "classes"],
-            _ => throw new ArgumentOutOfRangeException(nameof(toolchain), toolchain, null)
-        };
+        var baseCompile = baseRuntimeSpec.PreExecute?.FirstOrDefault()
+            ?? throw new InvalidOperationException("The Java runtime spec has no compile step to adapt for a build tool.");
 
-        return invocation.CreateCommand(toolArgs);
+        var baseArgs = baseCompile.Args ?? [];
+
+        // "dir/*" is expanded by the JVM's own launcher rather than the shell, so it needs no shell and
+        // stays correct when the directory is empty.
+        // https://docs.oracle.com/en/java/javase/25/docs/specs/man/javac.html#standard-options
+        string[] addedArgs =
+        [
+            "-classpath", Path.Combine(dependencyDirectory, "*"),
+            // The AppHost directory is the working directory and is also the project's source root under
+            // both supported layouts, so this is what lets the AppHost reference the project's own
+            // classes. It has to be set explicitly because javac otherwise defaults the source path to
+            // the class path, which -classpath has just replaced.
+            "-sourcepath", ".",
+            // Output goes to the build tool's own directory rather than the javac toolchain's
+            // .java-build, so that `mvn clean` / `gradle clean` removes it and it is already ignored by
+            // any Maven or Gradle .gitignore.
+            "-d", classesDirectory
+        ];
+
+        // The javac options and the source arguments are reused from the base spec rather than repeated
+        // here, so the two toolchains cannot drift apart. The output directory is the one thing replaced.
+        var outputIndex = Array.IndexOf(baseArgs, "-d");
+
+        var args = outputIndex >= 0 && outputIndex + 1 < baseArgs.Length
+            ? (string[])[.. baseArgs[..outputIndex], .. addedArgs, .. baseArgs[(outputIndex + 2)..]]
+            : [.. addedArgs, .. baseArgs];
+
+        return new CommandSpec
+        {
+            Command = baseCompile.Command,
+            Args = args
+        };
     }
 
     private static CommandSpec CreateExecuteCommand(string classesDirectory, string dependencyDirectory)

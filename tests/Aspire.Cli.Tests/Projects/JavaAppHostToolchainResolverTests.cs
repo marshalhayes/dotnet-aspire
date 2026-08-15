@@ -26,6 +26,16 @@ public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
             DetectionPatterns = ["AppHost.java", "src/main/java/AppHost.java"],
             InstallDependencies = null,
             ExtensionLaunchCapability = "java",
+            // Mirrors JavaLanguageSupport.GetRuntimeSpec: the build-tool compile command is derived
+            // from this one, so it has to have the same shape for the derivation to be meaningful.
+            PreExecute =
+            [
+                new CommandSpec
+                {
+                    Command = "javac",
+                    Args = ["--release", "25", "-d", ".java-build", "@.aspire/modules/sources.txt", "{appHostFile}"]
+                }
+            ],
             Execute = new CommandSpec
             {
                 Command = "java",
@@ -113,8 +123,20 @@ public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
             spec.InstallDependencies.Args);
 
         var compile = Assert.Single(spec.PreExecute!);
-        Assert.Equal(Path.Combine(workspace.Path, OperatingSystem.IsWindows() ? "mvnw.cmd" : "mvnw"), compile.Command);
-        Assert.Equal(["-B", "-q", "compile"], compile.Args);
+        // Compilation stays with javac even under Maven: the build tool cannot be told about the
+        // generated SDK under .aspire/modules from the command line. The javac options and source
+        // arguments are inherited from the base spec so the two toolchains cannot drift.
+        Assert.Equal("javac", compile.Command);
+        Assert.Equal(
+            [
+                "--release", "25",
+                "-classpath", Path.Combine("target", "aspire-deps", "*"),
+                "-sourcepath", ".",
+                "-d", Path.Combine("target", "classes"),
+                "@.aspire/modules/sources.txt",
+                "{appHostFile}"
+            ],
+            compile.Args);
 
         // The AppHost is launched directly rather than through mvn exec:java so console signals reach
         // it, and without a {args} placeholder so the CLI appends real argv entries.
@@ -142,7 +164,17 @@ public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
             spec.InstallDependencies.Args);
 
         var compile = Assert.Single(spec.PreExecute!);
-        Assert.Equal(["-q", "classes"], compile.Args);
+        Assert.Equal("javac", compile.Command);
+        Assert.Equal(
+            [
+                "--release", "25",
+                "-classpath", Path.Combine("build", "aspire-deps", "*"),
+                "-sourcepath", ".",
+                "-d", Path.Combine("build", "classes", "java", "main"),
+                "@.aspire/modules/sources.txt",
+                "{appHostFile}"
+            ],
+            compile.Args);
 
         Assert.Equal("java", spec.Execute.Command);
         Assert.Equal(
@@ -291,7 +323,23 @@ public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
         var toProjectRoot = Path.Combine("..", "..", "..");
         Assert.Contains("-f", spec.InstallDependencies!.Args);
         Assert.Contains(Path.Combine(toProjectRoot, "pom.xml"), spec.InstallDependencies.Args);
-        Assert.Equal(["-B", "-q", "-f", Path.Combine(toProjectRoot, "pom.xml"), "compile"], Assert.Single(spec.PreExecute!).Args);
+
+        // -DoutputDirectory is deliberately *not* rewritten: Maven resolves a relative outputDirectory
+        // against the project's base directory, not the working directory, so climbing out of
+        // src/main/java here would stage the jars three levels above the project.
+        Assert.Contains($"-DoutputDirectory={Path.Combine("target", "aspire-deps")}", spec.InstallDependencies.Args);
+
+        // javac and java both resolve their paths against the working directory, so these do climb out.
+        Assert.Equal(
+            [
+                "--release", "25",
+                "-classpath", Path.Combine(toProjectRoot, "target", "aspire-deps", "*"),
+                "-sourcepath", ".",
+                "-d", Path.Combine(toProjectRoot, "target", "classes"),
+                "@.aspire/modules/sources.txt",
+                "{appHostFile}"
+            ],
+            Assert.Single(spec.PreExecute!).Args);
         Assert.Equal(
             [
                 "-cp",
