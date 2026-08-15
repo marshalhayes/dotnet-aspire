@@ -22,7 +22,20 @@ internal sealed class JavaLanguageSupport : ILanguageSupport
     private const string CodeGenTarget = "Java";
 
     private const string LanguageDisplayName = "Java";
-    private static readonly string[] s_detectionPatterns = ["AppHost.java"];
+
+    /// <summary>
+    /// AppHost locations, in priority order: the flat single-file layout, and the standard Maven and
+    /// Gradle source root that a build-tool project uses.
+    /// </summary>
+    /// <remarks>
+    /// The flat layout is listed first and remains the default so an AppHost that predates build-tool
+    /// support keeps working unchanged, and so the common case needs nothing but a JDK.
+    /// </remarks>
+    private static readonly string[] s_detectionPatterns =
+    [
+        "AppHost.java",
+        "src/main/java/AppHost.java"
+    ];
 
     /// <inheritdoc />
     public string Language => LanguageId;
@@ -78,19 +91,43 @@ internal sealed class JavaLanguageSupport : ILanguageSupport
             }
             """;
 
+        // Without a pom.xml or build.gradle the Java language server treats the folder as an
+        // "invisible project" and only puts the workspace root on the source path, so every
+        // reference to the generated SDK under .aspire/modules resolves to "cannot be resolved to a
+        // type": no completion, no navigation, and no breakpoint binding in the AppHost. Declaring
+        // both source roots is what makes a build-tool-free AppHost a real editing experience.
+        // The setting is ignored once a build file exists, because the build tool then owns the
+        // project model, so this stays correct if the user later adopts Maven or Gradle.
+        // https://github.com/redhat-developer/vscode-java/wiki/Java-Project-Settings
+        files[".vscode/settings.json"] = """
+            {
+              "java.project.sourcePaths": [
+                ".",
+                ".aspire/modules"
+              ],
+              "java.compile.nullAnalysis.mode": "disabled"
+            }
+            """;
+
         return files;
     }
 
     /// <inheritdoc />
     public DetectionResult Detect(string directoryPath)
     {
-        var appHostPath = Path.Combine(directoryPath, "AppHost.java");
-        if (!File.Exists(appHostPath))
+        foreach (var pattern in s_detectionPatterns)
         {
-            return DetectionResult.NotFound;
+            // The patterns are written with forward slashes because they are also a wire contract,
+            // so they have to be translated before touching the file system on Windows.
+            var relativePath = pattern.Replace('/', Path.DirectorySeparatorChar);
+
+            if (File.Exists(Path.Combine(directoryPath, relativePath)))
+            {
+                return DetectionResult.Found(LanguageId, relativePath);
+            }
         }
 
-        return DetectionResult.Found(LanguageId, "AppHost.java");
+        return DetectionResult.NotFound;
     }
 
     /// <summary>
@@ -128,16 +165,24 @@ internal sealed class JavaLanguageSupport : ILanguageSupport
             DisplayName = LanguageDisplayName,
             CodeGenLanguage = CodeGenTarget,
             DetectionPatterns = s_detectionPatterns,
-            // No separate install step - compilation happens in Execute
+            // No separate install step - compilation happens in Execute.
+            // A Maven or Gradle AppHost gets a real restore phase from JavaAppHostToolchainResolver.
             InstallDependencies = null,
+            // Debugging the AppHost itself goes through the same Java debug adapter the resources use.
+            // The CLI only takes this path when the extension reports the capability, so a CLI-only
+            // run is unaffected.
+            ExtensionLaunchCapability = LanguageId,
             Execute = new CommandSpec
             {
                 // Use a shell to compile and run in sequence
                 // On Windows, use cmd /c; on Unix, use sh -c
                 Command = OperatingSystem.IsWindows() ? "cmd" : "sh",
+                // {appHostFile} is substituted with an absolute path, so it is quoted: this command is
+                // handed to a shell, and a project under a directory such as "C:\My Projects" would
+                // otherwise be split into two arguments.
                 Args = OperatingSystem.IsWindows()
-                    ? ["/c", $"if not exist {BuildOutputDirectory} mkdir {BuildOutputDirectory} && javac {JavacOptions} -d {BuildOutputDirectory} @.aspire\\modules\\sources.txt AppHost.java && java -cp {BuildOutputDirectory} AppHost {{args}}"]
-                    : ["-c", $"mkdir -p {BuildOutputDirectory} && javac {JavacOptions} -d {BuildOutputDirectory} @.aspire/modules/sources.txt AppHost.java && java -cp {BuildOutputDirectory} AppHost {{args}}"]
+                    ? ["/c", $"if not exist {BuildOutputDirectory} mkdir {BuildOutputDirectory} && javac {JavacOptions} -d {BuildOutputDirectory} @.aspire\\modules\\sources.txt \"{{appHostFile}}\" && java -cp {BuildOutputDirectory} AppHost {{args}}"]
+                    : ["-c", $"mkdir -p {BuildOutputDirectory} && javac {JavacOptions} -d {BuildOutputDirectory} @.aspire/modules/sources.txt \"{{appHostFile}}\" && java -cp {BuildOutputDirectory} AppHost {{args}}"]
             }
         };
     }

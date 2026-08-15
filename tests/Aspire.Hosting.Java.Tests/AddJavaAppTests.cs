@@ -3,6 +3,7 @@
 
 #pragma warning disable ASPIREEXTENSION001
 
+using System.IO.Compression;
 using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Tests.Utils;
 using Aspire.Hosting.Utils;
@@ -1015,5 +1016,137 @@ public class AddJavaAppTests
         var args = manifest?["args"]?.AsArray();
         Assert.NotNull(args);
         Assert.Contains("bootRun", args!.Select(a => a?.ToString()));
+    }
+
+    private static async Task<JavaLaunchConfiguration> GetLaunchConfigurationAsync(IResourceBuilder<JavaAppResource> app)
+    {
+        var annotation = Assert.Single(app.Resource.Annotations.OfType<SupportsDebuggingAnnotation>());
+        Assert.Equal("java", annotation.LaunchConfigurationType);
+
+        var context = new LaunchConfigurationCallbackContext(
+            ExecutableLaunchMode.Debug,
+            app.Resource,
+            new Dictionary<string, string>(),
+            CancellationToken.None);
+
+        return Assert.IsType<JavaLaunchConfiguration>(await annotation.LaunchConfigurationProducer(context));
+    }
+
+    /// <summary>
+    /// Writes a JAR whose manifest declares <paramref name="mainClass"/>. A JAR is a ZIP archive, so
+    /// the entry only has to exist at META-INF/MANIFEST.MF with the documented Name: value shape.
+    /// </summary>
+    private static string WriteJarWithManifest(string directory, string fileName, string? mainClass, bool wrapLongValue = false)
+    {
+        var jarPath = Path.Combine(directory, fileName);
+        using var archive = ZipFile.Open(jarPath, ZipArchiveMode.Create);
+        using var writer = new StreamWriter(archive.CreateEntry("META-INF/MANIFEST.MF").Open());
+
+        writer.Write("Manifest-Version: 1.0\r\n");
+        if (mainClass is not null)
+        {
+            if (wrapLongValue)
+            {
+                // The manifest format limits a line to 72 bytes and continues longer values on the
+                // next line with a single leading space, which is not part of the value.
+                var split = mainClass.Length / 2;
+                writer.Write($"Main-Class: {mainClass[..split]}\r\n {mainClass[split..]}\r\n");
+            }
+            else
+            {
+                writer.Write($"Main-Class: {mainClass}\r\n");
+            }
+        }
+
+        writer.Write("\r\n");
+        return jarPath;
+    }
+
+    [Fact]
+    public async Task AddJavaApp_WithMavenBuild_SendsNoMainClassSoTheIdeResolvesItFromTheProject()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Run);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.WriteWrapper(JavaHostingExtensions.s_defaultMavenWrapper);
+
+        var app = builder.AddJavaApp("api", tempDir.Path).WithMavenGoal("spring-boot:run");
+
+        var launchConfiguration = await GetLaunchConfigurationAsync(app);
+
+        Assert.Null(launchConfiguration.MainClass);
+        Assert.Null(launchConfiguration.ClassPaths);
+        Assert.Equal("maven", launchConfiguration.BuildTool);
+        Assert.Equal(tempDir.Path, launchConfiguration.WorkingDirectory);
+    }
+
+    [Fact]
+    public async Task AddJavaApp_WithJar_PutsTheArchiveOnTheClasspathAndLaunchesItsManifestMainClass()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Run);
+        using var tempDir = new TempJavaAppDirectory();
+        var jarPath = WriteJarWithManifest(tempDir.Path, "api.jar", "com.example.catalog.CatalogApplication");
+
+        var app = builder.AddJavaApp("api", tempDir.Path, "api.jar");
+
+        var launchConfiguration = await GetLaunchConfigurationAsync(app);
+
+        // The archive itself is never the main class: the debug adapter documents that attribute as a
+        // fully qualified class name or a .java path, so a JAR path leaves it unable to resolve an
+        // entry point. The archive belongs on the classpath instead.
+        Assert.Equal("com.example.catalog.CatalogApplication", launchConfiguration.MainClass);
+        Assert.Equal(jarPath, Assert.Single(launchConfiguration.ClassPaths!));
+        Assert.Null(launchConfiguration.BuildTool);
+    }
+
+    [Fact]
+    public async Task AddJavaApp_WithJar_ReadsAMainClassThatTheManifestWrappedAcrossLines()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Run);
+        using var tempDir = new TempJavaAppDirectory();
+        const string MainClass = "com.example.catalog.averylongpackagename.that.forces.wrapping.CatalogApplication";
+        WriteJarWithManifest(tempDir.Path, "api.jar", MainClass, wrapLongValue: true);
+
+        var app = builder.AddJavaApp("api", tempDir.Path, "api.jar");
+
+        var launchConfiguration = await GetLaunchConfigurationAsync(app);
+
+        Assert.Equal(MainClass, launchConfiguration.MainClass);
+    }
+
+    [Fact]
+    public async Task AddJavaApp_WithJar_WithMainClass_PrefersTheExplicitMainClassOverTheManifest()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Run);
+        using var tempDir = new TempJavaAppDirectory();
+        var jarPath = WriteJarWithManifest(tempDir.Path, "api.jar", "org.springframework.boot.loader.JarLauncher");
+
+        var app = builder.AddJavaApp("api", tempDir.Path, "api.jar")
+            .WithMainClass("com.example.catalog.CatalogApplication");
+
+        var launchConfiguration = await GetLaunchConfigurationAsync(app);
+
+        Assert.Equal("com.example.catalog.CatalogApplication", launchConfiguration.MainClass);
+        Assert.Equal(jarPath, Assert.Single(launchConfiguration.ClassPaths!));
+    }
+
+    [Fact]
+    public async Task AddJavaApp_WithJar_ThatIsMissingOrHasNoMainClass_StillSendsTheClasspath()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Run);
+        using var tempDir = new TempJavaAppDirectory();
+        WriteJarWithManifest(tempDir.Path, "no-main.jar", mainClass: null);
+
+        var noMainClass = builder.AddJavaApp("no-main", tempDir.Path, "no-main.jar");
+        var missing = builder.AddJavaApp("missing", tempDir.Path, "does-not-exist.jar");
+
+        // Neither case is fatal: the IDE can still resolve an entry point from the project, and
+        // failing the launch over an unreadable archive would be worse than letting it try.
+        var noMainClassConfiguration = await GetLaunchConfigurationAsync(noMainClass);
+        Assert.Null(noMainClassConfiguration.MainClass);
+        Assert.Equal(Path.Combine(tempDir.Path, "no-main.jar"), Assert.Single(noMainClassConfiguration.ClassPaths!));
+
+        var missingConfiguration = await GetLaunchConfigurationAsync(missing);
+        Assert.Null(missingConfiguration.MainClass);
+        Assert.Equal(Path.Combine(tempDir.Path, "does-not-exist.jar"), Assert.Single(missingConfiguration.ClassPaths!));
     }
 }

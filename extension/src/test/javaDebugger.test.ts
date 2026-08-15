@@ -103,17 +103,38 @@ suite('Java Debugger Extension Tests', () => {
         assert.strictEqual(debugConfig.request, 'launch');
     });
 
-    test('sets mainClass to the executable JAR path when the app host reports one', async () => {
+    test('puts a prebuilt JAR on the classpath rather than passing it as the main class', async () => {
         const debugConfig = createDebugConfig();
 
+        // The adapter documents mainClass as a fully qualified class name or a .java path, so it
+        // never opens an archive. The app host therefore reads Main-Class from the manifest itself
+        // and sends the JAR as a classpath entry; passing the archive as mainClass left the adapter
+        // unable to resolve an entry point at all.
         await javaDebuggerExtension.createDebugSessionConfigurationCallback!(
-            createJavaLaunchConfig({ main_class: '/workspace/api/target/api-1.0.0.jar' }),
+            createJavaLaunchConfig({
+                main_class: 'com.example.api.Application',
+                class_paths: ['/workspace/api/target/api-1.0.0.jar']
+            }),
             [],
             [],
             { debug: true, runId: '1', debugSessionId: '1', isApphost: false, debugSession: fakeAspireDebugSession },
             debugConfig);
 
-        assert.strictEqual(debugConfig.mainClass, '/workspace/api/target/api-1.0.0.jar');
+        assert.strictEqual(debugConfig.mainClass, 'com.example.api.Application');
+        assert.deepStrictEqual(debugConfig.classPaths, ['/workspace/api/target/api-1.0.0.jar']);
+    });
+
+    test('omits classPaths so the adapter resolves them from the project when none are reported', async () => {
+        const debugConfig = createDebugConfig();
+
+        await javaDebuggerExtension.createDebugSessionConfigurationCallback!(
+            createJavaLaunchConfig({ class_paths: undefined }),
+            [],
+            [],
+            { debug: true, runId: '1', debugSessionId: '1', isApphost: false, debugSession: fakeAspireDebugSession },
+            debugConfig);
+
+        assert.ok(!('classPaths' in debugConfig), 'classPaths must stay unset so the Java debugger resolves the project classpath.');
     });
 
     test('omits mainClass so the adapter resolves it when the app host does not report one', async () => {
@@ -243,10 +264,10 @@ suite('Java Debugger Extension Tests', () => {
     test('names the session with a workspace relative path rather than a file URI', () => {
         sinon.stub(vscode.workspace, 'asRelativePath').callsFake(() => 'api');
 
-        const fromJar = javaDebuggerExtension.getDisplayName(createJavaLaunchConfig({ main_class: '/workspace/api/target/api-1.0.0.jar' }));
+        const fromSourceFile = javaDebuggerExtension.getDisplayName(createJavaLaunchConfig({ main_class: '/workspace/api/src/main/java/Application.java' }));
         const withoutMainClass = javaDebuggerExtension.getDisplayName(createJavaLaunchConfig({ main_class: undefined }));
 
-        assert.strictEqual(fromJar, 'Java: api');
+        assert.strictEqual(fromSourceFile, 'Java: api');
         assert.strictEqual(withoutMainClass, 'Java: api');
     });
 

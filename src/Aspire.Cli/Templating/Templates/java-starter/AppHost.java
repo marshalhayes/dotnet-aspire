@@ -1,4 +1,4 @@
-package aspire;
+import aspire.*;
 
 final class AppHost {
     void main() throws Exception {

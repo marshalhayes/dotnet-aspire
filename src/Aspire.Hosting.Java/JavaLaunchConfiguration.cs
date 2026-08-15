@@ -42,12 +42,31 @@ internal sealed class JavaLaunchConfiguration() : ExecutableLaunchConfiguration(
     public string WorkingDirectory { get; set; } = string.Empty;
 
     /// <summary>
-    /// The fully qualified main class, or the absolute path to an executable JAR whose manifest
-    /// declares <c>Main-Class</c>. When omitted the IDE resolves the main class from the project's
-    /// build files, and reports an actionable error if the project declares more than one.
+    /// The fully qualified main class, optionally prefixed with a Java module name
+    /// (<c>[module/]com.example.App</c>), or the path of the <c>.java</c> source file declaring
+    /// <c>main</c>. When omitted the IDE resolves the main class from the project's build files, and
+    /// reports an actionable error if the project declares more than one.
     /// </summary>
+    /// <remarks>
+    /// A JAR path is deliberately not accepted here. The debug adapter documents this attribute as
+    /// "the fully qualified class name (e.g. [java module name/]com.xyz.MainApp) or the java file path
+    /// of the program entry", so it never opens an archive to read <c>Main-Class</c>. An executable JAR
+    /// belongs in <see cref="ClassPaths"/> with its manifest's <c>Main-Class</c> sent here.
+    /// </remarks>
     [JsonPropertyName("main_class")]
     public string? MainClass { get; set; }
+
+    /// <summary>
+    /// Classpath entries the IDE should launch the JVM with. Empty when the IDE should resolve the
+    /// classpath from the project itself, which is the normal case for a Maven or Gradle project.
+    /// </summary>
+    /// <remarks>
+    /// This is how a prebuilt JAR is debugged: the archive goes on the classpath and its manifest's
+    /// <c>Main-Class</c> becomes <see cref="MainClass"/>. Without it the adapter would fall back to
+    /// resolving the class from a language-server project that does not contain the JAR's classes.
+    /// </remarks>
+    [JsonPropertyName("class_paths")]
+    public string[]? ClassPaths { get; set; }
 
     /// <summary>
     /// The build tool that owns the project, used by the IDE to refresh the project's classpath

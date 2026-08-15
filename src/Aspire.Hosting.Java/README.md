@@ -135,8 +135,8 @@ instrumented as well.
 Debugging is enabled automatically by `AddJavaApp` — use the normal Aspire "Start Debugging" flow in
 VS Code. The IDE launches the JVM directly rather than through the wrapper, because `spring-boot:run`
 and `bootRun` fork a second JVM that a debugger attached to the wrapper would never see. Set
-`WithMainClass(...)` to say which class to launch; for a prebuilt JAR the JAR itself is used and the
-debugger reads `Main-Class` from its manifest.
+`WithMainClass(...)` to say which class to launch; for a prebuilt JAR the archive is put on the
+debugger's classpath and its manifest's `Main-Class` is launched, which is what `java -jar` does.
 
 ### Publishing
 

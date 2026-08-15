@@ -104,13 +104,13 @@ function isAbsolutePath(value: string): boolean {
     return path.win32.isAbsolute(value) || path.posix.isAbsolute(value);
 }
 
-// main_class is either a fully qualified class name (com.example.Api) or the absolute path of an
-// executable JAR whose manifest declares Main-Class (/workspace/api/target/api.jar). Only the class
-// name is worth showing in the Call Stack view; the JAR path is less specific than the project
-// directory the user recognises.
+// main_class is either a fully qualified class name (com.example.Api), optionally prefixed with a
+// module name (app/com.example.Api), or the path of a .java source file. Only the class name is
+// worth showing in the Call Stack view; a file path is less specific than the project directory the
+// user recognises.
 function isFullyQualifiedClassName(mainClass: string): boolean {
     return mainClass.includes('.')
-        && !mainClass.toLowerCase().endsWith('.jar')
+        && !mainClass.toLowerCase().endsWith('.java')
         && !isAbsolutePath(mainClass);
 }
 
@@ -175,10 +175,10 @@ export const javaDebuggerExtension: ResourceDebuggerExtension = {
             debugConfiguration.cwd = launchConfig.working_directory;
         }
 
-        // vscjava.vscode-java-debug requires mainClass to start a launch session, and accepts either
-        // a fully qualified class name or the absolute path of an executable JAR. When the app host
-        // omits it, leaving the attribute unset lets the adapter resolve the entry point from the
-        // project instead of failing on an empty value.
+        // vscjava.vscode-java-debug requires mainClass to start a launch session, and accepts a fully
+        // qualified class name, optionally prefixed with a module name, or the path of a .java source
+        // file. When the app host omits it, leaving the attribute unset lets the adapter resolve the
+        // entry point from the project instead of failing on an empty value.
         // https://github.com/microsoft/vscode-java-debug/blob/main/Configuration.md#main
         //
         // projectName is intentionally not set: the adapter defines it as the Maven artifactId or
@@ -186,6 +186,15 @@ export const javaDebuggerExtension: ResourceDebuggerExtension = {
         // it would scope class resolution to a project that may not exist.
         if (launchConfig.main_class) {
             debugConfiguration.mainClass = launchConfig.main_class;
+        }
+
+        // A resource that runs a prebuilt JAR has no language server project containing its classes,
+        // so the adapter cannot resolve the classpath on its own and would launch a JVM that fails
+        // with NoClassDefFoundError. Sending the archive explicitly is what makes such a resource
+        // debuggable; Maven and Gradle resources omit this and let the adapter resolve the project.
+        // https://github.com/microsoft/vscode-java-debug/blob/main/Configuration.md#classpaths
+        if (launchConfig.class_paths?.length) {
+            debugConfiguration.classPaths = launchConfig.class_paths;
         }
 
         // These are the application's own arguments. The app host strips the mvnw/gradlew wrapper

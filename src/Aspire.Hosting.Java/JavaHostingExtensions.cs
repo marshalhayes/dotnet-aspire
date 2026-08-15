@@ -8,6 +8,7 @@
 
 using System.Diagnostics.CodeAnalysis;
 using System.Formats.Asn1;
+using System.IO.Compression;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Cryptography.Pkcs;
@@ -792,37 +793,127 @@ public static class JavaHostingExtensions
         ArgumentNullException.ThrowIfNull(builder);
 
         return builder.WithDebugSupport(
-            mode => new JavaLaunchConfiguration
+            mode =>
             {
-                Mode = mode,
-                WorkingDirectory = builder.Resource.WorkingDirectory,
-                MainClass = ResolveMainClassForIde(builder.Resource),
-                BuildTool = builder.Resource.TryGetLastAnnotation<JavaBuildToolAnnotation>(out var buildTool)
-                    ? buildTool.Tool.ToString().ToLowerInvariant()
-                    : null
+                var (mainClass, classPaths) = ResolveEntryPointForIde(builder.Resource);
+
+                return new JavaLaunchConfiguration
+                {
+                    Mode = mode,
+                    WorkingDirectory = builder.Resource.WorkingDirectory,
+                    MainClass = mainClass,
+                    ClassPaths = classPaths,
+                    BuildTool = builder.Resource.TryGetLastAnnotation<JavaBuildToolAnnotation>(out var buildTool)
+                        ? buildTool.Tool.ToString().ToLowerInvariant()
+                        : null
+                };
             },
             "java");
     }
 
     /// <summary>
-    /// Determines what the IDE should launch, or <see langword="null"/> to let it resolve the main class
-    /// from the project's build files.
+    /// Determines what the IDE should launch: the entry point class and, when the resource runs a
+    /// prebuilt JAR, the classpath that contains it.
     /// </summary>
-    private static string? ResolveMainClassForIde(JavaAppResource resource)
+    /// <remarks>
+    /// A JAR is never sent as the main class. The Java debug adapter documents that attribute as a
+    /// fully qualified class name or a <c>.java</c> source path, so it does not open archives; passing
+    /// a JAR path made the adapter fail to resolve an entry point. Instead the archive goes on the
+    /// classpath and its manifest's <c>Main-Class</c> becomes the main class, which is exactly what
+    /// <c>java -jar</c> does and works for Spring Boot fat JARs too (their manifest names
+    /// <c>JarLauncher</c>, the same class <c>java -jar</c> would run).
+    /// </remarks>
+    private static (string? MainClass, string[]? ClassPaths) ResolveEntryPointForIde(JavaAppResource resource)
     {
-        if (resource.TryGetLastAnnotation<JavaMainClassAnnotation>(out var mainClass))
+        // An explicit WithMainClass always wins, including over a JAR's manifest, so a resource that
+        // ships a launcher manifest can still be debugged at its real entry point.
+        var explicitMainClass = resource.TryGetLastAnnotation<JavaMainClassAnnotation>(out var mainClass)
+            ? mainClass.MainClass
+            : null;
+
+        if (!resource.TryGetLastAnnotation<JavaJarPathAnnotation>(out var jar))
         {
-            return mainClass.MainClass;
+            return (explicitMainClass, null);
         }
 
-        // The Java debug adapter accepts a path to an executable JAR wherever it accepts a main class,
-        // and reads Main-Class from the archive's manifest itself.
-        // See https://github.com/microsoft/vscode-java-debug/blob/main/Configuration.md.
-        // Resolved to an absolute path here because the adapter reads the archive before the debuggee's
-        // working directory exists. Path.Combine returns jar.JarPath unchanged when it is already absolute.
-        return resource.TryGetLastAnnotation<JavaJarPathAnnotation>(out var jar)
-            ? Path.GetFullPath(Path.Combine(resource.WorkingDirectory, jar.JarPath))
-            : null;
+        // Resolved to an absolute path because the adapter reads the archive before the debuggee's
+        // working directory exists. Path.Combine returns jar.JarPath unchanged when already absolute.
+        var jarPath = Path.GetFullPath(Path.Combine(resource.WorkingDirectory, jar.JarPath));
+
+        return (explicitMainClass ?? TryReadJarManifestMainClass(jarPath), [jarPath]);
+    }
+
+    /// <summary>
+    /// Reads <c>Main-Class</c> from a JAR's manifest, or returns <see langword="null"/> when the archive
+    /// is missing, unreadable, or declares no entry point.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Failures are non-fatal on purpose. The JAR is usually produced by a build step that runs before
+    /// launch, but a user can start a debug session against a stale or half-written archive. Returning
+    /// null lets the IDE resolve the entry point from the project instead of failing the whole run.
+    /// </para>
+    /// <para>
+    /// <c>META-INF/MANIFEST.MF</c> is a line-oriented <c>Name: value</c> format where each line is
+    /// limited to 72 bytes and longer values continue on the next line with a single leading space,
+    /// which the space must be stripped from. Names are case-insensitive. For example:
+    /// </para>
+    /// <code>
+    /// Manifest-Version: 1.0
+    /// Main-Class: com.example.catalog.averylongpackagename.that.wraps.Catalo
+    ///  gApplication
+    /// </code>
+    /// <para>
+    /// See https://docs.oracle.com/en/java/javase/25/docs/specs/jar/jar.html#jar-manifest.
+    /// </para>
+    /// </remarks>
+    private static string? TryReadJarManifestMainClass(string jarPath)
+    {
+        const string MainClassAttribute = "Main-Class:";
+
+        try
+        {
+            using var archive = ZipFile.OpenRead(jarPath);
+
+            // The JAR specification requires this exact name, but archive entry lookup is
+            // case-sensitive while some tools write the directory in a different case.
+            var manifestEntry = archive.Entries.FirstOrDefault(
+                entry => string.Equals(entry.FullName, "META-INF/MANIFEST.MF", StringComparison.OrdinalIgnoreCase));
+
+            if (manifestEntry is null)
+            {
+                return null;
+            }
+
+            using var reader = new StreamReader(manifestEntry.Open());
+
+            string? value = null;
+            while (reader.ReadLine() is { } line)
+            {
+                if (value is not null)
+                {
+                    // A continuation line, and therefore the rest of the value we are accumulating.
+                    if (line.StartsWith(' '))
+                    {
+                        value += line[1..];
+                        continue;
+                    }
+
+                    break;
+                }
+
+                if (line.StartsWith(MainClassAttribute, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = line[MainClassAttribute.Length..].TrimStart();
+                }
+            }
+
+            return string.IsNullOrWhiteSpace(value) ? null : value;
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
+        {
+            return null;
+        }
     }
 }
 
