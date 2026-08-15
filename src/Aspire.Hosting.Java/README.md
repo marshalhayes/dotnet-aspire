@@ -6,12 +6,17 @@ Use this integration to model, configure, and orchestrate a Java application res
 
 ### Prerequisites
 
-A **JDK** must be available on the PATH of the machine running the AppHost. Aspire does not install one.
+A **JDK** must be available on the PATH of the machine running the AppHost, for every resource that runs a
+JVM locally. Aspire does not install one. `AddJavaContainer` is the exception, because it runs a prebuilt
+image and the JDK comes from inside that image.
 
-Applications are launched through the **Maven or Gradle wrapper** (`mvnw`/`gradlew`) checked into the
-project, which needs nothing else installed. A wrapper is required: Aspire deliberately does not fall back
-to a globally installed `mvn` or `gradle`, because the wrapper pins the tool version in the repository so
-the AppHost, CI, and the published container image all build with the same one. Add a wrapper with
+A **Maven or Gradle wrapper** (`mvnw`/`gradlew`) checked into the project is required only by the resources
+that invoke one: the `WithMavenGoal`/`WithGradleTask` launch modes, and the `WithMavenBuild`/`WithGradleBuild`
+build steps. A resource that runs a prebuilt JAR launches `java -jar` directly and needs no wrapper.
+
+Where a wrapper is used it needs nothing else installed, and Aspire deliberately does not fall back to a
+globally installed `mvn` or `gradle`, because the wrapper pins the tool version in the repository so the
+AppHost, CI, and the published container image all build with the same one. Add a wrapper with
 `mvn -N wrapper:wrapper` or `gradle wrapper`, or select one elsewhere with `WithWrapperPath(...)`.
 
 For VS Code debugging, install
