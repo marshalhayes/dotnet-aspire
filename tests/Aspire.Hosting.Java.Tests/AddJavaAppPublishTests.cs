@@ -9,6 +9,9 @@
 using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Utils;
 using Aspire.Hosting.Tests.Utils;
+using System.Diagnostics;
+using System.Text.Json;
+using Aspire.TestUtilities;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Aspire.Hosting.Java.Tests;
@@ -559,6 +562,106 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
         // so the image has to build it rather than copy a file that is not in the context.
         Assert.Contains("AS build", content);
         Assert.Contains("sh ./mvnw", content);
+    }
+
+    [Fact]
+    [RequiresFeature(TestFeature.Docker | TestFeature.ContainerImageBuild)]
+    [OuterloopTest("Builds and runs a Docker image to verify the generated Java Dockerfile works")]
+    public async Task VerifyPublish_PrebuiltJarImageBuildsAndRunsWithItsArguments()
+    {
+        using var workspace = TemporaryWorkspace.Create(outputHelper);
+        var sourceDir = workspace.CreateDirectory("source");
+        var outputDir = workspace.CreateDirectory("output");
+
+        await File.WriteAllTextAsync(
+            Path.Combine(sourceDir.FullName, "App.java"),
+            """
+            public class App {
+                public static void main(String[] args) {
+                    System.out.println("runtime ok: " + String.join(" ", args));
+                }
+            }
+            """,
+            TestContext.Current.CancellationToken);
+
+        // The JAR is produced inside a JDK container so this test needs Docker and nothing else. A JDK on
+        // the agent would work too, but only the runtime image's JDK is guaranteed to emit class files the
+        // runtime image can load.
+        var buildJarResult = await RunDockerCommandAsync(
+            $"run --rm -v {sourceDir.FullName}:/work -w /work docker.io/library/eclipse-temurin:{JavaVersionDetector.DefaultJavaVersion}-jdk " +
+            "sh -c \"javac -d classes App.java && mkdir -p target && jar --create --file target/app.jar --main-class App -C classes .\"",
+            sourceDir.FullName);
+        Assert.True(buildJarResult.ExitCode == 0, $"Building the test JAR failed.\nStdout: {buildJarResult.Stdout}\nStderr: {buildJarResult.Stderr}");
+
+        using (var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish, outputDir.FullName, step: "publish-manifest"))
+        {
+            builder.AddJavaApp("api", sourceDir.FullName, Path.Combine("target", "app.jar"), ["--greeting", "hello"]);
+            builder.Build().Run();
+        }
+
+        // The image never bakes in the application arguments, exactly like every other container
+        // resource: they are part of the deployment spec, so the manifest carries them and the runtime
+        // appends them to the entrypoint. Reading them back and passing them to docker run is what makes
+        // this test cover the published pair rather than the image alone.
+        using var manifest = JsonDocument.Parse(
+            await File.ReadAllTextAsync(Path.Combine(outputDir.FullName, "aspire-manifest.json"), TestContext.Current.CancellationToken));
+        var manifestArgs = manifest.RootElement
+            .GetProperty("resources").GetProperty("api").GetProperty("args")
+            .EnumerateArray().Select(arg => arg.GetString()!).ToArray();
+
+        Assert.Equal(["--greeting", "hello"], manifestArgs);
+
+        // Copied into the build context under the names docker build expects, so the generated ignore
+        // file is exercised too. Its target re-includes are what let the JAR into the image at all.
+        File.Copy(
+            Path.Combine(outputDir.FullName, "api.Dockerfile"),
+            Path.Combine(sourceDir.FullName, "Dockerfile"));
+        File.Copy(
+            Path.Combine(outputDir.FullName, "api.Dockerfile.dockerignore"),
+            Path.Combine(sourceDir.FullName, ".dockerignore"));
+
+        var imageName = $"aspire-java-test-{Guid.NewGuid():N}";
+
+        try
+        {
+            var buildResult = await RunDockerCommandAsync($"build --network=host -t {imageName} -f Dockerfile .", sourceDir.FullName);
+            Assert.True(buildResult.ExitCode == 0, $"Docker build failed with exit code {buildResult.ExitCode}.\nStdout: {buildResult.Stdout}\nStderr: {buildResult.Stderr}");
+
+            // No network, so a passing run cannot depend on anything being downloaded at start up.
+            var runResult = await RunDockerCommandAsync($"run --rm --network=none {imageName} {string.Join(' ', manifestArgs)}", sourceDir.FullName);
+            Assert.True(runResult.ExitCode == 0, $"Docker run failed with exit code {runResult.ExitCode}.\nStdout: {runResult.Stdout}\nStderr: {runResult.Stderr}");
+
+            // PublishAsDockerFile clears the executable's arguments, so this also pins that the application
+            // arguments added after it survive publishing and reach the JAR through the entrypoint.
+            Assert.Contains("runtime ok: --greeting hello", runResult.Stdout);
+        }
+        finally
+        {
+            await RunDockerCommandAsync($"rmi {imageName}", sourceDir.FullName);
+        }
+    }
+
+    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunDockerCommandAsync(string arguments, string workingDirectory)
+    {
+        using var process = Process.Start(new ProcessStartInfo
+        {
+            FileName = "docker",
+            Arguments = arguments,
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        });
+
+        Assert.NotNull(process);
+
+        // Both streams are read concurrently so a full pipe buffer cannot deadlock the build output.
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+
+        return (process.ExitCode, await stdoutTask, await stderrTask);
     }
 
     private async Task<string> PublishDockerfileAsync(
