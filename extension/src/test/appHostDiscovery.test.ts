@@ -472,7 +472,8 @@ suite('AppHost discovery', () => {
                 assert.ok(watchedPatterns.includes('**/apphost.mjs'));
                 assert.ok(watchedPatterns.includes('**/apphost.cjs'));
                 assert.ok(watchedPatterns.includes('**/apphost.rs'));
-                assert.ok(watchedPatterns.includes('**/apphost.java'));
+                // Case matters: watcher globs are case-sensitive on Linux and the file is AppHost.java.
+                assert.ok(watchedPatterns.includes('**/AppHost.java'));
             }
             finally {
                 service.dispose();
