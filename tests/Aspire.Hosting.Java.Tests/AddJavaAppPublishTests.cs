@@ -1086,9 +1086,15 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
         await File.WriteAllTextAsync(
             Path.Combine(sourcePath.FullName, "App.java"),
             """
+            import java.nio.file.Files;
+            import java.nio.file.Path;
+
             public class App {
-                public static void main(String[] args) {
-                    System.out.println("wrapper build ok: " + System.getProperty("user.name"));
+                public static void main(String[] args) throws Exception {
+                    // The runtime stage switches to a numeric UID with no /etc/passwd entry, so
+                    // System.getProperty("user.name") reports "?" rather than an account name. Read the
+                    // real UID from procfs instead, which is what USER actually changed.
+                    System.out.println("wrapper build ok: uid=" + Files.getAttribute(Path.of("/proc/self"), "unix:uid"));
                 }
             }
             """,
@@ -1130,9 +1136,9 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
             var runResult = await RunDockerCommandAsync($"run --rm --network=none {imageName}", sourceDir.FullName);
             Assert.True(runResult.ExitCode == 0, $"Docker run failed with exit code {runResult.ExitCode}.\nStdout: {runResult.Stdout}\nStderr: {runResult.Stderr}");
 
-            // The runtime stage creates and switches to an unprivileged "app" user, so seeing it here
-            // proves both that the wrapper build produced a runnable JAR and that USER took effect.
-            Assert.Contains("wrapper build ok: app", runResult.Stdout);
+            // The runtime stage switches to an unprivileged numeric UID, so seeing 999 here proves both
+            // that the wrapper build produced a runnable JAR and that USER took effect.
+            Assert.Contains("wrapper build ok: uid=999", runResult.Stdout);
         }
         finally
         {

@@ -128,8 +128,9 @@ internal static partial class JavaDockerfileGenerator
         var build = prebuiltJar is null ? JavaContainerBuild.Resolve(resource, appDirectory) : null;
         var javaVersion = JavaVersionDetector.Detect(appDirectory);
 
-        // The Java annotations live on the original JavaAppResource; ctx.Resource is the ContainerResource
-        // PublishAsDockerFile substitutes in, and only carries the container-level annotations.
+        // ctx.Resource is the ContainerResource PublishAsDockerFile substitutes in, but it shares the
+        // original JavaAppResource's annotation collection, which is why WithDockerfileBaseImage authored
+        // on the Java resource is visible from here.
         context.Resource.TryGetLastAnnotation<DockerfileBaseImageAnnotation>(out var baseImageAnnotation);
         // A plain JDK image is always enough because a wrapper is required: the wrapper downloads the exact
         // tool version the project pins, so nothing has to come from the image. That also keeps the build
@@ -650,7 +651,15 @@ internal static partial class JavaDockerfileGenerator
             // the identical arguments used on the host, where they are passed as separate argv entries.
             // The wrapper path is quoted for the same reason: WithWrapperPath accepts any path, and an
             // unquoted one containing a shell metacharacter would invoke something other than the wrapper.
-            var invocation = $"sh {ShellQuoteIfNeeded($"./{wrapper}")}";
+            var quotedWrapper = ShellQuoteIfNeeded($"./{wrapper}");
+
+            // A Windows checkout without a .gitattributes rule for mvnw/gradlew leaves CRLF line endings in
+            // them. Both are POSIX scripts built around `case` statements, and `sh` rejects those with
+            // "Syntax error: word unexpected (expecting \"in\")" - a message that says nothing about line
+            // endings and appears halfway through a container build. Stripping the carriage returns in the
+            // image is idempotent, costs nothing when they are already absent, and leaves the developer's
+            // working tree untouched.
+            var invocation = $"sed -i 's/\\r$//' {quotedWrapper} && sh {quotedWrapper}";
 
             var buildCommand = $"{invocation} {string.Join(' ', buildArgs.Select(ShellQuoteIfNeeded))}";
 
@@ -1180,7 +1189,9 @@ internal static partial class JavaDockerfileGenerator
             var quoted = ShellQuote(jarPath);
 
             return string.Join(" && ",
-                $"if [ ! -f {quoted} ]; then echo \"Aspire: the build of '{resourceName}' did not produce {jarPath}.\" >&2; echo \"Check the jarPath passed to AddJavaApp, or use WithJarArtifact to name the published artifact separately.\" >&2; exit 1; fi",
+                // The path is emitted as its own single-quoted shell word rather than interpolated into the
+                // double-quoted message, because a double-quoted $(...) would run during the image build.
+                $"if [ ! -f {quoted} ]; then echo \"Aspire: the build of '{resourceName}' did not produce\" {quoted} >&2; echo \"Check the jarPath passed to AddJavaApp, or use WithJarArtifact to name the published artifact separately.\" >&2; exit 1; fi",
                 $"cp {quoted} {destination}");
         }
 

@@ -14,6 +14,13 @@
 
   <ItemGroup>
     <PackageReference Include="System.Security.Cryptography.Pkcs" />
+    <!-- System.Security.Cryptography.Pkcs ships a real lib/net10.0 assembly that binds to
+         Microsoft.Bcl.Cryptography, but its net10.0 dependency group is empty, so NuGet never learns
+         about the requirement. Without this reference any consumer that also pulls an older
+         Microsoft.Bcl.Cryptography transitively - Microsoft.IdentityModel.Tokens does, so anything
+         with auth or Azure integrations - resolves that older assembly and Pkcs12Builder throws
+         FileNotFoundException at run time. Referencing it directly pins the matching version. -->
+    <PackageReference Include="Microsoft.Bcl.Cryptography" />
   </ItemGroup>
 
   <ItemGroup>

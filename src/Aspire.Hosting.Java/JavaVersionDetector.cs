@@ -15,7 +15,7 @@ namespace Aspire.Hosting.Java;
 /// <remarks>
 /// Detection is best effort and never fails: an unreadable or unrecognised build file falls back to
 /// <see cref="DefaultJavaVersion"/>. Callers can always override the images with
-/// <c>WithDockerfileBaseImages</c>.
+/// <c>WithDockerfileBaseImage</c>.
 /// </remarks>
 internal static partial class JavaVersionDetector
 {

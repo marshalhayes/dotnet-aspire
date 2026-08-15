@@ -182,7 +182,9 @@ public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
         AssertWrapperInvocation(
             wrapper,
             workspace.Path,
-            ["-q", "--init-script", JavaAppHostToolchainResolver.GradleInitScriptRelativePath, "aspireCopyDependencies"],
+            // CombineProjectPath returns the path with this platform's separators, so the expected value
+            // has to be converted too or the comparison fails on Windows.
+            ["-q", "--init-script", JavaAppHostToolchainResolver.GradleInitScriptRelativePath.Replace('/', Path.DirectorySeparatorChar), "aspireCopyDependencies"],
             spec.InstallDependencies!);
 
         var compile = Assert.Single(spec.PreExecute!);

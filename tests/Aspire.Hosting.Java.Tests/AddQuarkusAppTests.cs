@@ -100,7 +100,7 @@ public class AddQuarkusAppTests
 
         var app = builder.AddQuarkusApp("inventory", tempDir.Path);
 
-        AllocateEndpoints(app.Resource);
+        TestEndpointAllocator.AllocateEndpoints(app.Resource);
 
         var envVars = await EnvironmentVariableEvaluator.GetEnvironmentVariablesAsync(
             app.Resource, DistributedApplicationOperation.Run, TestServiceProvider.Instance);
@@ -135,7 +135,7 @@ public class AddQuarkusAppTests
 
         var app = builder.AddQuarkusApp("inventory", tempDir.Path);
 
-        AllocateEndpoints(app.Resource);
+        TestEndpointAllocator.AllocateEndpoints(app.Resource);
 
         var envVars = await EnvironmentVariableEvaluator.GetEnvironmentVariablesAsync(
             app.Resource, DistributedApplicationOperation.Run, TestServiceProvider.Instance);
@@ -154,7 +154,7 @@ public class AddQuarkusAppTests
 
         var app = builder.AddQuarkusApp("inventory", tempDir.Path);
 
-        AllocateEndpoints(app.Resource);
+        TestEndpointAllocator.AllocateEndpoints(app.Resource);
 
         var envVars = await EnvironmentVariableEvaluator.GetEnvironmentVariablesAsync(
             app.Resource, DistributedApplicationOperation.Run, TestServiceProvider.Instance);
@@ -221,21 +221,11 @@ public class AddQuarkusAppTests
             .WithJvmArgs("-Xmx256m")
             .WithExternalHttpEndpoints();
 
-        AllocateEndpoints(app.Resource);
+        TestEndpointAllocator.AllocateEndpoints(app.Resource);
 
         var envVars = await EnvironmentVariableEvaluator.GetEnvironmentVariablesAsync(
             app.Resource, DistributedApplicationOperation.Run, TestServiceProvider.Instance);
 
         Assert.Equal("-Xmx256m", envVars["JAVA_TOOL_OPTIONS"]);
-    }
-
-    // Endpoints are allocated by the orchestrator at run time. Environment variable evaluation waits on that
-    // allocation, so a test that never starts the application has to supply it or the evaluation never returns.
-    private static void AllocateEndpoints(IResource resource)
-    {
-        foreach (var endpoint in resource.Annotations.OfType<EndpointAnnotation>())
-        {
-            endpoint.AllocatedEndpoint = new AllocatedEndpoint(endpoint, "localhost", 8080, targetPortExpression: "8080");
-        }
     }
 }

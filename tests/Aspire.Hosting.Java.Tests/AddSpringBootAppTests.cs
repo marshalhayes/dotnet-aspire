@@ -140,7 +140,7 @@ public class AddSpringBootAppTests
 
         var app = builder.AddSpringBootApp("catalog", tempDir.Path).WithOtelAgent();
 
-        AllocateEndpoints(app.Resource);
+        TestEndpointAllocator.AllocateEndpoints(app.Resource);
 
         var envVars = await EnvironmentVariableEvaluator.GetEnvironmentVariablesAsync(
             app.Resource, DistributedApplicationOperation.Run, TestServiceProvider.Instance);
@@ -171,7 +171,7 @@ public class AddSpringBootAppTests
             app.WithGradleTask("bootRun").WithGradleBuild();
         }
 
-        AllocateEndpoints(app.Resource);
+        TestEndpointAllocator.AllocateEndpoints(app.Resource);
 
         var envVars = await EnvironmentVariableEvaluator.GetEnvironmentVariablesAsync(
             app.Resource, DistributedApplicationOperation.Run, TestServiceProvider.Instance);
@@ -190,7 +190,7 @@ public class AddSpringBootAppTests
         // resource that never configures one surfaces when the environment is evaluated.
         var app = builder.AddJavaApp("api", tempDir.Path).WithOtelAgent();
 
-        AllocateEndpoints(app.Resource);
+        TestEndpointAllocator.AllocateEndpoints(app.Resource);
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             async () => await EnvironmentVariableEvaluator.GetEnvironmentVariablesAsync(
@@ -212,22 +212,12 @@ public class AddSpringBootAppTests
             .WithJvmArgs("-Xmx256m")
             .WithExternalHttpEndpoints();
 
-        AllocateEndpoints(app.Resource);
+        TestEndpointAllocator.AllocateEndpoints(app.Resource);
 
         var envVars = await EnvironmentVariableEvaluator.GetEnvironmentVariablesAsync(
             app.Resource, DistributedApplicationOperation.Run, TestServiceProvider.Instance);
 
         Assert.Equal("-Xmx256m", envVars["JAVA_TOOL_OPTIONS"]);
         Assert.True(Assert.Single(app.Resource.Annotations.OfType<EndpointAnnotation>()).IsExternal);
-    }
-
-    // Endpoints are allocated by the orchestrator at run time. Environment variable evaluation waits on that
-    // allocation, so a test that never starts the application has to supply it or the evaluation never returns.
-    private static void AllocateEndpoints(IResource resource)
-    {
-        foreach (var endpoint in resource.Annotations.OfType<EndpointAnnotation>())
-        {
-            endpoint.AllocatedEndpoint = new AllocatedEndpoint(endpoint, "localhost", 8080, targetPortExpression: "8080");
-        }
     }
 }
