@@ -15,6 +15,10 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Cryptography.Pkcs;
 using System.Security.Cryptography.X509Certificates;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Xml;
+using System.Xml.Linq;
 using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Java;
 using Aspire.Hosting.Pipelines;
@@ -27,7 +31,7 @@ namespace Aspire.Hosting;
 /// <summary>
 /// Provides extension methods for adding Java applications to an <see cref="IDistributedApplicationBuilder"/>.
 /// </summary>
-public static class JavaHostingExtensions
+public static partial class JavaHostingExtensions
 {
     private const string JavaToolOptions = "JAVA_TOOL_OPTIONS";
 
@@ -986,6 +990,10 @@ public static class JavaHostingExtensions
                     WorkingDirectory = builder.Resource.WorkingDirectory,
                     MainClass = mainClass,
                     ClassPaths = classPaths,
+                    // Only sent as a fallback. When the entry point is known the adapter has no
+                    // resolution to do, and naming a project it imported under a different name would
+                    // turn a working launch into a "class not found" failure.
+                    ProjectName = mainClass is null ? TryResolveIdeProjectName(builder.Resource) : null,
                     BuildTool = builder.Resource.TryGetLastAnnotation<JavaBuildToolAnnotation>(out var buildTool)
                         ? buildTool.Tool.ToString().ToLowerInvariant()
                         : null
@@ -1016,7 +1024,10 @@ public static class JavaHostingExtensions
 
         if (!resource.TryGetLastAnnotation<JavaJarPathAnnotation>(out var jar))
         {
-            return (explicitMainClass, null);
+            // A Maven or Gradle resource deliberately sends no classpath: the language server already
+            // knows the project's, and supplying one built from the JAR would bind breakpoints to
+            // compiled classes instead of the source the user is editing.
+            return (explicitMainClass ?? TryDiscoverProjectMainClass(resource), null);
         }
 
         // Resolved to an absolute path because the adapter reads the archive before the debuggee's
@@ -1025,6 +1036,197 @@ public static class JavaHostingExtensions
 
         return (explicitMainClass ?? TryReadJarManifestMainClass(jarPath), [jarPath]);
     }
+
+    /// <summary>
+    /// Recovers the entry point of a Maven or Gradle resource from the JAR its build produced, or
+    /// returns <see langword="null"/> when no single application JAR is there to read.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Without this, a Spring Boot resource launched through <c>spring-boot:run</c> or <c>bootRun</c>
+    /// sends no main class, and <c>vscjava.vscode-java-debug</c> responds by asking the user to pick one
+    /// from every main class in the workspace. That prompt appears on each launch, offers classes
+    /// belonging to other resources, and cannot be answered correctly by anyone who has not read the
+    /// AppHost — so the entry point is resolved here instead.
+    /// </para>
+    /// <para>
+    /// The build output is the right place to look because it is the only artifact that names the entry
+    /// point without parsing a build file: the Spring Boot plugins record it while repackaging, and a
+    /// plain JAR carries it as <c>Main-Class</c>.
+    /// </para>
+    /// </remarks>
+    private static string? TryDiscoverProjectMainClass(JavaAppResource resource)
+    {
+        if (!resource.TryGetLastAnnotation<JavaBuildToolAnnotation>(out var buildTool))
+        {
+            return null;
+        }
+
+        // Both tools have a single conventional output directory, and neither lets the AppHost know
+        // about a redirected one without parsing the build file.
+        var outputDirectory = buildTool.Tool switch
+        {
+            JavaBuildTool.Maven => Path.Combine(resource.WorkingDirectory, "target"),
+            JavaBuildTool.Gradle => Path.Combine(resource.WorkingDirectory, "build", "libs"),
+            _ => null
+        };
+
+        if (outputDirectory is null || !Directory.Exists(outputDirectory))
+        {
+            return null;
+        }
+
+        string[] jars;
+
+        try
+        {
+            jars = Directory.GetFiles(outputDirectory, "*.jar", SearchOption.TopDirectoryOnly);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+
+        // A build can leave several archives behind: Maven publishes -sources and -javadoc alongside the
+        // application, and the Gradle Spring Boot plugin writes the unrepackaged classes to -plain.jar.
+        // Only one of them is the application, and guessing between two candidates would be worse than
+        // letting the adapter resolve the class itself.
+        var applicationJars = jars
+            .Where(jarPath => !IsAuxiliaryJar(jarPath))
+            .ToArray();
+
+        if (applicationJars.Length != 1)
+        {
+            return null;
+        }
+
+        if (TryReadJarManifest(applicationJars[0]) is not { } manifest)
+        {
+            return null;
+        }
+
+        // Spring Boot repackaging points Main-Class at its own launcher and moves the application's
+        // entry point to Start-Class, so Start-Class is what a debugger should start.
+        // https://docs.spring.io/spring-boot/specification/executable-jar/launching.html
+        if (manifest.TryGetValue("Start-Class", out var startClass) && !string.IsNullOrWhiteSpace(startClass))
+        {
+            return startClass;
+        }
+
+        if (!manifest.TryGetValue("Main-Class", out var entryPoint) || string.IsNullOrWhiteSpace(entryPoint))
+        {
+            return null;
+        }
+
+        // A launcher is only startable with the fat JAR on the classpath, which is exactly what this
+        // path does not send. Reporting it would launch a JVM that fails with ClassNotFoundException.
+        return entryPoint.StartsWith("org.springframework.boot.loader.", StringComparison.Ordinal)
+            ? null
+            : entryPoint;
+    }
+
+    private static bool IsAuxiliaryJar(string jarPath)
+    {
+        var fileName = Path.GetFileName(jarPath);
+
+        return fileName.EndsWith("-sources.jar", StringComparison.OrdinalIgnoreCase)
+            || fileName.EndsWith("-javadoc.jar", StringComparison.OrdinalIgnoreCase)
+            || fileName.EndsWith("-plain.jar", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Resolves the name the Java language server imported this resource's project under, so the debug
+    /// adapter can scope entry point resolution to it instead of searching the whole workspace.
+    /// </summary>
+    private static string? TryResolveIdeProjectName(JavaAppResource resource)
+    {
+        if (!resource.TryGetLastAnnotation<JavaBuildToolAnnotation>(out var buildTool))
+        {
+            return null;
+        }
+
+        return buildTool.Tool switch
+        {
+            JavaBuildTool.Maven => TryReadMavenArtifactId(Path.Combine(resource.WorkingDirectory, "pom.xml")),
+            JavaBuildTool.Gradle => TryReadGradleProjectName(resource.WorkingDirectory),
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// Reads a POM's own <c>artifactId</c>, which is the name the language server imports a Maven
+    /// project under.
+    /// </summary>
+    private static string? TryReadMavenArtifactId(string pomPath)
+    {
+        if (!File.Exists(pomPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var document = XDocument.Load(pomPath);
+
+            // Only a direct child of <project> identifies this module. Nearly every Spring Boot POM also
+            // declares <parent><artifactId>spring-boot-starter-parent</artifactId></parent>, and a
+            // descendant search would find that one first and name the wrong project.
+            //
+            // Matched on LocalName because a POM may or may not declare the Maven namespace:
+            //   <project xmlns="http://maven.apache.org/POM/4.0.0"> ... <artifactId>catalog</artifactId>
+            var artifactId = document.Root?
+                .Elements()
+                .FirstOrDefault(element => element.Name.LocalName == "artifactId")?
+                .Value;
+
+            return string.IsNullOrWhiteSpace(artifactId) ? null : artifactId.Trim();
+        }
+        catch (Exception ex) when (ex is XmlException or IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Reads <c>rootProject.name</c> from a Gradle settings file, falling back to the directory name
+    /// that Gradle itself defaults a project's name to.
+    /// </summary>
+    private static string? TryReadGradleProjectName(string workingDirectory)
+    {
+        foreach (var fileName in (ReadOnlySpan<string>)["settings.gradle", "settings.gradle.kts"])
+        {
+            var settingsPath = Path.Combine(workingDirectory, fileName);
+
+            if (!File.Exists(settingsPath))
+            {
+                continue;
+            }
+
+            try
+            {
+                // Groovy and the Kotlin DSL differ only in quoting:
+                //   rootProject.name = 'orders'
+                //   rootProject.name = "orders"
+                if (GradleRootProjectNameRegex().Match(File.ReadAllText(settingsPath)) is { Success: true } match)
+                {
+                    return match.Groups["name"].Value;
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Fall through to the directory name.
+            }
+        }
+
+        // https://docs.gradle.org/current/userguide/multi_project_builds.html — a build that does not
+        // name itself takes the name of the directory containing it.
+        var directoryName = Path.GetFileName(workingDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+
+        return string.IsNullOrEmpty(directoryName) ? null : directoryName;
+    }
+
+    [GeneratedRegex(@"rootProject\.name\s*=\s*['""](?<name>[^'""]+)['""]")]
+    private static partial Regex GradleRootProjectNameRegex();
 
     /// <summary>
     /// Reads <c>Main-Class</c> from a JAR's manifest, or returns <see langword="null"/> when the archive
@@ -1052,8 +1254,22 @@ public static class JavaHostingExtensions
     /// </remarks>
     private static string? TryReadJarManifestMainClass(string jarPath)
     {
-        const string MainClassAttribute = "Main-Class:";
+        if (TryReadJarManifest(jarPath) is not { } manifest)
+        {
+            return null;
+        }
 
+        return manifest.TryGetValue("Main-Class", out var mainClass) && !string.IsNullOrWhiteSpace(mainClass)
+            ? mainClass
+            : null;
+    }
+
+    /// <summary>
+    /// Reads the main section of a JAR's manifest, or returns <see langword="null"/> when the archive is
+    /// missing, unreadable, or carries no manifest.
+    /// </summary>
+    private static Dictionary<string, string>? TryReadJarManifest(string jarPath)
+    {
         try
         {
             using var archive = ZipFile.OpenRead(jarPath);
@@ -1070,28 +1286,60 @@ public static class JavaHostingExtensions
 
             using var reader = new StreamReader(manifestEntry.Open());
 
-            string? value = null;
+            // Attribute names are case-insensitive per the specification.
+            var attributes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            string? name = null;
+            var value = new StringBuilder();
+
             while (reader.ReadLine() is { } line)
             {
-                if (value is not null)
+                // A blank line ends the main section. Everything after it describes individual archive
+                // entries and would overwrite the main attributes with per-entry ones of the same name.
+                if (line.Length == 0)
                 {
-                    // A continuation line, and therefore the rest of the value we are accumulating.
-                    if (line.StartsWith(' '))
-                    {
-                        value += line[1..];
-                        continue;
-                    }
-
                     break;
                 }
 
-                if (line.StartsWith(MainClassAttribute, StringComparison.OrdinalIgnoreCase))
+                // Values longer than 72 bytes continue on the following line behind a single space,
+                // which belongs to the encoding rather than the value.
+                if (line[0] == ' ')
                 {
-                    value = line[MainClassAttribute.Length..].TrimStart();
+                    if (name is not null)
+                    {
+                        value.Append(line, 1, line.Length - 1);
+                    }
+
+                    continue;
                 }
+
+                Commit();
+
+                var separator = line.IndexOf(':');
+
+                if (separator < 0)
+                {
+                    name = null;
+                    continue;
+                }
+
+                name = line[..separator];
+                value.Append(line[(separator + 1)..].TrimStart());
             }
 
-            return string.IsNullOrWhiteSpace(value) ? null : value;
+            Commit();
+
+            return attributes;
+
+            void Commit()
+            {
+                if (name is not null && value.Length > 0)
+                {
+                    attributes[name] = value.ToString();
+                }
+
+                name = null;
+                value.Clear();
+            }
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
         {

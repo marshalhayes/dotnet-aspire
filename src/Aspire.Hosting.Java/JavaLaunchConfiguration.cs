@@ -44,8 +44,8 @@ internal sealed class JavaLaunchConfiguration() : ExecutableLaunchConfiguration(
     /// <summary>
     /// The fully qualified main class, optionally prefixed with a Java module name
     /// (<c>[module/]com.example.App</c>), or the path of the <c>.java</c> source file declaring
-    /// <c>main</c>. When omitted the IDE resolves the main class from the project's build files, and
-    /// reports an actionable error if the project declares more than one.
+    /// <c>main</c>. When omitted the IDE resolves the main class itself, scoped to
+    /// <see cref="ProjectName"/> when one was supplied.
     /// </summary>
     /// <remarks>
     /// A JAR path is deliberately not accepted here. The debug adapter documents this attribute as
@@ -55,6 +55,18 @@ internal sealed class JavaLaunchConfiguration() : ExecutableLaunchConfiguration(
     /// </remarks>
     [JsonPropertyName("main_class")]
     public string? MainClass { get; set; }
+
+    /// <summary>
+    /// The name the IDE's Java tooling imported this resource's project under, used to scope main class
+    /// resolution. Only sent when <see cref="MainClass"/> could not be determined.
+    /// </summary>
+    /// <remarks>
+    /// Without it the debug adapter searches every project in the workspace, finds a main class in each
+    /// Java resource, and prompts the user to choose one on every launch. Scoping the search to one
+    /// project leaves a single candidate, which the adapter then uses without asking.
+    /// </remarks>
+    [JsonPropertyName("project_name")]
+    public string? ProjectName { get; set; }
 
     /// <summary>
     /// Classpath entries the IDE should launch the JVM with. Empty when the IDE should resolve the

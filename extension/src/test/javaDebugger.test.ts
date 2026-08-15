@@ -151,6 +151,38 @@ suite('Java Debugger Extension Tests', () => {
         assert.ok(!('mainClass' in debugConfig), 'mainClass must stay unset so the Java debugger resolves it from the project.');
     });
 
+    test('scopes entry point resolution to the reported project when no main class is known', async () => {
+        // Without projectName the adapter searches every project in the workspace, so a solution with
+        // several Java resources makes it prompt the user to pick a main class on every launch.
+        const debugConfig = createDebugConfig();
+
+        await javaDebuggerExtension.createDebugSessionConfigurationCallback!(
+            createJavaLaunchConfig({ main_class: undefined, project_name: 'catalog' }),
+            [],
+            [],
+            { debug: true, runId: '1', debugSessionId: '1', isApphost: false, debugSession: fakeAspireDebugSession },
+            debugConfig);
+
+        assert.strictEqual(debugConfig.projectName, 'catalog');
+        assert.ok(!('mainClass' in debugConfig), 'mainClass must stay unset so the adapter resolves it within the named project.');
+    });
+
+    test('prefers a known main class over the project name', async () => {
+        // Naming a project the Java tooling imported under a different name turns a launch that would
+        // have worked into a class resolution failure, so it is only a fallback.
+        const debugConfig = createDebugConfig();
+
+        await javaDebuggerExtension.createDebugSessionConfigurationCallback!(
+            createJavaLaunchConfig({ main_class: 'com.example.api.Application', project_name: 'catalog' }),
+            [],
+            [],
+            { debug: true, runId: '1', debugSessionId: '1', isApphost: false, debugSession: fakeAspireDebugSession },
+            debugConfig);
+
+        assert.strictEqual(debugConfig.mainClass, 'com.example.api.Application');
+        assert.ok(!('projectName' in debugConfig), 'projectName must stay unset when the entry point is already known.');
+    });
+
     test('forwards application arguments and defaults them to an empty array', async () => {
         const withArgs = createDebugConfig();
         const withoutArgs = createDebugConfig();

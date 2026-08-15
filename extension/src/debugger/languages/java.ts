@@ -196,15 +196,21 @@ export const javaDebuggerExtension: ResourceDebuggerExtension = {
 
         // vscjava.vscode-java-debug requires mainClass to start a launch session, and accepts a fully
         // qualified class name, optionally prefixed with a module name, or the path of a .java source
-        // file. When the app host omits it, leaving the attribute unset lets the adapter resolve the
-        // entry point from the project instead of failing on an empty value.
+        // file.
         // https://github.com/microsoft/vscode-java-debug/blob/main/Configuration.md#main
         //
-        // projectName is intentionally not set: the adapter defines it as the Maven artifactId or
-        // the Gradle baseName, neither of which can be derived from working_directory, and guessing
-        // it would scope class resolution to a project that may not exist.
+        // When it is absent the adapter resolves the entry point itself, and in a workspace holding
+        // several Java resources it finds one main class per project and prompts the user to pick.
+        // projectName narrows that search to this resource's project so a single candidate remains
+        // and no prompt appears. It is only sent when the app host could not determine the class,
+        // because naming a project the tooling imported under a different name would turn a working
+        // launch into a class resolution failure.
+        // https://github.com/microsoft/vscode-java-debug/blob/main/Configuration.md#projectname
         if (launchConfig.main_class) {
             debugConfiguration.mainClass = launchConfig.main_class;
+        }
+        else if (launchConfig.project_name) {
+            debugConfiguration.projectName = launchConfig.project_name;
         }
 
         // A resource that runs a prebuilt JAR has no language server project containing its classes,

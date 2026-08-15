@@ -436,7 +436,8 @@ public sealed class KubernetesEnvironmentResource : Resource, IComputeEnvironmen
         var targetComputeEnvironment = OwningComputeEnvironment ?? this;
 
         // Create a Kubernetes resource for the dashboard if enabled
-        if (DashboardEnabled && Dashboard?.Resource is KubernetesAspireDashboardResource dashboard)
+        if (DashboardEnabled && Dashboard?.Resource is KubernetesAspireDashboardResource dashboard &&
+            !dashboard.Annotations.OfType<DeploymentTargetAnnotation>().Any(a => a.ComputeEnvironment == targetComputeEnvironment))
         {
             var dashboardService = await environmentContext.CreateKubernetesResourceAsync(dashboard, executionContext, cancellationToken).ConfigureAwait(false);
             dashboardService.AddPrintSummaryStep();
@@ -464,6 +465,28 @@ public sealed class KubernetesEnvironmentResource : Resource, IComputeEnvironmen
                 resourceComputeEnvironment != this &&
                 resourceComputeEnvironment != OwningComputeEnvironment)
             {
+                continue;
+            }
+
+            // Use the resource's actual compute environment (which may be a parent
+            // like AzureKubernetesEnvironmentResource) so that GetDeploymentTargetAnnotation
+            // can match it correctly during publish.
+            var computeEnvForAnnotation = resourceComputeEnvironment ?? targetComputeEnvironment;
+
+            // This step is reachable from two pipeline executions: it is RequiredBy
+            // "before-start" (so it runs during AppHost startup) and it is also part of the
+            // publish/deploy DAG. Adding a second DeploymentTargetAnnotation on the second
+            // pass makes ResourceExtensions.GetDeploymentTargetAnnotation throw, so the step
+            // has to be idempotent. Skipping early also avoids re-running ConfigureOtlp,
+            // which would append duplicate environment variables. The already-created
+            // KubernetesResource is still recorded so ingress processing below sees it.
+            if (r.Annotations.OfType<DeploymentTargetAnnotation>().FirstOrDefault(a => a.ComputeEnvironment == computeEnvForAnnotation) is { } existingTarget)
+            {
+                if (existingTarget.DeploymentTarget is KubernetesResource existingServiceResource)
+                {
+                    deploymentTargets[r] = existingServiceResource;
+                }
+
                 continue;
             }
 
@@ -502,10 +525,6 @@ public sealed class KubernetesEnvironmentResource : Resource, IComputeEnvironmen
             serviceResource.AddPrintSummaryStep();
 
             // Add deployment target annotation to the resource.
-            // Use the resource's actual compute environment (which may be a parent
-            // like AzureKubernetesEnvironmentResource) so that GetDeploymentTargetAnnotation
-            // can match it correctly during publish.
-            var computeEnvForAnnotation = resourceComputeEnvironment ?? targetComputeEnvironment;
             r.Annotations.Add(new DeploymentTargetAnnotation(serviceResource)
             {
                 ComputeEnvironment = computeEnvForAnnotation,

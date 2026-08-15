@@ -140,10 +140,13 @@ export interface JavaLaunchConfiguration extends ExecutableLaunchConfiguration {
     working_directory?: string;
     // A fully qualified class name, optionally prefixed with a Java module name
     // ("[module/]com.example.Api"), or the path of the .java source file declaring main. Absent when
-    // the IDE should resolve the entry point from the project's build files. A JAR path is never
-    // valid here; an executable JAR is sent on class_paths with its manifest Main-Class here.
+    // the IDE should resolve the entry point itself. A JAR path is never valid here; an executable
+    // JAR is sent on class_paths with its manifest Main-Class here.
     // See src/Aspire.Hosting.Java/JavaLaunchConfiguration.cs.
     main_class?: string;
+    // The name the Java tooling imported this resource's project under. Only sent when main_class
+    // could not be determined, to scope the adapter's entry point search to a single project.
+    project_name?: string;
     // Classpath entries to launch the JVM with, used when the resource runs a prebuilt JAR. Absent
     // when the IDE should resolve the classpath from the project itself.
     class_paths?: string[];

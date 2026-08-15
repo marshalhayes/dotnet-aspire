@@ -1130,9 +1130,10 @@ public class AddJavaAppTests
     /// Writes a JAR whose manifest declares <paramref name="mainClass"/>. A JAR is a ZIP archive, so
     /// the entry only has to exist at META-INF/MANIFEST.MF with the documented Name: value shape.
     /// </summary>
-    private static string WriteJarWithManifest(string directory, string fileName, string? mainClass, bool wrapLongValue = false)
+    private static string WriteJarWithManifest(string directory, string fileName, string? mainClass, bool wrapLongValue = false, string? startClass = null)
     {
         var jarPath = Path.Combine(directory, fileName);
+        Directory.CreateDirectory(Path.GetDirectoryName(jarPath)!);
         using var archive = ZipFile.Open(jarPath, ZipArchiveMode.Create);
         using var writer = new StreamWriter(archive.CreateEntry("META-INF/MANIFEST.MF").Open());
 
@@ -1152,12 +1153,17 @@ public class AddJavaAppTests
             }
         }
 
+        if (startClass is not null)
+        {
+            writer.Write($"Start-Class: {startClass}\r\n");
+        }
+
         writer.Write("\r\n");
         return jarPath;
     }
 
     [Fact]
-    public async Task AddJavaApp_WithMavenBuild_SendsNoMainClassSoTheIdeResolvesItFromTheProject()
+    public async Task AddJavaApp_WithMavenBuild_SendsNoEntryPointWhenNothingOnDiskNamesOne()
     {
         using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Run);
         using var tempDir = new TempJavaAppDirectory();
@@ -1242,5 +1248,173 @@ public class AddJavaAppTests
         var missingConfiguration = await GetLaunchConfigurationAsync(missing);
         Assert.Null(missingConfiguration.MainClass);
         Assert.Equal(Path.Combine(tempDir.Path, "does-not-exist.jar"), Assert.Single(missingConfiguration.ClassPaths!));
+    }
+
+    [Theory]
+    [InlineData("maven", "target")]
+    [InlineData("gradle", "build/libs")]
+    public async Task AddJavaApp_WithoutAJar_LaunchesTheStartClassOfTheRepackagedSpringBootArchive(string tool, string outputDirectory)
+    {
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Run);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.WriteWrapper(tool == "maven" ? JavaHostingExtensions.s_defaultMavenWrapper : JavaHostingExtensions.s_defaultGradleWrapper);
+
+        // Repackaging points Main-Class at the launcher and records the application's own entry point
+        // in Start-Class, so a debugger that started Main-Class would step through Spring's loader.
+        WriteJarWithManifest(
+            tempDir.Path,
+            Path.Combine(outputDirectory, "catalog-0.0.1-SNAPSHOT.jar"),
+            mainClass: "org.springframework.boot.loader.launch.JarLauncher",
+            startClass: "com.example.catalog.CatalogApplication");
+
+        var app = builder.AddJavaApp("catalog", tempDir.Path);
+        _ = tool == "maven" ? app.WithMavenGoal("spring-boot:run") : app.WithGradleTask("bootRun");
+
+        var launchConfiguration = await GetLaunchConfigurationAsync(app);
+
+        Assert.Equal("com.example.catalog.CatalogApplication", launchConfiguration.MainClass);
+        // The classpath stays with the language server so breakpoints bind to the source being edited
+        // rather than to the classes inside the archive.
+        Assert.Null(launchConfiguration.ClassPaths);
+        Assert.Null(launchConfiguration.ProjectName);
+    }
+
+    [Fact]
+    public async Task AddJavaApp_WithoutAJar_IgnoresTheArchivesABuildLeavesAlongsideTheApplication()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Run);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.WriteWrapper(JavaHostingExtensions.s_defaultGradleWrapper);
+
+        WriteJarWithManifest(tempDir.Path, "build/libs/orders.jar", mainClass: null, startClass: "com.example.orders.OrdersApplication");
+        // The Gradle Spring Boot plugin writes the unrepackaged classes next to the real artifact, and
+        // Maven publishes these two whenever the corresponding plugins are bound to the build.
+        WriteJarWithManifest(tempDir.Path, "build/libs/orders-plain.jar", mainClass: null);
+        WriteJarWithManifest(tempDir.Path, "build/libs/orders-sources.jar", mainClass: null);
+        WriteJarWithManifest(tempDir.Path, "build/libs/orders-javadoc.jar", mainClass: null);
+
+        var app = builder.AddJavaApp("orders", tempDir.Path).WithGradleTask("bootRun");
+
+        var launchConfiguration = await GetLaunchConfigurationAsync(app);
+
+        Assert.Equal("com.example.orders.OrdersApplication", launchConfiguration.MainClass);
+    }
+
+    [Fact]
+    public async Task AddJavaApp_WithoutAJar_SendsNoMainClassWhenTheBuildOutputIsAmbiguous()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Run);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.WriteWrapper(JavaHostingExtensions.s_defaultMavenWrapper);
+
+        WriteJarWithManifest(tempDir.Path, "target/catalog-0.0.1-SNAPSHOT.jar", mainClass: null, startClass: "com.example.catalog.CatalogApplication");
+        WriteJarWithManifest(tempDir.Path, "target/catalog-0.0.1-SNAPSHOT-shaded.jar", mainClass: null, startClass: "com.example.catalog.Other");
+
+        var app = builder.AddJavaApp("catalog", tempDir.Path).WithMavenGoal("spring-boot:run");
+
+        var launchConfiguration = await GetLaunchConfigurationAsync(app);
+
+        // Picking one of two application archives would silently debug the wrong program.
+        Assert.Null(launchConfiguration.MainClass);
+    }
+
+    [Fact]
+    public async Task AddJavaApp_WithoutAJar_SendsNoMainClassWhenTheArchiveOnlyNamesASpringBootLauncher()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Run);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.WriteWrapper(JavaHostingExtensions.s_defaultMavenWrapper);
+
+        WriteJarWithManifest(tempDir.Path, "target/catalog.jar", mainClass: "org.springframework.boot.loader.launch.JarLauncher");
+
+        var app = builder.AddJavaApp("catalog", tempDir.Path).WithMavenGoal("spring-boot:run");
+
+        var launchConfiguration = await GetLaunchConfigurationAsync(app);
+
+        // The launcher can only start with the archive on the classpath, which this launch mode does
+        // not send, so reporting it would produce a JVM that fails immediately.
+        Assert.Null(launchConfiguration.MainClass);
+    }
+
+    [Fact]
+    public async Task AddJavaApp_WithoutAJar_PrefersAnExplicitMainClassOverTheBuildOutput()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Run);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.WriteWrapper(JavaHostingExtensions.s_defaultMavenWrapper);
+
+        WriteJarWithManifest(tempDir.Path, "target/catalog.jar", mainClass: null, startClass: "com.example.catalog.CatalogApplication");
+
+        var app = builder.AddJavaApp("catalog", tempDir.Path)
+            .WithMavenGoal("spring-boot:run")
+            .WithMainClass("com.example.catalog.DebugEntryPoint");
+
+        var launchConfiguration = await GetLaunchConfigurationAsync(app);
+
+        Assert.Equal("com.example.catalog.DebugEntryPoint", launchConfiguration.MainClass);
+    }
+
+    [Fact]
+    public async Task AddJavaApp_WithNoResolvableEntryPoint_NamesTheMavenProjectSoTheIdeDoesNotPrompt()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Run);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.WriteWrapper(JavaHostingExtensions.s_defaultMavenWrapper);
+
+        // <parent> declares an artifactId too, and it is the one a descendant search finds first.
+        File.WriteAllText(Path.Combine(tempDir.Path, "pom.xml"), """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+                <modelVersion>4.0.0</modelVersion>
+                <parent>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-starter-parent</artifactId>
+                    <version>3.5.0</version>
+                </parent>
+                <groupId>com.example</groupId>
+                <artifactId>catalog</artifactId>
+                <version>0.0.1-SNAPSHOT</version>
+            </project>
+            """);
+
+        var app = builder.AddJavaApp("catalog", tempDir.Path).WithMavenGoal("spring-boot:run");
+
+        var launchConfiguration = await GetLaunchConfigurationAsync(app);
+
+        Assert.Null(launchConfiguration.MainClass);
+        Assert.Equal("catalog", launchConfiguration.ProjectName);
+    }
+
+    [Fact]
+    public async Task AddJavaApp_WithNoResolvableEntryPoint_NamesTheGradleProjectFromItsSettingsFile()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Run);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.WriteWrapper(JavaHostingExtensions.s_defaultGradleWrapper);
+
+        File.WriteAllText(Path.Combine(tempDir.Path, "settings.gradle"), "rootProject.name = 'orders'\n");
+
+        var app = builder.AddJavaApp("orders", tempDir.Path).WithGradleTask("bootRun");
+
+        var launchConfiguration = await GetLaunchConfigurationAsync(app);
+
+        Assert.Null(launchConfiguration.MainClass);
+        Assert.Equal("orders", launchConfiguration.ProjectName);
+    }
+
+    [Fact]
+    public async Task AddJavaApp_WithNoResolvableEntryPoint_FallsBackToTheDirectoryNameGradleWouldUse()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Run);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.WriteWrapper(JavaHostingExtensions.s_defaultGradleWrapper);
+
+        var app = builder.AddJavaApp("orders", tempDir.Path).WithGradleTask("bootRun");
+
+        var launchConfiguration = await GetLaunchConfigurationAsync(app);
+
+        Assert.Equal(
+            Path.GetFileName(tempDir.Path.TrimEnd(Path.DirectorySeparatorChar)),
+            launchConfiguration.ProjectName);
     }
 }

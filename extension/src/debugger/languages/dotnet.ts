@@ -452,6 +452,15 @@ export function createProjectDebuggerExtension(dotNetServiceProducer: (debugSess
             // For project resources, launch settings supply a default only when debugger settings did not provide one.
             if (!launchOptions.isApphost && debugConfiguration.serverReadyAction === undefined) {
                 debugConfiguration.serverReadyAction = determineServerReadyAction(baseProfile?.launchBrowser, baseProfile?.applicationUrl, baseProfile?.launchUrl);
+
+                // The URL comes from launchSettings.json on disk, but under orchestration the app host owns the
+                // resource's endpoints and can bind it somewhere else entirely — the Aspire dashboard resource is
+                // the extreme case, because the app host replaces its URLs and its real address carries a login
+                // token. The payload carries no endpoint data, so the extension cannot correct the URL here; log
+                // the address that will be opened so a wrong one is diagnosable instead of silent.
+                if (debugConfiguration.serverReadyAction) {
+                    extensionLogOutputChannel.info(`Launch profile '${profileName}' will open ${debugConfiguration.serverReadyAction.uriFormat} for project: ${projectPath}. This address comes from launchSettings.json, not from the app host.`);
+                }
             }
 
             // TODO: Remove this block — the dashboard no longer recognizes ASPIRE_DASHBOARD_AI_DISABLED.
