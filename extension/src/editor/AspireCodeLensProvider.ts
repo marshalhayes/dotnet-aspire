@@ -56,12 +56,22 @@ const springBootDashboardExtensionId = 'vscjava.vscode-spring-boot-dashboard';
  *   builder.addJavaApp('api', '../api').withGradleTask("bootRun");          // JS/TS
  *   builder.add_java_app("api", "../api")?.with_maven_goal("spring-boot:run")?;  // Rust
  *
+ * AddSpringBootApp is matched on the call itself because it configures the same `spring-boot:run` or
+ * `bootRun` launch internally, choosing between them from the build file. It is the form the README
+ * leads with, so matching only the explicit goal would miss the common case entirely.
+ *
+ *   builder.AddSpringBootApp("catalog", "../catalog");                      // C#
+ *   builder.add_spring_boot_app("catalog", "../catalog")?;                  // Rust, Python
+ *
  * The optional underscores plus the case-insensitive flag cover all three casings from one pattern,
  * which matters because the warning is about the Java *resource* and therefore has to work no matter
  * which language the AppHost is written in. C# verbatim/interpolated prefixes are allowed on the
  * literal; raw string literals are not, because nothing in the goal or task name needs escaping.
+ *
+ * AddQuarkusApp is deliberately absent: the warning names the Spring Boot Dashboard, which does not
+ * offer to run a Quarkus resource.
  */
-const springBootLaunchPattern = /\bwith_?(?:maven_?goal|gradle_?task)\s*\(\s*[@$]*(['"])(?:spring-boot:run|bootRun)\1/gi;
+const springBootLaunchPattern = /\b(?:with_?(?:maven_?goal|gradle_?task)\s*\(\s*[@$]*(['"])(?:spring-boot:run|bootRun)\1|add_?spring_?boot_?app\s*\()/gi;
 
 /**
  * The conventional AppHost file name for each language that has no resource parser, matched

@@ -1252,6 +1252,34 @@ suite('AspireCodeLensProvider resource lens anchoring', () => {
             harness.dispose();
         });
 
+        test('warns on AddSpringBootApp, which configures the same launch internally', async () => {
+            // The README leads with this form, so matching only the explicit goal would miss the case
+            // users are most likely to hit.
+            const cases: ReadonlyArray<readonly [string, string]> = [
+                [p('repo', 'AppHost', 'apphost.cs'), 'var builder = DistributedApplication.CreateBuilder(args);\nbuilder.AddSpringBootApp("catalog", "../catalog");'],
+                [p('repo', 'AppHost', 'apphost.ts'), "const builder = createBuilder();\nbuilder.addSpringBootApp('catalog', '../catalog');"],
+                [p('repo', 'AppHost', 'apphost.rs'), 'fn main() {\n    let builder = create_builder(None)?;\n    let catalog = builder.add_spring_boot_app("catalog", "../catalog")?;\n}'],
+                [p('repo', 'AppHost', 'apphost.py'), 'builder = create_builder()\nbuilder.add_spring_boot_app("catalog", "../catalog")'],
+                [p('repo', 'AppHost', 'AppHost.java'), 'public class AppHost {\n    public static void main(String[] args) {\n        builder.addSpringBootApp("catalog", "../catalog");\n    }\n}'],
+                [p('repo', 'AppHost', 'apphost.go'), 'func main() {\n\tbuilder.AddSpringBootApp("catalog", "../catalog")\n}'],
+            ];
+
+            for (const [appHostPath, content] of cases) {
+                const harness = createHarness({ installedExtensions: [springBootDashboard] });
+                const lenses = springBootLenses(await harness.provider.provideCodeLenses(createMockDocument(content, appHostPath), cancellationToken) as vscode.CodeLens[]);
+                assert.strictEqual(lenses.length, 1, `expected a warning for ${appHostPath}`);
+                harness.dispose();
+            }
+        });
+
+        test('stays silent for AddQuarkusApp, which the Spring Boot Dashboard does not offer to run', async () => {
+            const harness = createHarness({ installedExtensions: [springBootDashboard] });
+            const content = 'var builder = DistributedApplication.CreateBuilder(args);\nbuilder.AddQuarkusApp("inventory", "../inventory");';
+            const lenses = springBootLenses(await harness.provider.provideCodeLenses(createMockDocument(content, p('repo', 'AppHost', 'apphost.cs')), cancellationToken) as vscode.CodeLens[]);
+            assert.strictEqual(lenses.length, 0);
+            harness.dispose();
+        });
+
         test('warns regardless of the AppHost language', async () => {
             const cases: ReadonlyArray<readonly [string, string]> = [
                 [p('repo', 'AppHost', 'apphost.ts'), "const builder = createBuilder();\nbuilder.addJavaApp('api', '../api').withGradleTask('bootRun');"],
