@@ -293,8 +293,13 @@ internal static partial class JavaDockerfileGenerator
     /// turn <c>../outside.jar</c> into <c>outside.jar</c>, erasing the traversal before it could be
     /// detected.
     /// </para>
+    /// <para>
+    /// Whitespace is rejected for the same reason a wrapper path is: a Dockerfile COPY separates its arguments on whitespace and the builder emits the
+    /// shell form, so <c>target/my app.jar</c> becomes three arguments and copies two paths that do not
+    /// exist. Naming the problem here beats failing inside the container build on a path nobody wrote.
+    /// </para>
     /// </remarks>
-    /// <exception cref="DistributedApplicationException">The path reaches outside the build context.</exception>
+    /// <exception cref="DistributedApplicationException">The path reaches outside the build context or contains whitespace.</exception>
     private static string NormalizeContextRelativePath(string authored, string resourceName, string appDirectory, string description)
     {
         // Container paths are POSIX even when the AppHost authored a Windows-style relative path.
@@ -311,6 +316,14 @@ internal static partial class JavaDockerfileGenerator
                 $"Java application '{resourceName}' cannot be published because {description} '{authored}' " +
                 $"is outside the build context '{appDirectory}'. Only files under the application " +
                 "directory are uploaded to the container build.");
+        }
+
+        if (normalized.Any(char.IsWhiteSpace))
+        {
+            throw new DistributedApplicationException(
+                $"Java application '{resourceName}' cannot be published because {description} '{authored}' " +
+                "contains whitespace, which a Dockerfile COPY instruction cannot express. Move it to a " +
+                "path without spaces.");
         }
 
         return normalized;
@@ -456,6 +469,17 @@ internal static partial class JavaDockerfileGenerator
                 $"points outside the application directory, which is the Docker build context, so it cannot be " +
                 $"published. Use a path inside '{resource.WorkingDirectory}', or an absolute path that the base " +
                 $"image or a mount provides at runtime.");
+        }
+
+        // The Dockerfile builder emits the shell form of COPY, whose arguments are separated by
+        // whitespace with no quoted form, so "target/otel agents/javaagent.jar" would copy two paths that
+        // do not exist. Naming the problem beats failing later inside the container build.
+        if (normalized.Any(char.IsWhiteSpace))
+        {
+            throw new DistributedApplicationException(
+                $"The OpenTelemetry agent path '{annotation.AgentPath}' configured on resource '{resource.Name}' " +
+                $"contains whitespace, which a Dockerfile COPY instruction cannot express, so it cannot be " +
+                $"published. Move the agent to a path without spaces.");
         }
 
         agentPath = normalized;

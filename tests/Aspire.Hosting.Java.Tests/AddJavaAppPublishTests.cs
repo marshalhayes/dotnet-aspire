@@ -1187,6 +1187,40 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
     }
 
     [Fact]
+    public void VerifyPublish_RejectsAJarPathContainingWhitespace()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish);
+        using var tempDir = new TempJavaAppDirectory();
+
+        var app = builder.AddJavaApp("api", tempDir.Path, "target/my app.jar");
+
+        // The Dockerfile builder emits the shell form of COPY, which splits on whitespace, so this would
+        // become three arguments and copy two paths that do not exist.
+        var exception = Assert.Throws<DistributedApplicationException>(
+            () => JavaDockerfileGenerator.TryGetPrebuiltJarPath(app.Resource, tempDir.Path, out _));
+
+        Assert.Contains("target/my app.jar", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("contains whitespace", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void VerifyPublish_RejectsAnOtelAgentPathContainingWhitespace()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish);
+        using var tempDir = new TempJavaAppDirectory();
+
+        var app = builder.AddJavaApp("api", tempDir.Path)
+            .WithMavenGoal("spring-boot:run")
+            .WithOtelAgent("target/otel agents/javaagent.jar");
+
+        var exception = Assert.Throws<DistributedApplicationException>(
+            () => JavaDockerfileGenerator.TryGetBuildProducedAgentPath(app.Resource, out _));
+
+        Assert.Contains("target/otel agents/javaagent.jar", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("contains whitespace", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task VerifyPublish_CapsTheBuildJdkAtWhatTheGradleWrapperCanRunOn()
     {
         // Gradle 8.4 can target Java 21 through a toolchain but cannot run on it - that starts at 8.5 -
