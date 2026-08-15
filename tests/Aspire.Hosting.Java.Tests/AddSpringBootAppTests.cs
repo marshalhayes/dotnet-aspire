@@ -18,8 +18,8 @@ public class AddSpringBootAppTests
 
         var app = builder.AddSpringBootApp("catalog", tempDir.Path);
 
-        Assert.Equal(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultMavenWrapper), app.Resource.Command);
-        Assert.Equal(["spring-boot:run"], await ArgumentEvaluator.GetArgumentListAsync(app.Resource));
+        Assert.Equal(ExpectedWrapperInvocation.Command(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultMavenWrapper)), app.Resource.Command);
+        Assert.Equal(ExpectedWrapperInvocation.Args(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultMavenWrapper), "spring-boot:run"), await ArgumentEvaluator.GetArgumentListAsync(app.Resource));
     }
 
     [Fact]
@@ -31,8 +31,8 @@ public class AddSpringBootAppTests
 
         var app = builder.AddSpringBootApp("orders", tempDir.Path);
 
-        Assert.Equal(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultGradleWrapper), app.Resource.Command);
-        Assert.Equal(["bootRun"], await ArgumentEvaluator.GetArgumentListAsync(app.Resource));
+        Assert.Equal(ExpectedWrapperInvocation.Command(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultGradleWrapper)), app.Resource.Command);
+        Assert.Equal(ExpectedWrapperInvocation.Args(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultGradleWrapper), "bootRun"), await ArgumentEvaluator.GetArgumentListAsync(app.Resource));
     }
 
     [Fact]
@@ -44,7 +44,7 @@ public class AddSpringBootAppTests
 
         var app = builder.AddSpringBootApp("orders", tempDir.Path);
 
-        Assert.Equal(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultGradleWrapper), app.Resource.Command);
+        Assert.Equal(ExpectedWrapperInvocation.Command(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultGradleWrapper)), app.Resource.Command);
     }
 
     [Theory]
@@ -62,7 +62,13 @@ public class AddSpringBootAppTests
 
         var buildResource = Assert.Single(builder.Resources, r => r.Name.EndsWith("-build", StringComparison.Ordinal));
 
-        Assert.Equal(expectedArgs, await ArgumentEvaluator.GetArgumentListAsync(buildResource));
+        var wrapper = Path.Combine(
+            tempDir.Path,
+            buildFile == "pom.xml" ? JavaHostingExtensions.s_defaultMavenWrapper : JavaHostingExtensions.s_defaultGradleWrapper);
+
+        Assert.Equal(
+            ExpectedWrapperInvocation.Args(wrapper, expectedArgs),
+            await ArgumentEvaluator.GetArgumentListAsync(buildResource));
     }
 
     [Fact]

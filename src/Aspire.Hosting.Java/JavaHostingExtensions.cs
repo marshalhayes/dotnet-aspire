@@ -605,7 +605,7 @@ public static partial class JavaHostingExtensions
         // "java" as the command while the goal was still contributed as an argument, producing the
         // uninvokable command line "java spring-boot:run".
         return builder
-            .WithCommand(ResolveWrapperPath(builder.Resource, tool))
+            .WithCommand(ResolveWrapperInvocation(builder.Resource, tool).Command)
             .WithDeferredWrapperValidation(tool);
     }
 
@@ -715,11 +715,19 @@ public static partial class JavaHostingExtensions
         }
 
         var resource = builder.Resource;
-        var buildResource = createResource(buildResourceName, ResolveWrapperPath(resource, tool), resource.WorkingDirectory);
+        var wrapperInvocation = ResolveWrapperInvocation(resource, tool);
+        var buildResource = createResource(buildResourceName, wrapperInvocation.Command, resource.WorkingDirectory);
 
         var buildBuilder = builder.ApplicationBuilder.AddResource(buildResource)
             .WithArgs(ctx =>
             {
+                // Resolved on every evaluation rather than captured, because WithWrapperPath can replace
+                // the wrapper after this resource exists and the leading argument has to follow it.
+                foreach (var leadingArg in ResolveWrapperInvocation(resource, tool).LeadingArgs)
+                {
+                    ctx.Args.Add(leadingArg);
+                }
+
                 if (resource.TryGetLastAnnotation<JavaBuildStepAnnotation>(out var buildStep))
                 {
                     foreach (var arg in buildStep.Args)
@@ -773,7 +781,7 @@ public static partial class JavaHostingExtensions
         // WithWrapperPath after WithMavenGoal was silently ignored.
         if (builder.Resource.HasAnnotationOfType<JavaBuildToolAnnotation>())
         {
-            builder.WithCommand(resolvedWrapperPath);
+            builder.WithCommand(WrapperInvocationFor(resolvedWrapperPath).Command);
         }
 
         foreach (var buildStep in builder.Resource.Annotations.OfType<JavaBuildStepAnnotation>())
@@ -790,7 +798,7 @@ public static partial class JavaHostingExtensions
 
             if (buildResource is not null)
             {
-                builder.ApplicationBuilder.CreateResourceBuilder(buildResource).WithCommand(resolvedWrapperPath);
+                builder.ApplicationBuilder.CreateResourceBuilder(buildResource).WithCommand(WrapperInvocationFor(resolvedWrapperPath).Command);
             }
         }
 
@@ -1044,6 +1052,11 @@ public static partial class JavaHostingExtensions
     {
         if (resource.TryGetLastAnnotation<JavaBuildToolAnnotation>(out var buildTool))
         {
+            foreach (var leadingArg in ResolveWrapperInvocation(resource, buildTool.Tool).LeadingArgs)
+            {
+                ctx.Args.Add(leadingArg);
+            }
+
             foreach (var arg in buildTool.Args)
             {
                 ctx.Args.Add(arg);
@@ -1089,6 +1102,31 @@ public static partial class JavaHostingExtensions
     /// <see cref="ValidateWrapperExists"/> performs the check once the configuration is final.
     /// </para>
     /// </remarks>
+    /// <summary>
+    /// The command that launches a build tool wrapper, together with any arguments that must precede
+    /// the wrapper's own.
+    /// </summary>
+    /// <remarks>
+    /// On Unix the wrapper is invoked through <c>sh</c> instead of being executed directly. Git does not
+    /// record an executable bit on Windows, so a repository committed from there checks out <c>mvnw</c>
+    /// and <c>gradlew</c> as mode 644 and executing them fails with "permission denied". Both are POSIX
+    /// shell scripts, so <c>sh</c> runs them either way. The container build already does this for the
+    /// same reason (see <see cref="JavaDockerfileGenerator"/>), and run mode has to match or an identical
+    /// checkout fails on Linux and macOS while succeeding inside the image.
+    /// <para>
+    /// Windows wrappers are the <c>mvnw.cmd</c> and <c>gradlew.bat</c> batch files, which <c>sh</c> cannot
+    /// run, and Windows has no executable bit to be missing, so they are executed directly.
+    /// </para>
+    /// </remarks>
+    private static (string Command, string[] LeadingArgs) ResolveWrapperInvocation(JavaAppResource resource, JavaBuildTool tool)
+        => WrapperInvocationFor(ResolveWrapperPath(resource, tool));
+
+    /// <inheritdoc cref="ResolveWrapperInvocation" />
+    private static (string Command, string[] LeadingArgs) WrapperInvocationFor(string wrapperPath)
+        => OperatingSystem.IsWindows()
+            ? (wrapperPath, [])
+            : ("sh", [wrapperPath]);
+
     private static string ResolveWrapperPath(JavaAppResource resource, JavaBuildTool tool)
     {
         if (resource.TryGetLastAnnotation<WrapperAnnotation>(out var wrapper))

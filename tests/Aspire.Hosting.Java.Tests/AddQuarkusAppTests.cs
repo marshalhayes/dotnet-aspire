@@ -20,8 +20,8 @@ public class AddQuarkusAppTests
 
         var app = builder.AddQuarkusApp("inventory", tempDir.Path);
 
-        Assert.Equal(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultMavenWrapper), app.Resource.Command);
-        Assert.Equal(["quarkus:dev"], await ArgumentEvaluator.GetArgumentListAsync(app.Resource));
+        Assert.Equal(ExpectedWrapperInvocation.Command(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultMavenWrapper)), app.Resource.Command);
+        Assert.Equal(ExpectedWrapperInvocation.Args(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultMavenWrapper), "quarkus:dev"), await ArgumentEvaluator.GetArgumentListAsync(app.Resource));
     }
 
     [Fact]
@@ -33,8 +33,8 @@ public class AddQuarkusAppTests
 
         var app = builder.AddQuarkusApp("pricing", tempDir.Path);
 
-        Assert.Equal(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultGradleWrapper), app.Resource.Command);
-        Assert.Equal(["quarkusDev"], await ArgumentEvaluator.GetArgumentListAsync(app.Resource));
+        Assert.Equal(ExpectedWrapperInvocation.Command(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultGradleWrapper)), app.Resource.Command);
+        Assert.Equal(ExpectedWrapperInvocation.Args(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultGradleWrapper), "quarkusDev"), await ArgumentEvaluator.GetArgumentListAsync(app.Resource));
     }
 
     [Theory]
@@ -50,7 +50,13 @@ public class AddQuarkusAppTests
 
         var buildResource = Assert.Single(builder.Resources, r => r.Name.EndsWith("-build", StringComparison.Ordinal));
 
-        Assert.Equal(expectedArgs, await ArgumentEvaluator.GetArgumentListAsync(buildResource));
+        var wrapper = Path.Combine(
+            tempDir.Path,
+            buildFile == "pom.xml" ? JavaHostingExtensions.s_defaultMavenWrapper : JavaHostingExtensions.s_defaultGradleWrapper);
+
+        Assert.Equal(
+            ExpectedWrapperInvocation.Args(wrapper, expectedArgs),
+            await ArgumentEvaluator.GetArgumentListAsync(buildResource));
     }
 
     [Fact]
