@@ -307,6 +307,53 @@ internal static partial class JavaDockerfileGenerator
     }
 
     /// <summary>
+    /// The JAR path the AppHost named, when it can be used to select the artifact the build produced.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="TryGetPrebuiltJarPath"/> answers a different question: whether the JAR exists before the
+    /// image is built. This one is about a JAR the image's own build produces, where the path is still the
+    /// author's explicit statement of which artifact matters. Without it a project whose build emits more
+    /// than one JAR — a shade plugin leaves <c>original-*.jar</c> beside the shaded one — fails the glob's
+    /// "expected exactly one" check even though the AppHost already named the file.
+    /// <para>
+    /// A path that reaches outside the build context is not an error here, only unusable: it is meaningful
+    /// on the host in run mode, and today such a resource publishes successfully by falling back to the
+    /// glob. Rejecting it would turn a working publish into a failure for no gain.
+    /// </para>
+    /// </remarks>
+    private static bool TryGetBuildOutputJarPath(JavaAppResource resource, [NotNullWhen(true)] out string? jarPath)
+    {
+        jarPath = null;
+
+        if (!resource.TryGetLastAnnotation<JavaJarPathAnnotation>(out var annotation))
+        {
+            return false;
+        }
+
+        // Container paths are POSIX even when the AppHost authored a Windows-style relative path.
+        var normalized = annotation.JarPath.Replace('\\', '/');
+
+        if (normalized.StartsWith("./", StringComparison.Ordinal))
+        {
+            normalized = normalized[2..];
+        }
+
+        if (normalized.Length == 0
+            || Path.IsPathRooted(annotation.JarPath)
+            || normalized.Split('/').Contains("..")
+            // A COPY/cp argument is split on whitespace, and the path is not worth quoting into a
+            // different shape than the glob path would have taken.
+            || normalized.Any(char.IsWhiteSpace))
+        {
+            return false;
+        }
+
+        jarPath = normalized;
+
+        return true;
+    }
+
+    /// <summary>
     /// Normalizes an authored path for use inside the container build, rejecting anything that would
     /// reach outside the build context.
     /// </summary>
@@ -590,8 +637,13 @@ internal static partial class JavaDockerfileGenerator
             var selectArtifact = resource.TryGetLastAnnotation<JavaJarArtifactAnnotation>(out var artifact)
                 ? $"cp {ShellQuote(NormalizeContextRelativePath(artifact.RelativePath, resource.Name, appDirectory, "its JAR artifact"))} {ContainerArtifactPath}"
                 : isQuarkus
+                    // Quarkus is decided before the JAR path because its fast-jar layout needs the whole
+                    // target/quarkus-app directory; copying only the runner it names produces an image
+                    // that starts and immediately dies on a missing lib directory.
                     ? SelectQuarkusArtifactCommand(outputDirectory, outputGlob, resource.Name)
-                    : SelectSingleJarCommand(outputGlob, ContainerArtifactPath, resource.Name);
+                    : TryGetBuildOutputJarPath(resource, out var namedJar)
+                        ? SelectNamedJarCommand(namedJar, ContainerArtifactPath, resource.Name)
+                        : SelectSingleJarCommand(outputGlob, ContainerArtifactPath, resource.Name);
 
             // An explicit WithJarArtifact names a single file, so it stages as one even for Quarkus - which
             // is how an application packaged as an uber JAR names its runner.
@@ -1073,6 +1125,23 @@ internal static partial class JavaDockerfileGenerator
             return $"mkdir -p {ContainerArtifactDirectory} && "
                 + $"if [ -d {fastJarDirectory} ]; then cp -r {fastJarDirectory}/. {ContainerArtifactDirectory}/; "
                 + $"else {uberJarFallback}; fi";
+        }
+
+        /// <summary>
+        /// Copies the JAR the AppHost named, failing with a message that names it when the build did not
+        /// produce it.
+        /// </summary>
+        /// <remarks>
+        /// A bare <c>cp</c> would fail with the shell's own "No such file or directory", which does not say
+        /// which resource or which of the two plausible causes applies.
+        /// </remarks>
+        private static string SelectNamedJarCommand(string jarPath, string destination, string resourceName)
+        {
+            var quoted = ShellQuote(jarPath);
+
+            return string.Join(" && ",
+                $"if [ ! -f {quoted} ]; then echo \"Aspire: the build of '{resourceName}' did not produce {jarPath}.\" >&2; echo \"Check the jarPath passed to AddJavaApp, or use WithJarArtifact to name the published artifact separately.\" >&2; exit 1; fi",
+                $"cp {quoted} {destination}");
         }
 
         private static string SelectSingleJarCommand(string outputGlob, string destination, string resourceName)

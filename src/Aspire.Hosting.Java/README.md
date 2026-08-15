@@ -229,8 +229,9 @@ debugger's classpath and its manifest's `Main-Class` is launched, which is what 
 
 `aspire publish` and `aspire deploy` build the app into a container. An app that runs should publish with
 no extra configuration: if the app directory contains a `Dockerfile` it is used as-is, otherwise one is
-generated that builds the project inside the container. The container runs as a non-root `app` user, and
-the JVM is PID 1 so it receives `SIGTERM` directly and shutdown hooks run.
+generated that builds the project inside the container. The container runs as an unprivileged numeric
+user (`USER 999:999`, with no passwd entry), and the JVM is PID 1 so it receives `SIGTERM` directly and
+shutdown hooks run.
 
 The generated build stage reuses the wrapper and the arguments from `WithMavenBuild`/`WithGradleBuild`,
 falling back to `package` or `build` when neither is configured. Dependency caches are kept in a BuildKit

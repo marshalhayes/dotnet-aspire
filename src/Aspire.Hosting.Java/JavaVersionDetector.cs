@@ -75,18 +75,31 @@ internal static partial class JavaVersionDetector
         // Every element with a matching name is considered, not just the first: a POM often declares
         // <release>${java.version}</release> on the compiler plugin and a literal elsewhere, and stopping
         // at the unresolvable property reference would fall back to the default version instead.
+        // Ordered by how directly each one decides the bytecode version, most direct first, because the
+        // runtime image has to be at least what the compiler actually emitted.
+        //
+        // java.version is last despite being the most recognisable. It is not a Maven property at all:
+        // it works only because spring-boot-starter-parent maps it onto the real one with
+        // <maven.compiler.release>${java.version}</maven.compiler.release>. A POM that sets both
+        // java.version and maven.compiler.release overrides that mapping, so Maven compiles to the
+        // latter and reading java.version would pick a runtime too old to load the classes.
+        // https://docs.spring.io/spring-boot/maven-plugin/using.html
         foreach (var (name, mustBePluginConfiguration) in ((string, bool)[])
         [
-            ("java.version", false),
-            ("maven.compiler.release", false),
-            ("maven.compiler.target", false),
+            // Explicit plugin configuration beats the property that merely supplies the parameter's
+            // default, and release beats target within the plugin.
+            // https://maven.apache.org/plugins/maven-compiler-plugin/compile-mojo.html
+            //
             // <release> and <target> are only meaningful inside the compiler plugin's <configuration>.
             // Matched merely by having a <configuration> parent they would also pick up unrelated
             // plugins: maven-antrun-plugin's canonical configuration is literally
             // <configuration><target>...</target></configuration>, holding Ant XML rather than a Java
             // release, and any plugin is free to name a <release> of its own.
             ("release", true),
+            ("maven.compiler.release", false),
             ("target", true),
+            ("maven.compiler.target", false),
+            ("java.version", false),
         ])
         {
             foreach (var element in document.Descendants().Where(e => string.Equals(e.Name.LocalName, name, StringComparison.Ordinal)))

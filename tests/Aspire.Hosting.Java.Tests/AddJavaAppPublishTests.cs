@@ -1390,6 +1390,109 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
         return await File.ReadAllTextAsync(Path.Combine(outputDir.FullName, "api.Dockerfile"), TestContext.Current.CancellationToken);
     }
 
+    [Fact]
+    public async Task VerifyPublish_ExplicitCompilerReleaseWinsOverTheSpringBootProperty()
+    {
+        // java.version is not a Maven property. It works only because spring-boot-starter-parent maps it
+        // onto maven.compiler.release, and a POM that sets the real property overrides that mapping - so
+        // Maven emits 21 here and a Java 17 runtime image would fail with UnsupportedClassVersionError.
+        var content = await PublishDockerfileAsync(
+            configureSource: source => WritePomProperties(source, """
+                <java.version>17</java.version>
+                <maven.compiler.release>21</maven.compiler.release>
+                """),
+            configureResource: app => app.WithMavenGoal("spring-boot:run"));
+
+        Assert.Contains("docker.io/library/eclipse-temurin:21-jre", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task VerifyPublish_CompilerPluginReleaseWinsOverTheSpringBootProperty()
+    {
+        var content = await PublishDockerfileAsync(
+            configureSource: source => WritePomWithCompilerPlugin(source, javaVersion: "17", release: "21"),
+            configureResource: app => app.WithMavenGoal("spring-boot:run"));
+
+        Assert.Contains("docker.io/library/eclipse-temurin:21-jre", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task VerifyPublish_SpringBootPropertyStillAppliesWhenItIsTheOnlySignal()
+    {
+        // The overwhelmingly common Spring Boot POM. Reordering the precedence must not break it.
+        var content = await PublishDockerfileAsync(
+            configureSource: source => WritePomProperties(source, "<java.version>17</java.version>"),
+            configureResource: app => app.WithMavenGoal("spring-boot:run"));
+
+        Assert.Contains("docker.io/library/eclipse-temurin:17-jre", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task VerifyPublish_SpringBootPropertyResolvesThroughAnUnexpandedReference()
+    {
+        // The Spring Boot parent's own mapping, written out in the child POM. maven.compiler.release
+        // holds a property reference this cannot expand, so detection has to keep looking rather than
+        // treat the unresolved value as a version.
+        var content = await PublishDockerfileAsync(
+            configureSource: source => WritePomProperties(source, """
+                <java.version>21</java.version>
+                <maven.compiler.release>${java.version}</maven.compiler.release>
+                """),
+            configureResource: app => app.WithMavenGoal("spring-boot:run"));
+
+        Assert.Contains("docker.io/library/eclipse-temurin:21-jre", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task VerifyPublish_UsesTheNamedJarWhenTheBuildRunsInTheImage()
+    {
+        // The AppHost already said which JAR matters. Falling back to the glob would fail the
+        // "expected exactly one" check for any build that emits a second JAR, such as a shade plugin
+        // leaving original-*.jar beside the shaded artifact.
+        var content = await PublishDockerfileAsync(
+            configureSource: source => WritePom(source, javaVersion: "21"),
+            jarPath: "target/worker.jar",
+            configureResource: app => app.WithMavenBuild());
+
+        Assert.Contains("cp 'target/worker.jar' /build/app.jar", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("expected exactly one application JAR", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task VerifyPublish_NamedJarWindowsSeparatorsBecomePosix()
+    {
+        var content = await PublishDockerfileAsync(
+            configureSource: source => WritePom(source, javaVersion: "21"),
+            jarPath: @"target\worker.jar",
+            configureResource: app => app.WithMavenBuild());
+
+        Assert.Contains("cp 'target/worker.jar' /build/app.jar", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task VerifyPublish_NamedJarOutsideTheContextFallsBackToTheGlob()
+    {
+        // The path is meaningful on the host in run mode, and such a resource publishes today. Turning
+        // that into a hard failure would be a regression, so the glob is used instead.
+        var content = await PublishDockerfileAsync(
+            configureSource: source => WritePom(source, javaVersion: "21"),
+            jarPath: "../shared/worker.jar",
+            configureResource: app => app.WithMavenBuild());
+
+        Assert.Contains("expected exactly one application JAR", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task VerifyPublish_ExplicitJarArtifactWinsOverTheNamedJar()
+    {
+        var content = await PublishDockerfileAsync(
+            configureSource: source => WritePom(source, javaVersion: "21"),
+            jarPath: "target/worker.jar",
+            configureResource: app => app.WithMavenBuild().WithJarArtifact("target/shaded.jar"));
+
+        Assert.Contains("cp 'target/shaded.jar' /build/app.jar", content, StringComparison.Ordinal);
+    }
+
     private async Task<string> PublishDockerfileAsync(
         Action<string>? configureSource = null,
         string? jarPath = null,
@@ -1456,6 +1559,51 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
               <properties>
                 <java.version>{javaVersion}</java.version>
               </properties>
+            </project>
+            """);
+    }
+
+    private static void WritePomProperties(string sourceDirectory, string properties, string mavenVersion = "3.9.9")
+    {
+        WriteWrapper(sourceDirectory, "mvnw", mavenVersion);
+        File.WriteAllText(Path.Combine(sourceDirectory, "pom.xml"), $"""
+            <?xml version="1.0" encoding="UTF-8"?>
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+              <modelVersion>4.0.0</modelVersion>
+              <groupId>com.example</groupId>
+              <artifactId>api</artifactId>
+              <version>0.0.1-SNAPSHOT</version>
+              <properties>
+            {properties}
+              </properties>
+            </project>
+            """);
+    }
+
+    private static void WritePomWithCompilerPlugin(string sourceDirectory, string javaVersion, string release, string mavenVersion = "3.9.9")
+    {
+        WriteWrapper(sourceDirectory, "mvnw", mavenVersion);
+        File.WriteAllText(Path.Combine(sourceDirectory, "pom.xml"), $"""
+            <?xml version="1.0" encoding="UTF-8"?>
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+              <modelVersion>4.0.0</modelVersion>
+              <groupId>com.example</groupId>
+              <artifactId>api</artifactId>
+              <version>0.0.1-SNAPSHOT</version>
+              <properties>
+                <java.version>{javaVersion}</java.version>
+              </properties>
+              <build>
+                <plugins>
+                  <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <configuration>
+                      <release>{release}</release>
+                    </configuration>
+                  </plugin>
+                </plugins>
+              </build>
             </project>
             """);
     }
