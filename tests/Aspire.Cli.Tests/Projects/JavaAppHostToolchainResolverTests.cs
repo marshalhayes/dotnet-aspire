@@ -283,6 +283,55 @@ public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
         Assert.Contains("aspireCopyDependencies", await File.ReadAllTextAsync(scriptPath));
     }
 
+    [Fact]
+    public async Task EnsureToolchainFilesExistAsync_ForGradle_StagesWithSyncSoUpgradedDependenciesDoNotAccumulate()
+    {
+        using var workspace = TemporaryWorkspace.Create(outputHelper);
+        File.WriteAllText(Path.Combine(workspace.Path, "build.gradle"), "");
+        WriteWrapper(workspace.Path, OperatingSystem.IsWindows() ? "gradlew.bat" : "gradlew");
+
+        await JavaAppHostToolchainResolver.EnsureToolchainFilesExistAsync(JavaAppHostToolchainResolver.Resolve(workspace.WorkspaceRoot), CancellationToken.None);
+
+        var script = await File.ReadAllTextAsync(Path.Combine(workspace.Path, ".aspire", "aspire-gradle-init.gradle"));
+
+        // The whole directory is the classpath, so a Copy would leave the previous version of an
+        // upgraded dependency behind and load it alongside the new one.
+        Assert.Contains("tasks.register(\"aspireCopyDependencies\", Sync)", script);
+    }
+
+    [Fact]
+    public async Task EnsureToolchainFilesExistAsync_ForMaven_ClearsPreviouslyStagedDependencies()
+    {
+        using var workspace = TemporaryWorkspace.Create(outputHelper);
+        File.WriteAllText(Path.Combine(workspace.Path, "pom.xml"), "<project />");
+
+        var dependencyDirectory = Path.Combine(workspace.Path, "target", "aspire-deps");
+        Directory.CreateDirectory(dependencyDirectory);
+        var staleJar = Path.Combine(dependencyDirectory, "library-1.0.jar");
+        await File.WriteAllTextAsync(staleJar, "");
+
+        await JavaAppHostToolchainResolver.EnsureToolchainFilesExistAsync(
+            JavaAppHostToolchainResolver.Resolve(workspace.WorkspaceRoot),
+            CancellationToken.None);
+
+        // dependency:copy-dependencies only ever adds, so library-1.0.jar would survive an upgrade to
+        // library-2.0.jar and both would be on the AppHost's dir/* classpath.
+        Assert.False(Directory.Exists(dependencyDirectory));
+    }
+
+    [Fact]
+    public async Task EnsureToolchainFilesExistAsync_ForMaven_WithNothingStagedYet_DoesNotThrow()
+    {
+        using var workspace = TemporaryWorkspace.Create(outputHelper);
+        File.WriteAllText(Path.Combine(workspace.Path, "pom.xml"), "<project />");
+
+        await JavaAppHostToolchainResolver.EnsureToolchainFilesExistAsync(
+            JavaAppHostToolchainResolver.Resolve(workspace.WorkspaceRoot),
+            CancellationToken.None);
+
+        Assert.False(Directory.Exists(Path.Combine(workspace.Path, "target")));
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
