@@ -177,6 +177,10 @@ Arguments passed to `AddJavaApp` or `WithArgs(...)` belong to the application. A
 tool are passed to `WithMavenGoal`/`WithGradleTask`, which keeps the two sets separable — the IDE needs
 to drop the wrapper's arguments when it launches the JVM directly to debug it.
 
+Prebuilt JAR mode describes how the resource *runs*. It does not by itself mean the JAR is published
+as-is: a JAR path in a directory that also has a `pom.xml` or a Gradle build file is built inside the
+image and the path selects the artifact. See [Publishing](#publishing).
+
 ### Running an image someone else built
 
 When the application ships as a container image — built by a separate pipeline, or by a team that hands
@@ -242,9 +246,23 @@ The generated build stage reuses the wrapper and the arguments from `WithMavenBu
 falling back to `package` or `build` when neither is configured. Dependency caches are kept in a BuildKit
 cache mount rather than baked into a layer.
 
-The deployed JAR is whichever one the build produces, ignoring `-plain`, `-sources`, and `-javadoc`
-artifacts. When that is still ambiguous the build fails and names the candidates; select one with
-`WithJarArtifact(...)`.
+A JAR path is not on its own taken to mean the JAR is prebuilt, because it is equally how a Maven or
+Gradle application names the artifact its own build produces. So when the app directory also holds a
+`pom.xml` or a Gradle build file, the image builds the project and the path selects the artifact out of
+the build output. Only a directory with no build file at all — and no `WithMavenBuild`/`WithGradleBuild`
+and no `WithMavenGoal`/`WithGradleTask` — publishes as a straight `COPY` of the JAR.
+
+That is deliberately not symmetric with run mode, which execs `java -jar` against whatever is on disk.
+Build output directories are conventionally ignored by source control, so copying `target/app.jar` out of
+a source checkout would publish a locally built and possibly stale artifact when the developer happens to
+have one, and fail the image build outright in a clean clone or on CI where it does not exist yet.
+
+The deployed JAR is selected in this order: an explicit `WithJarArtifact(...)`; for a Quarkus application
+the whole `target/quarkus-app` directory, whose fast-jar layout needs more than the runner; the JAR path
+given to `AddJavaApp`, when there was one; and otherwise whichever JAR the build produced, ignoring
+`-plain`, `-sources`, and `-javadoc` artifacts. Only that last case can be ambiguous — a shade plugin
+leaves `original-*.jar` beside the shaded JAR — and then the build fails naming the candidates, so select
+one with `WithJarArtifact(...)`.
 
 #### Base images
 
