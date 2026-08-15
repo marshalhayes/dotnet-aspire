@@ -406,6 +406,15 @@ internal static partial class JavaDockerfileGenerator
         => Path.IsPathRooted(path)
             || path.StartsWith('/')
             || path.StartsWith('\\')
+            || IsWindowsRooted(path);
+
+    /// <remarks>
+    /// Detected without <see cref="Path.IsPathRooted(string)"/> so the answer is the same on every
+    /// platform: a Windows AppHost publishing to a Linux image has to fail the same way a Linux one
+    /// does, rather than only when the build happens to run on Windows.
+    /// </remarks>
+    private static bool IsWindowsRooted(string path)
+        => path.StartsWith('\\')
             || (path.Length >= 2 && char.IsAsciiLetter(path[0]) && path[1] == ':');
 
     private static string NormalizeContextRelativePath(string authored, string resourceName, string appDirectory, string description)
@@ -554,6 +563,21 @@ internal static partial class JavaDockerfileGenerator
 
         if (IsPathRootedOnAnyPlatform(authored))
         {
+            // A POSIX absolute path is a legitimate arrangement: the base image or a mount provides the
+            // agent, and rewriting it would break that. A Windows-rooted path cannot be, because the
+            // image the AppHost publishes to is Linux. Leaving it alone puts "-javaagent:C:\..." into
+            // JAVA_TOOL_OPTIONS, and the JVM then dies during VM initialization with an error that
+            // names the agent but not the reason. The jar artifact and the wrapper already reject
+            // Windows-rooted paths on every platform; this keeps the agent consistent with them.
+            if (IsWindowsRooted(authored))
+            {
+                throw new DistributedApplicationException(
+                    $"Java application '{resource.Name}' cannot be published because the OpenTelemetry agent " +
+                    $"path '{authored}' is a Windows path, which cannot resolve inside the Linux image the " +
+                    "application is published to. Use a path inside the application directory so it is copied " +
+                    "into the image, or an absolute path the base image or a mount provides at runtime.");
+            }
+
             return false;
         }
 

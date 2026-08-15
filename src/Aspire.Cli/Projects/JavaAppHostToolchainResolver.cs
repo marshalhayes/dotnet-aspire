@@ -309,7 +309,31 @@ internal static class JavaAppHostToolchainResolver
 
         // Rewritten every run rather than only when missing, so a script left behind by an older
         // Aspire version cannot silently keep staging dependencies the wrong way.
-        await File.WriteAllTextAsync(scriptPath, GradleInitScript, cancellationToken);
+        //
+        // Written through a temporary sibling and moved into place because writing directly truncates
+        // first: a second `aspire run` starting while this one is mid-write leaves Gradle reading a
+        // half-written script, which fails with a syntax error that points at the generated file rather
+        // than at the race. File.Move within a directory is atomic on every platform we support.
+        var temporaryPath = $"{scriptPath}.{Environment.ProcessId}.tmp";
+
+        try
+        {
+            await File.WriteAllTextAsync(temporaryPath, GradleInitScript, cancellationToken).ConfigureAwait(false);
+            File.Move(temporaryPath, scriptPath, overwrite: true);
+        }
+        catch
+        {
+            try
+            {
+                File.Delete(temporaryPath);
+            }
+            catch
+            {
+                // Losing a temp file matters far less than the original failure, which is rethrown.
+            }
+
+            throw;
+        }
     }
 
     /// <summary>

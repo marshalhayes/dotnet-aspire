@@ -140,16 +140,50 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
     [Fact]
     public async Task VerifyPublish_DoesNotCopyAnAbsoluteOtelAgentPath()
     {
-        var agentPath = OperatingSystem.IsWindows() ? @"C:\opt\otel\agent.jar" : "/opt/otel/agent.jar";
-
         var content = await PublishDockerfileAsync(
             configureSource: source => WritePom(source, javaVersion: "21"),
             configureResource: app => app
                 .WithMavenGoal("spring-boot:run")
-                .WithOtelAgent(agentPath));
+                .WithOtelAgent("/opt/otel/agent.jar"));
 
-        // An absolute path cannot have come out of the build context, so there is nothing to copy from.
-        Assert.DoesNotContain("/app/agent.jar", content);
+        // An absolute path cannot have come out of the build context, so there is nothing to copy from:
+        // the base image or a mount provides it. Assert on the COPY instructions the Dockerfile actually
+        // contains rather than on the absence of one path, so deleting the agent handling fails the test.
+        var copies = content
+            .Split('\n')
+            .Where(line => line.StartsWith("COPY ", StringComparison.Ordinal))
+            .ToArray();
+
+        Assert.Equal(
+            [
+                "COPY mvnw ./mvnw",
+                "COPY .mvn ./.mvn",
+                "COPY . .",
+                "COPY --from=build --chown=999:999 /build/app.jar /app/app.jar"
+            ],
+            copies);
+    }
+
+    /// <summary>
+    /// The published image is Linux, so a Windows agent path can never resolve inside it. Left alone it
+    /// reaches the container as <c>-javaagent:C:\...</c> and the JVM dies during initialization. Rejecting
+    /// it on every platform matches how the jar artifact and the wrapper already behave.
+    /// </summary>
+    [Fact]
+    public void VerifyPublish_AWindowsAbsoluteOtelAgentIsRejectedOnEveryPlatform()
+    {
+        using var appDirectory = new TempJavaAppDirectory();
+        WritePom(appDirectory.Path, javaVersion: "21");
+
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish);
+        var app = builder.AddJavaApp("api", appDirectory.Path)
+            .WithMavenBuild()
+            .WithOtelAgent(@"C:\opt\otel\agent.jar");
+
+        var exception = Assert.Throws<DistributedApplicationException>(
+            () => JavaDockerfileGenerator.TryGetBuildProducedAgentPath(app.Resource, out _));
+
+        Assert.Contains("is a Windows path", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1255,6 +1289,9 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
             configureSource: source => WritePom(source, javaVersion: "21"),
             configureResource: app => app.WithMavenGoal("spring-boot:run"));
 
+        // unzip only exists to verify a pinned wrapper checksum. Assert the wrapper still runs, so this
+        // keeps failing if the build stage disappears rather than passing on an empty Dockerfile.
+        Assert.Contains("./mvnw -B -ntp --version", content, StringComparison.Ordinal);
         Assert.DoesNotContain("unzip", content, StringComparison.Ordinal);
     }
 
@@ -1665,6 +1702,45 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
             configureResource: app => app.WithMavenBuild().WithJarArtifact("target/shaded.jar"));
 
         Assert.Contains("cp 'target/shaded.jar' /build/app.jar", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task VerifyPublish_MovingTheWorkingDirectoryAfterwardsFailsWithAnActionableMessage()
+    {
+        using var workspace = TemporaryWorkspace.Create(outputHelper);
+        var sourceDir = workspace.CreateDirectory("source");
+        var elsewhere = workspace.CreateDirectory("elsewhere");
+
+        WritePom(sourceDir.FullName, javaVersion: "21");
+
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish);
+        builder.AddJavaApp("api", sourceDir.FullName)
+            .WithMavenBuild()
+            .WithWorkingDirectory(elsewhere.FullName);
+
+        using var app = builder.Build();
+        var model = app.Services.GetRequiredService<DistributedApplicationModel>();
+
+        // The build context is fixed when the resource is added and cannot move afterwards, so the
+        // Dockerfile callback has to refuse rather than build an image from a directory the author no
+        // longer points at. The message is what the author acts on, so assert it names both directories.
+        var annotation = model.Resources
+            .SelectMany(resource => resource.Annotations.OfType<DockerfileBuildAnnotation>())
+            .Single();
+
+        var context = new DockerfileFactoryContext
+        {
+            Services = app.Services,
+            Resource = model.Resources.Single(resource => resource.Name == "api"),
+            CancellationToken = TestContext.Current.CancellationToken
+        };
+
+        var exception = await Assert.ThrowsAsync<DistributedApplicationException>(
+            () => annotation.DockerfileFactory!(context));
+
+        Assert.Contains("its working directory was changed", exception.Message, StringComparison.Ordinal);
+        Assert.Contains(elsewhere.FullName, exception.Message, StringComparison.Ordinal);
+        Assert.Contains(sourceDir.FullName, exception.Message, StringComparison.Ordinal);
     }
 
     private async Task<string> PublishDockerfileAsync(
