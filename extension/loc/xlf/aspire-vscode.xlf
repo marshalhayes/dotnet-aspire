@@ -859,6 +859,9 @@
     <trans-unit id="aspire-vscode.strings.resourceCommandCustomChoice">
       <source xml:lang="en">Use &quot;{0}&quot;</source>
     </trans-unit>
+    <trans-unit id="aspire-vscode.strings.codeLensSpringBootDashboardBypassesAspireTooltip">
+      <source xml:lang="en">Use Aspire Run or Debug instead. The Spring Boot Dashboard starts the app on its own, so it receives none of the service discovery, connection string, or OpenTelemetry settings Aspire injects.</source>
+    </trans-unit>
     <trans-unit id="configuration.aspire.enableAspireDashboardAutoLaunch.launch">
       <source xml:lang="en">Use the configured dashboard browser behavior, falling back to VS Code&apos;s integrated browser for compatibility.</source>
     </trans-unit>
@@ -978,6 +981,9 @@
     </trans-unit>
     <trans-unit id="aspire-vscode.strings.resourceCommandArgumentInputTitle">
       <source xml:lang="en">{0}: {1}</source>
+    </trans-unit>
+    <trans-unit id="aspire-vscode.strings.codeLensSpringBootDashboardBypassesAspire">
+      <source xml:lang="en">⚠️ Do not start this app from the Spring Boot Dashboard; it bypasses Aspire</source>
     </trans-unit>
   </body></file>
 </xliff>

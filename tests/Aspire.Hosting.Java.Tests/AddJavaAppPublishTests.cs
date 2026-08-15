@@ -476,8 +476,7 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
     }
 
     [Fact]
-    public void PublishingWithAWrapperOutsideTheBuildContextIsRejected()
-    {
+    public void PublishingWithAWrapperOutsideTheBuildContextIsRejected()    {
         using var workspace = TemporaryWorkspace.Create(outputHelper);
         var sourceDir = workspace.CreateDirectory("source");
         var siblingDir = workspace.CreateDirectory("sibling");
@@ -495,6 +494,122 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
         // Only files under the context are uploaded to the daemon, so a wrapper outside it is not in the
         // image and the build would fail partway through with an opaque "not found".
         Assert.Contains("is outside the build context", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("../outside.jar")]
+    [InlineData("./../outside.jar")]
+    [InlineData("..\\outside.jar")]
+    [InlineData("nested/../../outside.jar")]
+    public void PublishingAJarOutsideTheBuildContextIsRejected(string jarPath)
+    {
+        using var workspace = TemporaryWorkspace.Create(outputHelper);
+        var sourceDir = workspace.CreateDirectory("source");
+
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish);
+        var app = builder.AddJavaApp("api", sourceDir.FullName, jarPath);
+
+        // Normalizing with TrimStart('.', '/') used to eat the traversal itself, turning "../outside.jar"
+        // into "outside.jar" so this check never fired and the image silently COPYd the wrong file.
+        var ex = Assert.Throws<DistributedApplicationException>(
+            () => JavaDockerfileGenerator.TryGetPrebuiltJarPath(app.Resource, sourceDir.FullName, out _));
+
+        Assert.Contains("is outside the build context", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("target/worker.jar", "target/worker.jar")]
+    [InlineData("./target/worker.jar", "target/worker.jar")]
+    [InlineData("target\\worker.jar", "target/worker.jar")]
+    public void PublishingAJarInsideTheBuildContextKeepsItsContextRelativePath(string jarPath, string expected)
+    {
+        using var workspace = TemporaryWorkspace.Create(outputHelper);
+        var sourceDir = workspace.CreateDirectory("source");
+
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish);
+        var app = builder.AddJavaApp("api", sourceDir.FullName, jarPath);
+
+        // A leading "./" is a normal way to write a context-relative path and must survive the tightened
+        // normalization, and Windows separators still have to become POSIX ones for the container.
+        Assert.True(JavaDockerfileGenerator.TryGetPrebuiltJarPath(app.Resource, sourceDir.FullName, out var resolved));
+        Assert.Equal(expected, resolved);
+    }
+
+    [Fact]
+    public async Task PublishingAJarPathPrefixedWithDotSlashStillResolvesInsideTheContext()
+    {
+        var content = await PublishDockerfileAsync(jarPath: "./target/worker.jar");
+
+        // A leading "./" is a normal way to write a context-relative path and must survive normalization.
+        Assert.Contains("COPY target/worker.jar /app/app.jar", content);
+    }
+
+    [Fact]
+    public async Task PublishingWithAWindowsBatchWrapperUsesThePosixSibling()
+    {
+        var content = await PublishDockerfileAsync(
+            configureSource: source =>
+            {
+                WritePom(source, javaVersion: "21");
+                WriteWrapper(source, "mvnw");
+                WriteWrapper(source, "mvnw.cmd");
+            },
+            configureResource: app => app.WithMavenGoal("spring-boot:run").WithWrapperPath("mvnw.cmd"));
+
+        // Selecting the batch wrapper is reasonable on Windows, but the build stage is Linux and cannot
+        // execute it. Maven and Gradle ship both scripts, so the POSIX sibling is used for the image.
+        Assert.Contains("sh ./mvnw ", content);
+        Assert.DoesNotContain("mvnw.cmd", content);
+    }
+
+    [Fact]
+    public void PublishingWithAWindowsBatchWrapperAndNoPosixSiblingIsRejected()
+    {
+        using var workspace = TemporaryWorkspace.Create(outputHelper);
+        var sourceDir = workspace.CreateDirectory("source");
+        WritePom(sourceDir.FullName, javaVersion: "21");
+
+        // WritePom ships the POSIX wrapper because publishing normally needs one. Remove it so the batch
+        // wrapper really is the only one present.
+        File.Delete(Path.Combine(sourceDir.FullName, "mvnw"));
+        WriteWrapper(sourceDir.FullName, "mvnw.cmd");
+
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish);
+        var app = builder.AddJavaApp("api", sourceDir.FullName)
+                         .WithMavenGoal("spring-boot:run")
+                         .WithWrapperPath("mvnw.cmd");
+
+        var ex = Assert.Throws<DistributedApplicationException>(
+            () => JavaDockerfileGenerator.ResolveContainerBuildForTesting(app.Resource, sourceDir.FullName));
+
+        Assert.Contains("Windows batch script", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("maven", "mvnw", ".mvn", "maven-wrapper.properties")]
+    [InlineData("gradle", "gradlew", "gradle", "gradle-wrapper.properties")]
+    public void PublishingRejectsAWrapperWithoutItsPropertiesFile(
+        string tool,
+        string wrapperName,
+        string supportDirectory,
+        string propertiesName)
+    {
+        using var workspace = TemporaryWorkspace.Create(outputHelper);
+        var sourceDir = workspace.CreateDirectory("source");
+        WriteWrapper(sourceDir.FullName, wrapperName);
+        Directory.Delete(Path.Combine(sourceDir.FullName, supportDirectory), recursive: true);
+
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish);
+        var app = builder.AddJavaApp("api", sourceDir.FullName);
+
+        _ = tool is "maven"
+            ? app.WithMavenGoal("spring-boot:run")
+            : app.WithGradleTask("bootRun");
+
+        var ex = Assert.Throws<DistributedApplicationException>(
+            () => JavaDockerfileGenerator.ResolveContainerBuildForTesting(app.Resource, sourceDir.FullName));
+
+        Assert.Contains($"{supportDirectory}/wrapper/{propertiesName}", ex.Message);
     }
 
     [Fact]
@@ -742,6 +857,17 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
 
     private static void WriteWrapper(string sourceDirectory, string wrapperName)
     {
+        Directory.CreateDirectory(sourceDirectory);
         File.WriteAllText(Path.Combine(sourceDirectory, wrapperName), "#!/bin/sh\nexit 0\n");
+
+        // A real wrapper always ships the properties file that pins the tool version, and publishing
+        // requires it so the distribution can be unpacked in its own image layer.
+        var gradle = wrapperName.Contains("gradle", StringComparison.OrdinalIgnoreCase);
+        var supportDirectory = Path.Combine(sourceDirectory, gradle ? "gradle" : ".mvn", "wrapper");
+
+        Directory.CreateDirectory(supportDirectory);
+        File.WriteAllText(
+            Path.Combine(supportDirectory, gradle ? "gradle-wrapper.properties" : "maven-wrapper.properties"),
+            "distributionUrl=https\\://example.invalid/tool-bin.zip\n");
     }
 }

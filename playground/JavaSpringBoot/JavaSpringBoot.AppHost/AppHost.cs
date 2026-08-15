@@ -42,10 +42,10 @@ var orders = builder.AddJavaApp("orders", "../orders")
     .WithReference(catalog)
     .WaitFor(catalog);
 
-// A plain JAR with no framework, built by Maven before it runs. The module ships no wrapper of its own,
-// so it borrows the catalog service's.
+// A plain JAR with no framework, built by Maven before it runs. Its wrapper lives in the module rather
+// than being borrowed from a sibling: publishing uploads only the application directory to the daemon,
+// so a wrapper outside it would exist on the host and not in the image.
 builder.AddJavaApp("worker", "../worker", "target/worker-0.0.1-SNAPSHOT.jar", ["--interval-seconds", "10"])
-    .WithWrapperPath("../catalog/mvnw")
     .WithMavenBuild("-B", "-ntp", "-DskipTests", "package")
     // Publishing has to know which JAR is the application. Without this the container build would find
     // both worker-0.0.1-SNAPSHOT.jar and any classifier artifacts and refuse to guess.

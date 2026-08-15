@@ -306,6 +306,8 @@
   "aspire-vscode.strings.rustDebuggerExtensionNotInstalled": "Rust AppHosts are launched through a native debugger extension. Install {0} from the Extensions view, then start the AppHost again.",
   "aspire-vscode.strings.javaDisplayName": "Java: {0}",
   "aspire-vscode.strings.javaLabel": "Java",
+  "aspire-vscode.strings.codeLensSpringBootDashboardBypassesAspire": "⚠️ Do not start this app from the Spring Boot Dashboard; it bypasses Aspire",
+  "aspire-vscode.strings.codeLensSpringBootDashboardBypassesAspireTooltip": "Use Aspire Run or Debug instead. The Spring Boot Dashboard starts the app on its own, so it receives none of the service discovery, connection string, or OpenTelemetry settings Aspire injects.",
   "aspire-vscode.strings.appHostLifecycleStartConfirmationTitle": "Start Aspire AppHost",
   "aspire-vscode.strings.appHostLifecycleStopConfirmationTitle": "Stop Aspire AppHost",
   "aspire-vscode.strings.appHostLifecycleStartConfirmationMessage": "Start the Aspire AppHost {0} in {1} mode?",

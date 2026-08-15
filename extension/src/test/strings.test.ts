@@ -90,13 +90,18 @@ suite('utils/strings tests', () => {
         const packageNls = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'package.nls.json'), 'utf8')) as Record<string, string>;
         const xlf = fs.readFileSync(path.join(extensionRoot, 'loc', 'xlf', 'aspire-vscode.xlf'), 'utf8');
 
-        const declarationPattern = /export\s+const\s+(java[A-Za-z0-9_]*)\s*=\s*(?:\([^)]*\)\s*=>\s*)?vscode\.l10n\.t\(/g;
+        // The Spring Boot Dashboard lens strings are matched explicitly because they belong to the Java
+        // experience but are named after the code lens they render in, so a java* prefix scan misses them.
+        const declarationPattern = /export\s+const\s+(java[A-Za-z0-9_]*|codeLensSpringBoot[A-Za-z0-9_]*)\s*=\s*(?:\([^)]*\)\s*=>\s*)?vscode\.l10n\.t\(/g;
         const names = [...stringsSource.matchAll(declarationPattern)].map(match => match[1]);
         assert.ok(names.includes('javaDisplayName'), 'Expected javaDisplayName to be declared in strings.ts.');
         assert.ok(names.includes('javaLabel'), 'Expected javaLabel to be declared in strings.ts.');
+        assert.ok(
+            names.includes('codeLensSpringBootDashboardBypassesAspire'),
+            'Expected codeLensSpringBootDashboardBypassesAspire to be declared in strings.ts.');
 
         const missingFromNls = names.filter(name => packageNls[`aspire-vscode.strings.${name}`] === undefined);
-        assert.deepStrictEqual(missingFromNls, [], 'Every java* loc string needs an aspire-vscode.strings.* entry in package.nls.json.');
+        assert.deepStrictEqual(missingFromNls, [], 'Every Java loc string needs an aspire-vscode.strings.* entry in package.nls.json.');
 
         const missingFromXlf = names.filter(name => !xlf.includes(`<trans-unit id="aspire-vscode.strings.${name}">`));
         assert.deepStrictEqual(missingFromXlf, [], 'Regenerate loc/xlf/aspire-vscode.xlf with "yarn run localize" after adding package.nls.json entries.');

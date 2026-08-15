@@ -179,10 +179,11 @@ The Java release is read from `pom.xml` or the Gradle build file, and defaults t
 
 | Stage | Default |
 | --- | --- |
-| Build (wrapper present) | `docker.io/library/eclipse-temurin:{version}-jdk` |
-| Build (Maven, no wrapper) | `docker.io/library/maven:3-eclipse-temurin-{version}` |
-| Build (Gradle, no wrapper) | `docker.io/library/gradle:8-jdk{version}` |
+| Build | `docker.io/library/eclipse-temurin:{version}-jdk` |
 | Runtime | `docker.io/library/eclipse-temurin:{version}-jre` |
+
+A plain JDK image is enough for the build stage because the build always runs through the project's own
+wrapper, and the wrapper downloads the Maven or Gradle version the repository pins.
 
 Override both stages in a single call:
 

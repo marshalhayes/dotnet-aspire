@@ -627,7 +627,7 @@ public class AddJavaAppTests
     }
 
     [Fact]
-    public void WithMavenGoal_WithoutAWrapperOnDisk_IsRejected()
+    public async Task WithMavenGoal_WithoutAWrapperOnDisk_IsRejectedWhenTheResourceStarts()
     {
         using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
         using var tempDir = new TempJavaAppDirectory(withWrappers: false);
@@ -635,24 +635,87 @@ public class AddJavaAppTests
         // A globally installed Maven is deliberately not used as a fallback: the wrapper pins the tool
         // version in the repository, so the AppHost, CI, and the published image all build with the same
         // one. Failing here names the fix instead of silently building with whatever is on the machine.
-        var ex = Assert.Throws<DistributedApplicationException>(
-            () => builder.AddJavaApp("api", tempDir.Path).WithMavenGoal("spring-boot:run"));
+        var app = builder.AddJavaApp("api", tempDir.Path).WithMavenGoal("spring-boot:run");
+
+        using var built = builder.Build();
+
+        var ex = await Assert.ThrowsAsync<DistributedApplicationException>(
+            () => builder.Eventing.PublishAsync(
+                new BeforeResourceStartedEvent(app.Resource, built.Services),
+                CancellationToken.None));
 
         Assert.Contains("has no mvnw", ex.Message);
         Assert.Contains("mvn -N wrapper:wrapper", ex.Message);
     }
 
     [Fact]
-    public void WithGradleTask_WithoutAWrapperOnDisk_IsRejected()
+    public async Task WithGradleTask_WithoutAWrapperOnDisk_IsRejectedWhenTheResourceStarts()
     {
         using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
         using var tempDir = new TempJavaAppDirectory(withWrappers: false);
 
-        var ex = Assert.Throws<DistributedApplicationException>(
-            () => builder.AddJavaApp("api", tempDir.Path).WithGradleTask("bootRun"));
+        var app = builder.AddJavaApp("api", tempDir.Path).WithGradleTask("bootRun");
+
+        using var built = builder.Build();
+
+        var ex = await Assert.ThrowsAsync<DistributedApplicationException>(
+            () => builder.Eventing.PublishAsync(
+                new BeforeResourceStartedEvent(app.Resource, built.Services),
+                CancellationToken.None));
 
         Assert.Contains("has no gradlew", ex.Message);
         Assert.Contains("gradle wrapper", ex.Message);
+    }
+
+    [Fact]
+    public async Task WithWrapperPath_AfterTheBuildTool_WorksWhenTheProjectHasNoDefaultWrapper()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+        using var tempDir = new TempJavaAppDirectory(withWrappers: false);
+
+        var customWrapper = Path.Combine(tempDir.Path, "tools", "mvnw");
+        Directory.CreateDirectory(Path.GetDirectoryName(customWrapper)!);
+        File.WriteAllText(customWrapper, "#!/bin/sh\n");
+
+        // WithWrapperPath is documented as order-independent. Resolving the wrapper eagerly inside
+        // WithMavenGoal made that untrue for the one project shape where the override actually matters:
+        // a project whose only wrapper is the custom one threw before the override could be applied.
+        var app = builder.AddJavaApp("api", tempDir.Path)
+            .WithMavenGoal("spring-boot:run")
+            .WithWrapperPath(Path.Combine("tools", "mvnw"));
+
+        using var built = builder.Build();
+
+        await builder.Eventing.PublishAsync(
+            new BeforeResourceStartedEvent(app.Resource, built.Services),
+            CancellationToken.None);
+
+        // Path.GetFullPath matches the normalization the resource applies, and resolves the symlinked
+        // temp directory the same way on both sides so the comparison is about the wrapper, not the path.
+        Assert.Equal(Path.GetFullPath(customWrapper), app.Resource.Command);
+    }
+
+    [Fact]
+    public async Task WithWrapperPath_PointingAtAMissingFile_IsRejectedWhenTheResourceStarts()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+        using var tempDir = new TempJavaAppDirectory(withWrappers: false);
+
+        var app = builder.AddJavaApp("api", tempDir.Path)
+            .WithMavenGoal("spring-boot:run")
+            .WithWrapperPath("tools/mvnw");
+
+        using var built = builder.Build();
+
+        var ex = await Assert.ThrowsAsync<DistributedApplicationException>(
+            () => builder.Eventing.PublishAsync(
+                new BeforeResourceStartedEvent(app.Resource, built.Services),
+                CancellationToken.None));
+
+        // The override is what is wrong here, so the message points at WithWrapperPath rather than
+        // telling the user to generate a wrapper they did not ask for.
+        Assert.Contains(nameof(JavaHostingExtensions.WithWrapperPath), ex.Message);
+        Assert.DoesNotContain("mvn -N wrapper:wrapper", ex.Message);
     }
 
     [Fact]

@@ -325,7 +325,9 @@ public static class JavaHostingExtensions
         // Set the command in every execution context. Setting it only in run mode left publish emitting
         // "java" as the command while the goal was still contributed as an argument, producing the
         // uninvokable command line "java spring-boot:run".
-        return builder.WithCommand(ResolveWrapperPath(builder.Resource, tool));
+        return builder
+            .WithCommand(ResolveWrapperPath(builder.Resource, tool))
+            .WithDeferredWrapperValidation(tool);
     }
 
     /// <summary>
@@ -415,7 +417,6 @@ public static class JavaHostingExtensions
         {
             return builder;
         }
-
         // Calling the same method twice must not add a second resource under the same name. The
         // annotation was just replaced, and the arguments are read from it on every run, so the existing
         // resource already reflects the new arguments.
@@ -440,7 +441,14 @@ public static class JavaHostingExtensions
             })
             .WithIconName(JavaIconName)
             .WithParentRelationship(resource)
-            .ExcludeFromManifest();
+            .ExcludeFromManifest()
+            // The build step runs before the application, so without this a missing wrapper would first
+            // surface as this resource failing to exec, rather than as the actionable message.
+            .OnBeforeResourceStarted((_, _, _) =>
+            {
+                ValidateWrapperExists(resource, tool);
+                return Task.CompletedTask;
+            });
 
         return builder.WaitForCompletion(buildBuilder);
     }
@@ -705,6 +713,16 @@ public static class JavaHostingExtensions
     /// when that version differs, which is precisely what the wrapper exists to prevent.
     /// </remarks>
     /// <exception cref="DistributedApplicationException">No wrapper is present and none was configured.</exception>
+    /// <summary>
+    /// Computes the wrapper script path for a resource, without checking that it exists.
+    /// </summary>
+    /// <remarks>
+    /// Existence is deliberately not checked here. This runs while the AppHost is still being authored,
+    /// and <see cref="WithWrapperPath{T}(IResourceBuilder{T}, string)"/> is documented as usable after the
+    /// build tool is configured — so a project whose only wrapper is a custom one would otherwise fail
+    /// inside <c>WithMavenGoal</c>/<c>WithGradleTask</c>, before the override could be applied.
+    /// <see cref="ValidateWrapperExists"/> performs the check once the configuration is final.
+    /// </remarks>
     private static string ResolveWrapperPath(JavaAppResource resource, JavaBuildTool tool)
     {
         if (resource.TryGetLastAnnotation<WrapperAnnotation>(out var wrapper))
@@ -719,18 +737,69 @@ public static class JavaHostingExtensions
             _ => throw new ArgumentOutOfRangeException(nameof(tool), tool, null)
         };
 
-        var wrapperPath = Path.Combine(resource.WorkingDirectory, wrapperName);
+        return PathNormalizer.NormalizePathForCurrentPlatform(Path.Combine(resource.WorkingDirectory, wrapperName));
+    }
 
-        if (!File.Exists(wrapperPath))
+    /// <summary>
+    /// Throws when the wrapper the resource will launch is not on disk.
+    /// </summary>
+    /// <remarks>
+    /// Deferred to resource start so that the whole AppHost has been authored first: only then is it
+    /// known whether a <see cref="WithWrapperPath{T}(IResourceBuilder{T}, string)"/> override supplied
+    /// the wrapper that the default location lacks.
+    /// </remarks>
+    private static void ValidateWrapperExists(JavaAppResource resource, JavaBuildTool tool)
+    {
+        var wrapperPath = ResolveWrapperPath(resource, tool);
+
+        if (File.Exists(wrapperPath))
         {
-            throw new DistributedApplicationException(
-                $"Java application '{resource.Name}' has no {wrapperName} in '{resource.WorkingDirectory}'. " +
-                $"Aspire runs Java applications through the project's own wrapper so that every build uses " +
-                $"the tool version the repository pins. Generate one with {GenerateWrapperCommand(tool)}, " +
-                $"or point at an existing wrapper with {nameof(WithWrapperPath)}.");
+            return;
         }
 
-        return PathNormalizer.NormalizePathForCurrentPlatform(wrapperPath);
+        if (resource.HasAnnotationOfType<WrapperAnnotation>())
+        {
+            throw new DistributedApplicationException(
+                $"Java application '{resource.Name}' has no wrapper at '{wrapperPath}'. That path came " +
+                $"from {nameof(WithWrapperPath)} and is resolved relative to the application's working " +
+                $"directory '{resource.WorkingDirectory}'.");
+        }
+
+        var wrapperName = tool switch
+        {
+            JavaBuildTool.Maven => s_defaultMavenWrapper,
+            JavaBuildTool.Gradle => s_defaultGradleWrapper,
+            _ => throw new ArgumentOutOfRangeException(nameof(tool), tool, null)
+        };
+
+        throw new DistributedApplicationException(
+            $"Java application '{resource.Name}' has no {wrapperName} in '{resource.WorkingDirectory}'. " +
+            $"Aspire runs Java applications through the project's own wrapper so that every build uses " +
+            $"the tool version the repository pins. Generate one with {GenerateWrapperCommand(tool)}, " +
+            $"or point at an existing wrapper with {nameof(WithWrapperPath)}.");
+    }
+
+    /// <summary>
+    /// Arranges for the resource's wrapper to be validated once its configuration is final.
+    /// </summary>
+    private static IResourceBuilder<T> WithDeferredWrapperValidation<T>(
+        this IResourceBuilder<T> builder,
+        JavaBuildTool tool) where T : JavaAppResource
+    {
+        // WithMavenGoal and WithMavenBuild both want this, and either may be called more than once, so
+        // the subscription is registered at most once per tool.
+        if (builder.Resource.Annotations.OfType<JavaWrapperValidationAnnotation>().Any(a => a.Tool == tool))
+        {
+            return builder;
+        }
+
+        builder.WithAnnotation(new JavaWrapperValidationAnnotation(tool));
+
+        return builder.OnBeforeResourceStarted((resource, _, _) =>
+        {
+            ValidateWrapperExists(resource, tool);
+            return Task.CompletedTask;
+        });
     }
 
     /// <summary>

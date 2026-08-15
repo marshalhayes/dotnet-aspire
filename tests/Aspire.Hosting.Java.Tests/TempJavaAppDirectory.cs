@@ -45,6 +45,20 @@ internal sealed class TempJavaAppDirectory : IDisposable
     {
         var fullPath = Write(fileName, "#!/bin/sh\nexit 0\n");
 
+        // A real wrapper is never just the script: the properties file next to it is what pins the tool
+        // version, and publishing requires it so the distribution can be unpacked in its own image layer.
+        var gradle = fileName.Contains("gradle", StringComparison.OrdinalIgnoreCase);
+        var supportDirectory = gradle ? "gradle" : ".mvn";
+        var propertiesName = gradle ? "gradle-wrapper.properties" : "maven-wrapper.properties";
+        var wrapperDirectory = System.IO.Path.GetDirectoryName(fullPath)!;
+
+        Directory.CreateDirectory(System.IO.Path.Combine(wrapperDirectory, supportDirectory, "wrapper"));
+        File.WriteAllText(
+            System.IO.Path.Combine(wrapperDirectory, supportDirectory, "wrapper", propertiesName),
+            gradle
+                ? "distributionUrl=https\\://services.gradle.org/distributions/gradle-8.14-bin.zip\n"
+                : "distributionUrl=https\\://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.9.9/apache-maven-3.9.9-bin.zip\n");
+
         if (!OperatingSystem.IsWindows())
         {
             File.SetUnixFileMode(

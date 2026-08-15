@@ -175,8 +175,15 @@ internal static class JavaDockerfileGenerator
             // Pinned rather than inherited: the cache mount targets a fixed path, and the official tool
             // images point their cache elsewhere (the gradle image defaults GRADLE_USER_HOME to
             // /home/gradle/.gradle), which would leave the mount unused and re-download on every build.
-            buildStage.Env(cacheHomeVariable, build.CacheTarget);
+            buildStage.Env(cacheHomeVariable, build.ToolHome);
         }
+
+        // Copied ahead of the sources and unpacked in a layer of its own. The build tool is a fixed input
+        // that only changes when the wrapper does, so this layer survives every source change, while the
+        // build layer below is invalidated by any file in the context.
+        buildStage.Copy(build.WrapperPath, $"./{build.WrapperPath}");
+        buildStage.Copy(build.WrapperSupportPath, $"./{build.WrapperSupportPath}");
+        buildStage.Run(build.WarmToolCommand);
 
         buildStage.Copy(".", ".");
 
@@ -185,7 +192,9 @@ internal static class JavaDockerfileGenerator
             // cannot move it somewhere COPY --from does not look.
             $"mkdir -p /build && {build.BuildCommand} && {build.SelectArtifactCommand}",
             // Both tools resolve dependencies from the network on a cold cache. A BuildKit cache mount
-            // keeps the local repository across builds without baking it into a layer.
+            // keeps the local repository across builds without baking it into a layer. Only the
+            // dependency directory is mounted, so the wrapper's copy of the build tool stays on the
+            // container filesystem where a damaged cache cannot corrupt it.
             // Locked because concurrent builds of sibling modules share one repository directory and
             // Maven's local repository is not safe for concurrent writers.
             // See https://maven.apache.org/guides/mini/guide-multiple-repositories.html
@@ -215,7 +224,15 @@ internal static class JavaDockerfileGenerator
         }
 
         // Container paths are POSIX even when the AppHost authored a Windows-style relative path.
-        var normalized = annotation.JarPath.Replace('\\', '/').TrimStart('.', '/');
+        var normalized = annotation.JarPath.Replace('\\', '/');
+
+        // Only a single leading "./" is stripped. Trimming every leading '.' and '/' would turn
+        // "../outside.jar" into "outside.jar", erasing the traversal before it could be detected and
+        // silently publishing a COPY of the wrong file.
+        if (normalized.StartsWith("./", StringComparison.Ordinal))
+        {
+            normalized = normalized[2..];
+        }
 
         if (Path.IsPathRooted(annotation.JarPath)
             || normalized.Split('/').Contains(".."))
@@ -339,16 +356,24 @@ internal static class JavaDockerfileGenerator
     /// <param name="Tool">The build tool that produces the JAR.</param>
     /// <param name="BuildCommand">The shell command that runs the build.</param>
     /// <param name="SelectArtifactCommand">The shell command that copies the produced JAR to a fixed path.</param>
-    /// <param name="CacheTarget">The container path holding the tool's dependency cache.</param>
-    /// <param name="CacheHomeVariable">The environment variable that pins the tool's cache to <paramref name="CacheTarget"/>, if it has one.</param>
+    /// <param name="ToolHome">The container path the build tool treats as its home directory.</param>
+    /// <param name="CacheTarget">The container path holding the tool's dependency cache, below <paramref name="ToolHome"/>.</param>
+    /// <param name="CacheHomeVariable">The environment variable that pins <paramref name="ToolHome"/>, if the tool has one.</param>
     /// <param name="CacheId">The BuildKit cache identity, scoped per tool and resource.</param>
+    /// <param name="WrapperPath">The wrapper script, relative to the build context.</param>
+    /// <param name="WrapperSupportPath">The wrapper's support directory, relative to the build context.</param>
+    /// <param name="WarmToolCommand">The shell command that makes the wrapper download and unpack the build tool.</param>
     private sealed record JavaContainerBuild(
         JavaBuildTool Tool,
         string BuildCommand,
         string SelectArtifactCommand,
+        string ToolHome,
         string CacheTarget,
         string? CacheHomeVariable,
-        string CacheId)
+        string CacheId,
+        string WrapperPath,
+        string WrapperSupportPath,
+        string WarmToolCommand)
     {
 
         public static JavaContainerBuild Resolve(JavaAppResource resource, string appDirectory)
@@ -367,14 +392,16 @@ internal static class JavaDockerfileGenerator
             // the identical arguments used on the host, where they are passed as separate argv entries.
             var buildCommand = $"{invocation} {string.Join(' ', buildArgs.Select(ShellQuoteIfNeeded))}";
 
-            var (outputGlob, cacheTarget, cacheHomeVariable) = tool switch
+            var (outputGlob, toolHome, cacheSubdirectory, cacheHomeVariable, supportDirectoryName, warmArgs) = tool switch
             {
                 // Maven resolves its local repository from the home directory and offers no variable that
                 // relocates it, so the mount targets root's default and the build stage runs as root.
-                JavaBuildTool.Maven => ("target/*.jar", "/root/.m2", null),
-                JavaBuildTool.Gradle => ("build/libs/*.jar", "/root/.gradle", "GRADLE_USER_HOME"),
+                JavaBuildTool.Maven => ("target/*.jar", "/root/.m2", "repository", (string?)null, ".mvn", "-B -ntp --version"),
+                JavaBuildTool.Gradle => ("build/libs/*.jar", "/root/.gradle", "caches", "GRADLE_USER_HOME", "gradle", "--no-daemon --version"),
                 _ => throw new UnreachableException()
             };
+
+            var wrapperSupportPath = ResolveWrapperSupportPath(resource, appDirectory, tool, wrapper, supportDirectoryName);
 
             var selectArtifact = resource.TryGetLastAnnotation<JavaJarArtifactAnnotation>(out var artifact)
                 ? $"cp {ShellQuote(artifact.RelativePath.Replace('\\', '/'))} {ContainerArtifactPath}"
@@ -384,11 +411,67 @@ internal static class JavaDockerfileGenerator
                 tool,
                 buildCommand,
                 selectArtifact,
-                cacheTarget,
+                toolHome,
+                // Only the dependency cache is mounted, never the whole tool home. The wrapper downloads
+                // and extracts the build tool itself into <tool home>/wrapper/dists, and a distribution
+                // left half-extracted there by an interrupted build would be reused by every later build,
+                // which fails while untarring over it and cannot be recovered without knowing to run
+                // `docker builder prune --filter type=exec.cachemount`. Keeping the distribution on the
+                // container filesystem means a damaged cache can only cost a re-download of dependencies.
+                CacheTarget: $"{toolHome}/{cacheSubdirectory}",
                 cacheHomeVariable,
                 // Scoped per resource so two Java applications built concurrently do not contend on one
                 // locked mount, and per tool because the two caches have different layouts.
-                CacheId: $"aspire-java-{tool.ToString().ToLowerInvariant()}-{resource.Name.ToLowerInvariant()}");
+                CacheId: $"aspire-java-{tool.ToString().ToLowerInvariant()}-{resource.Name.ToLowerInvariant()}",
+                WrapperPath: wrapper,
+                WrapperSupportPath: wrapperSupportPath,
+                WarmToolCommand: $"{invocation} {warmArgs}");
+        }
+
+        /// <summary>
+        /// Resolves the wrapper's support directory, which holds the properties file naming the build tool
+        /// distribution to download.
+        /// </summary>
+        /// <remarks>
+        /// This directory is copied into the image ahead of the application sources so the wrapper can unpack
+        /// the build tool in a layer of its own. Without that, the tool would be downloaded again on every
+        /// source change, because the single build layer is invalidated by any file in the context.
+        /// </remarks>
+        /// <exception cref="DistributedApplicationException">The properties file is missing.</exception>
+        private static string ResolveWrapperSupportPath(
+            JavaAppResource resource,
+            string appDirectory,
+            JavaBuildTool tool,
+            string wrapper,
+            string supportDirectoryName)
+        {
+            // The support directory sits next to the wrapper script, so a wrapper in a subdirectory of the
+            // context keeps its own .mvn/gradle directory there rather than at the context root.
+            var wrapperDirectory = Path.GetDirectoryName(wrapper.AsSpan());
+            var supportPath = wrapperDirectory.IsEmpty
+                ? supportDirectoryName
+                : $"{wrapperDirectory}/{supportDirectoryName}";
+
+            // Both wrappers store the distribution URL in <support>/wrapper/<tool>-wrapper.properties.
+            // https://maven.apache.org/wrapper/ and https://docs.gradle.org/current/userguide/gradle_wrapper.html
+            var propertiesName = $"{tool.ToString().ToLowerInvariant()}-wrapper.properties";
+            var propertiesPath = Path.Combine(
+                appDirectory,
+                supportPath.Replace('/', Path.DirectorySeparatorChar),
+                "wrapper",
+                propertiesName);
+
+            if (!File.Exists(propertiesPath))
+            {
+                throw new DistributedApplicationException(
+                    $"Java application '{resource.Name}' cannot be published because its {wrapper} has no " +
+                    $"'{supportPath}/wrapper/{propertiesName}'. That file pins the build tool version the " +
+                    $"image is built with. Regenerate the wrapper with " +
+                    $"{JavaHostingExtensions.GenerateWrapperCommand(tool)} and commit the whole " +
+                    $"'{supportPath}' directory.");
+            }
+
+            return supportPath;
         }
 
         /// <summary>
@@ -434,6 +517,27 @@ internal static class JavaDockerfileGenerator
                     throw new DistributedApplicationException(
                         $"Java application '{resource.Name}' cannot be published because the wrapper " +
                         $"configured with WithWrapperPath was not found at '{configured.WrapperPath}'.");
+                }
+
+                // The build stage is Linux, so a Windows batch wrapper cannot run there even though it is
+                // the right choice on the developer's machine. Maven and Gradle ship the POSIX script
+                // alongside the batch one under the same base name, so prefer that sibling and only fail
+                // when it is genuinely absent.
+                // https://maven.apache.org/wrapper/ and https://docs.gradle.org/current/userguide/gradle_wrapper.html
+                if (Path.GetExtension(relative) is ".cmd" or ".bat")
+                {
+                    var posixSibling = relative[..^Path.GetExtension(relative).Length];
+
+                    if (!File.Exists(Path.Combine(appDirectory, posixSibling.Replace('/', Path.DirectorySeparatorChar))))
+                    {
+                        throw new DistributedApplicationException(
+                            $"Java application '{resource.Name}' cannot be published because its wrapper " +
+                            $"'{relative}' is a Windows batch script and the container build stage is Linux. " +
+                            $"No '{posixSibling}' was found next to it. Generate the wrapper with " +
+                            $"{JavaHostingExtensions.GenerateWrapperCommand(tool)} so both scripts are present.");
+                    }
+
+                    return posixSibling;
                 }
 
                 return relative;
