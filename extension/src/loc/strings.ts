@@ -264,6 +264,8 @@ export const codeLensRustAppHostAlreadyRunning = vscode.l10n.t('⚠️ Do not cl
 export const codeLensRustAppHostAlreadyRunningTooltip = vscode.l10n.t('Use Aspire controls instead. rust-analyzer starts another Cargo process outside the running Aspire session.');
 export const codeLensRustAppHostUseAspire = vscode.l10n.t('⚠️ Do not click the rust-analyzer Run or Debug actions; they bypass Aspire');
 export const codeLensRustAppHostUseAspireTooltip = vscode.l10n.t('Use Aspire Run or Debug instead. rust-analyzer starts Cargo directly, so VS Code does not create or attach to an Aspire AppHost session.');
+export const codeLensSpringBootDashboardBypassesAspire = vscode.l10n.t('⚠️ Do not start this app from the Spring Boot Dashboard; it bypasses Aspire');
+export const codeLensSpringBootDashboardBypassesAspireTooltip = vscode.l10n.t('Use Aspire Run or Debug instead. The Spring Boot Dashboard starts the app on its own, so it receives none of the service discovery, connection string, or OpenTelemetry settings Aspire injects.');
 
 export const appHostLifecycleStartConfirmationTitle = vscode.l10n.t('Start Aspire AppHost');
 export const appHostLifecycleStopConfirmationTitle = vscode.l10n.t('Stop Aspire AppHost');

@@ -37,8 +37,30 @@ import {
     codeLensRustAppHostAlreadyRunningTooltip,
     codeLensRustAppHostUseAspire,
     codeLensRustAppHostUseAspireTooltip,
+    codeLensSpringBootDashboardBypassesAspire,
+    codeLensSpringBootDashboardBypassesAspireTooltip,
     codeLensResourceValueMissing,
 } from '../loc/strings';
+
+/**
+ * Extension that contributes the Spring Boot Dashboard view. Its Run/Debug buttons start the
+ * application directly, which is the hazard the Spring Boot warning lens exists to flag.
+ */
+const springBootDashboardExtensionId = 'vscjava.vscode-spring-boot-dashboard';
+
+/**
+ * Matches an AppHost statement that launches a Java resource through Spring Boot's own plugin, e.g.
+ *
+ *   builder.AddJavaApp("api", "../api").WithMavenGoal("spring-boot:run");   // C#
+ *   builder.addJavaApp('api', '../api').withGradleTask("bootRun");          // JS/TS
+ *   builder.add_java_app("api", "../api")?.with_maven_goal("spring-boot:run")?;  // Rust
+ *
+ * The optional underscores plus the case-insensitive flag cover all three casings from one pattern,
+ * which matters because the warning is about the Java *resource* and therefore has to work no matter
+ * which language the AppHost is written in. C# verbatim/interpolated prefixes are allowed on the
+ * literal; raw string literals are not, because nothing in the goal or task name needs escaping.
+ */
+const springBootLaunchPattern = /\bwith_?(?:maven_?goal|gradle_?task)\s*\(\s*[@$]*(['"])(?:spring-boot:run|bootRun)\1/gi;
 
 export class AspireCodeLensProvider implements vscode.CodeLensProvider {
     private readonly _onDidChangeCodeLenses = new vscode.EventEmitter<void>();
@@ -49,6 +71,7 @@ export class AspireCodeLensProvider implements vscode.CodeLensProvider {
     constructor(
         private readonly _treeProvider: AspireAppHostTreeProvider,
         private readonly _dataRepository: AppHostDataRepository,
+        private readonly _isExtensionInstalled: (extensionId: string) => boolean = extensionId => vscode.extensions.getExtension(extensionId) !== undefined,
     ) {
         // Re-compute lenses whenever the polling data changes
         this._disposables.push(
@@ -96,6 +119,8 @@ export class AspireCodeLensProvider implements vscode.CodeLensProvider {
         // document maps to a concretely-running AppHost — independent of whether any
         // Add* resource calls were found in the file.
         await this._addBuilderStatementLenses(lenses, document, parser, workspaceAppHostPath, workspaceResources);
+
+        this._addSpringBootDashboardLenses(lenses, document);
 
         if (resources.length === 0) {
             return lenses;
@@ -152,6 +177,47 @@ export class AspireCodeLensProvider implements vscode.CodeLensProvider {
             tooltip: codeLensDebugPipelineStep,
             arguments: [stepName],
         }));
+    }
+
+    /**
+     * Warns, on each Java resource launched through Spring Boot's Maven plugin or Gradle task, that
+     * the Spring Boot Dashboard's Run/Debug buttons start the app outside Aspire.
+     *
+     * Only shown when that extension is installed: unlike rust-analyzer on a Rust AppHost, the
+     * Spring Boot Dashboard is not implied by the presence of a Java resource, and warning about an
+     * extension the user does not have is noise.
+     *
+     * The scan is textual rather than parser-driven because a Java resource can be declared from any
+     * AppHost language and the goal or task name is the only reliable in-document signal that the
+     * resource is a Spring Boot app. Deciding it from the project's own `pom.xml`/`build.gradle`
+     * would mean reading files off disk on every keystroke.
+     */
+    private _addSpringBootDashboardLenses(lenses: vscode.CodeLens[], document: vscode.TextDocument): void {
+        if (!this._isExtensionInstalled(springBootDashboardExtensionId)) {
+            return;
+        }
+
+        const text = document.getText();
+        // Shared regex literals keep `lastIndex` between calls, so reset before iterating.
+        springBootLaunchPattern.lastIndex = 0;
+
+        const warnedLines = new Set<number>();
+        let match: RegExpExecArray | null;
+        while ((match = springBootLaunchPattern.exec(text)) !== null) {
+            const line = document.positionAt(match.index).line;
+            if (warnedLines.has(line)) {
+                continue;
+            }
+
+            warnedLines.add(line);
+            const range = new vscode.Range(line, 0, line, 0);
+            // An empty command id renders the warning as plain text rather than an inert link.
+            lenses.push(new vscode.CodeLens(range, {
+                title: codeLensSpringBootDashboardBypassesAspire,
+                command: '',
+                tooltip: codeLensSpringBootDashboardBypassesAspireTooltip,
+            }));
+        }
     }
 
     private async _addBuilderStatementLenses(
