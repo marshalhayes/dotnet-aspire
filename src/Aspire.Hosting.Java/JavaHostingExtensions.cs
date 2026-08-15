@@ -1405,10 +1405,23 @@ public static partial class JavaHostingExtensions
                     WorkingDirectory = builder.Resource.WorkingDirectory,
                     MainClass = mainClass,
                     ClassPaths = classPaths,
-                    // Only sent as a fallback. When the entry point is known the adapter has no
-                    // resolution to do, and naming a project it imported under a different name would
-                    // turn a working launch into a "class not found" failure.
-                    ProjectName = mainClass is null ? TryResolveIdeProjectName(builder.Resource) : null,
+                    // projectName scopes the adapter's entry point resolution to this resource's own
+                    // project. It is sent alongside mainClass rather than only as a fallback: given
+                    // mainClass alone the adapter searches every project in the workspace, and a class
+                    // that turns up in more than one fails the launch outright with
+                    // "Main class ... isn't unique in the workspace". That happens whenever a directory
+                    // is covered both by its own build file and by another project's source root, which
+                    // is easy to arrange by accident and impossible to diagnose from the error.
+                    //
+                    // The name is read out of pom.xml or settings.gradle rather than derived from the
+                    // resource name, so it is the name m2e and Buildship import the project under.
+                    //
+                    // It is omitted when explicit class paths are supplied, because such a resource runs
+                    // from a prebuilt archive rather than from a project the language server compiled,
+                    // so there may be no imported project to scope to.
+                    ProjectName = classPaths is { Length: > 0 }
+                        ? null
+                        : TryResolveIdeProjectName(builder.Resource),
                     BuildTool = builder.Resource.TryGetLastAnnotation<JavaBuildToolAnnotation>(out var buildTool)
                         ? buildTool.Tool.ToString().ToLowerInvariant()
                         : null
@@ -1604,6 +1617,7 @@ public static partial class JavaHostingExtensions
     /// <summary>
     /// Resolves the name the Java language server imported this resource's project under, so the debug
     /// adapter can scope entry point resolution to it instead of searching the whole workspace.
+    /// Returns <see langword="null"/> when the imported name cannot be predicted with confidence.
     /// </summary>
     private static string? TryResolveIdeProjectName(JavaAppResource resource)
     {
@@ -1612,12 +1626,31 @@ public static partial class JavaHostingExtensions
             return null;
         }
 
-        return buildTool.Tool switch
+        var declaredName = buildTool.Tool switch
         {
             JavaBuildTool.Maven => TryReadMavenArtifactId(Path.Combine(resource.WorkingDirectory, "pom.xml")),
             JavaBuildTool.Gradle => TryReadGradleProjectName(resource.WorkingDirectory),
             _ => null
         };
+
+        if (declaredName is null)
+        {
+            return null;
+        }
+
+        // The declared name is only used when the project directory is named the same, because that is
+        // the case where the language server is known to import the project under it. The two are not
+        // always the same: a Gradle build declaring `rootProject.name = 'javaspringboot-apphost'` inside
+        // a folder named JavaSpringBoot.AppHost.Java is imported as
+        // "javaspringboot-apphost-JavaSpringBoot.AppHost.Java", appending the directory to keep the name
+        // unambiguous.
+        //
+        // Guessing wrong is worse than not guessing. Without a project name the adapter resolves the
+        // entry point across the whole workspace, which succeeds whenever that entry point is unique;
+        // with a name no project answers to, every launch fails.
+        var directoryName = new DirectoryInfo(resource.WorkingDirectory).Name;
+
+        return string.Equals(declaredName, directoryName, StringComparison.Ordinal) ? declaredName : null;
     }
 
     /// <summary>

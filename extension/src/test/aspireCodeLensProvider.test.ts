@@ -8,7 +8,7 @@ import { AspireCodeLensProvider } from '../editor/AspireCodeLensProvider';
 import { AspireGutterDecorationProvider } from '../editor/AspireGutterDecorationProvider';
 import * as AppHostResourceParser from '../editor/parsers/AppHostResourceParser';
 import { ParsedResource } from '../editor/parsers/AppHostResourceParser';
-import { codeLensCommand, codeLensResourceValueMissing, codeLensRustAppHostUseAspire, codeLensSpringBootDashboardBypassesAspire, codeLensSpringBootDashboardBypassesAspireTooltip } from '../loc/strings';
+import { codeLensCommand, codeLensJavaAppHostAlreadyRunning, codeLensJavaAppHostAlreadyRunningTooltip, codeLensJavaAppHostUseAspire, codeLensJavaAppHostUseAspireTooltip, codeLensResourceValueMissing, codeLensRustAppHostUseAspire, codeLensSpringBootDashboardBypassesAspire, codeLensSpringBootDashboardBypassesAspireTooltip } from '../loc/strings';
 import { ResourceState, ResourceType } from '../editor/resourceConstants';
 import { AspireAppHostTreeProvider } from '../views/AspireAppHostTreeProvider';
 import { AppHostDataRepository, AppHostDisplayInfo, ResourceJson } from '../data/AppHostDataRepository';
@@ -1208,6 +1208,121 @@ suite('AspireCodeLensProvider resource lens anchoring', () => {
         assert.strictEqual(reveals[0].command?.title, codeLensResourceValueMissing);
         harness.dispose();
     });
+    suite('Java AppHost entry point warning', () => {
+        const javaDebug = 'vscjava.vscode-java-debug';
+        const javaAppHostPath = p('repo', 'AppHost', 'AppHost.java');
+
+        function entryPointLenses(lenses: vscode.CodeLens[]): vscode.CodeLens[] {
+            return lenses.filter(lens =>
+                lens.command?.title === codeLensJavaAppHostUseAspire ||
+                lens.command?.title === codeLensJavaAppHostAlreadyRunning);
+        }
+
+        async function lensesFor(content: string, opts: Parameters<typeof createHarness>[0] = { installedExtensions: [javaDebug] }): Promise<vscode.CodeLens[]> {
+            const harness = createHarness(opts);
+            const lenses = entryPointLenses(await harness.provider.provideCodeLenses(createMockDocument(content, javaAppHostPath), cancellationToken) as vscode.CodeLens[]);
+            harness.dispose();
+            return lenses;
+        }
+
+        test('warns on the implicitly declared instance main the Java AppHost actually ships', async () => {
+            // JEP 512: a source-launched AppHost.java has no class, no modifiers and no parameters.
+            // Requiring `public static` would have missed every AppHost in the repo.
+            const lenses = await lensesFor([
+                'import aspire.*;',
+                '',
+                'void main() throws Exception {',
+                '    var builder = DistributedApplication.CreateBuilder();',
+                '    builder.build().run();',
+                '}',
+            ].join('\n'));
+
+            assert.strictEqual(lenses.length, 1);
+            assert.strictEqual(lenses[0].range.start.line, 2, 'the warning belongs on the declaration the Run/Debug lens sits above');
+            assert.strictEqual(lenses[0].command?.title, codeLensJavaAppHostUseAspire);
+            assert.strictEqual(lenses[0].command?.tooltip, codeLensJavaAppHostUseAspireTooltip);
+            // Rendered as plain text: a stopped AppHost has nothing in the tree to reveal.
+            assert.strictEqual(lenses[0].command?.command, '');
+        });
+
+        test('warns on every classic entry point shape', async () => {
+            const shapes = [
+                'public static void main(String[] args) {',
+                'static public void main(final String... argv) {',
+                'public static void main(String args[]) throws Exception {',
+                'private static void main(String[] a) {',
+                'void main() {',
+                'void main(String[] args) {',
+            ];
+
+            for (const shape of shapes) {
+                const lenses = await lensesFor(`class AppHost {\n    ${shape}\n    }\n}`);
+                assert.strictEqual(lenses.length, 1, `expected a warning for: ${shape}`);
+                assert.strictEqual(lenses[0].range.start.line, 1, `wrong line for: ${shape}`);
+            }
+        });
+
+        test('does not warn without the Java debug extension, which is what draws the Run/Debug lens', async () => {
+            const lenses = await lensesFor('void main() {\n}', { installedExtensions: [] });
+
+            assert.deepStrictEqual(lenses, []);
+        });
+
+        test('does not warn on a file that is not an AppHost', async () => {
+            const harness = createHarness({ installedExtensions: [javaDebug] });
+            const otherFile = p('repo', 'api', 'src', 'main', 'java', 'Application.java');
+
+            const lenses = entryPointLenses(await harness.provider.provideCodeLenses(
+                createMockDocument('public static void main(String[] args) {\n}', otherFile), cancellationToken) as vscode.CodeLens[]);
+
+            assert.deepStrictEqual(lenses, [], 'only AppHost.java gets the warning; every other Java file is a legitimate Run/Debug target');
+            harness.dispose();
+        });
+
+        test('does not warn on a commented-out or quoted main', async () => {
+            const lenses = await lensesFor([
+                '// void main() {',
+                '/* public static void main(String[] args) { */',
+                'var sample = "void main() {";',
+            ].join('\n'));
+
+            assert.deepStrictEqual(lenses, []);
+        });
+
+        test('does not warn on a main that takes something other than a String', async () => {
+            const lenses = await lensesFor('class AppHost {\n    static void main(int iterations) {\n    }\n}');
+
+            assert.deepStrictEqual(lenses, [], 'a helper named main is not an entry point and gets no Run/Debug lens');
+        });
+
+        test('warns once when the file declares more than one main', async () => {
+            const lenses = await lensesFor([
+                'void main() {',
+                '}',
+                'class Helper {',
+                '    public static void main(String[] args) {',
+                '    }',
+                '}',
+            ].join('\n'));
+
+            assert.strictEqual(lenses.length, 1, 'only the first entry point is reachable, so only it is warned about');
+            assert.strictEqual(lenses[0].range.start.line, 0);
+        });
+
+        test('points at the running AppHost once it is started under Aspire', async () => {
+            const lenses = await lensesFor('void main() {\n}', {
+                installedExtensions: [javaDebug],
+                appHosts: [makeAppHost(javaAppHostPath)],
+            });
+
+            assert.strictEqual(lenses.length, 1);
+            assert.strictEqual(lenses[0].command?.title, codeLensJavaAppHostAlreadyRunning);
+            assert.strictEqual(lenses[0].command?.tooltip, codeLensJavaAppHostAlreadyRunningTooltip);
+            assert.strictEqual(lenses[0].command?.command, 'aspire-vscode.codeLensRevealAppHost');
+            assert.deepStrictEqual(lenses[0].command?.arguments, [javaAppHostPath]);
+        });
+    });
+
     suite('Spring Boot Dashboard warning', () => {
         const springBootDashboard = 'vscjava.vscode-spring-boot-dashboard';
 

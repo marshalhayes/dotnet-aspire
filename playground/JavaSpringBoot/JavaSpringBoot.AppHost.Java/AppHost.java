@@ -8,7 +8,7 @@ void main() throws Exception {
 
     // Maven, detected from the pom.xml in the directory. addSpringBootApp builds the application,
     // launches it through spring-boot:run, and declares an HTTP endpoint through SERVER_PORT.
-    var catalog = builder.addSpringBootApp("catalog", "./catalog")
+    var catalog = builder.addSpringBootApp("catalog", "../catalog")
         // Reads target/agent/opentelemetry-javaagent.jar, which the POM copies there during the build.
         .withOtelAgentDefaultPath()
         .withHttpHealthCheck(new WithHttpHealthCheckOptions().path("/actuator/health"))
@@ -16,7 +16,7 @@ void main() throws Exception {
 
     // Gradle, detected from build.gradle. Identical AppHost code to the Maven service above, because
     // the build tool is a property of the project rather than something the AppHost restates.
-    builder.addSpringBootApp("orders", "./orders")
+    builder.addSpringBootApp("orders", "../orders")
         .withOtelAgentDefaultPath()
         .withHttpHealthCheck(new WithHttpHealthCheckOptions().path("/actuator/health"))
         .withExternalHttpEndpoints()
@@ -26,7 +26,7 @@ void main() throws Exception {
         .waitFor(catalog);
 
     // A plain JAR with no framework, built by Maven before it runs.
-    builder.addJavaAppWithJar("worker", "./worker", "target/worker-0.0.1-SNAPSHOT.jar",
+    builder.addJavaAppWithJar("worker", "../worker", "target/worker-0.0.1-SNAPSHOT.jar",
             new String[] { "--interval-seconds", "10" })
         .withMavenBuild(new String[] { "-B", "-ntp", "-DskipTests", "package" })
         // Publishing has to know which JAR is the application, or the container build finds both

@@ -8,14 +8,24 @@ namespace Aspire.Hosting.Java.Tests;
 /// </summary>
 internal sealed class TempJavaAppDirectory : IDisposable
 {
-    private readonly DirectoryInfo _directory = Directory.CreateTempSubdirectory("aspire-java-tests");
+    private readonly DirectoryInfo _root = Directory.CreateTempSubdirectory("aspire-java-tests");
+    private readonly DirectoryInfo _directory;
 
     /// <param name="withWrappers">
     /// Whether to seed both wrapper scripts. Aspire requires a wrapper, so a project that ships one is the
     /// normal case; pass <see langword="false"/> to exercise the rejection.
     /// </param>
-    public TempJavaAppDirectory(bool withWrappers = true)
+    /// <param name="directoryName">
+    /// Name to give the application's own directory. The default random name is fine for most tests, but
+    /// the name a project is imported under in the IDE is only trusted when it matches the directory, so
+    /// tests covering that have to control it.
+    /// </param>
+    public TempJavaAppDirectory(bool withWrappers = true, string? directoryName = null)
     {
+        _directory = directoryName is null
+            ? _root
+            : Directory.CreateDirectory(System.IO.Path.Combine(_root.FullName, directoryName));
+
         if (withWrappers)
         {
             WriteWrapper(OperatingSystem.IsWindows() ? "mvnw.cmd" : "mvnw");
@@ -75,7 +85,7 @@ internal sealed class TempJavaAppDirectory : IDisposable
     {
         try
         {
-            _directory.Delete(recursive: true);
+            _root.Delete(recursive: true);
         }
         catch (IOException)
         {

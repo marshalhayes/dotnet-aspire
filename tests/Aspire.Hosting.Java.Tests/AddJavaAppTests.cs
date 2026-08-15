@@ -1299,7 +1299,7 @@ public class AddJavaAppTests
     public async Task AddJavaApp_WithoutAJar_LaunchesTheStartClassOfTheRepackagedSpringBootArchive(string tool, string outputDirectory)
     {
         using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Run);
-        using var tempDir = new TempJavaAppDirectory();
+        using var tempDir = new TempJavaAppDirectory(directoryName: "catalog");
         tempDir.WriteWrapper(tool == "maven" ? JavaHostingExtensions.s_defaultMavenWrapper : JavaHostingExtensions.s_defaultGradleWrapper);
 
         // Repackaging points Main-Class at the launcher and records the application's own entry point
@@ -1313,13 +1313,32 @@ public class AddJavaAppTests
         var app = builder.AddJavaApp("catalog", tempDir.Path);
         _ = tool == "maven" ? app.WithMavenGoal("spring-boot:run") : app.WithGradleTask("bootRun");
 
+        // The build file is what the project name is read from, and the directory is named to match it,
+        // which is the condition under which the IDE imports the project under that same name.
+        File.WriteAllText(
+            Path.Combine(tempDir.Path, tool == "maven" ? "pom.xml" : "settings.gradle"),
+            tool == "maven"
+                ? """
+                    <?xml version="1.0" encoding="UTF-8"?>
+                    <project xmlns="http://maven.apache.org/POM/4.0.0">
+                        <modelVersion>4.0.0</modelVersion>
+                        <groupId>com.example</groupId>
+                        <artifactId>catalog</artifactId>
+                        <version>0.0.1-SNAPSHOT</version>
+                    </project>
+                    """
+                : "rootProject.name = 'catalog'\n");
+
         var launchConfiguration = await GetLaunchConfigurationAsync(app);
 
         Assert.Equal("com.example.catalog.CatalogApplication", launchConfiguration.MainClass);
         // The classpath stays with the language server so breakpoints bind to the source being edited
         // rather than to the classes inside the archive.
         Assert.Null(launchConfiguration.ClassPaths);
-        Assert.Null(launchConfiguration.ProjectName);
+        // Sent alongside the main class, not instead of it. Given a class and no project the adapter
+        // searches every project in the workspace and refuses to launch with "Main class ... isn't
+        // unique in the workspace" whenever the class is visible through more than one of them.
+        Assert.Equal("catalog", launchConfiguration.ProjectName);
     }
 
     [Fact]
@@ -1401,7 +1420,7 @@ public class AddJavaAppTests
     public async Task AddJavaApp_WithNoResolvableEntryPoint_NamesTheMavenProjectSoTheIdeDoesNotPrompt()
     {
         using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Run);
-        using var tempDir = new TempJavaAppDirectory();
+        using var tempDir = new TempJavaAppDirectory(directoryName: "catalog");
         tempDir.WriteWrapper(JavaHostingExtensions.s_defaultMavenWrapper);
 
         // <parent> declares an artifactId too, and it is the one a descendant search finds first.
@@ -1432,7 +1451,7 @@ public class AddJavaAppTests
     public async Task AddJavaApp_WithNoResolvableEntryPoint_NamesTheGradleProjectFromItsSettingsFile()
     {
         using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Run);
-        using var tempDir = new TempJavaAppDirectory();
+        using var tempDir = new TempJavaAppDirectory(directoryName: "orders");
         tempDir.WriteWrapper(JavaHostingExtensions.s_defaultGradleWrapper);
 
         File.WriteAllText(Path.Combine(tempDir.Path, "settings.gradle"), "rootProject.name = 'orders'\n");
@@ -1459,5 +1478,63 @@ public class AddJavaAppTests
         Assert.Equal(
             Path.GetFileName(tempDir.Path.TrimEnd(Path.DirectorySeparatorChar)),
             launchConfiguration.ProjectName);
+    }
+
+    [Fact]
+    public async Task AddJavaApp_WhenTheProjectDirectoryIsNamedDifferently_DoesNotGuessTheIdeProjectName()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Run);
+        using var tempDir = new TempJavaAppDirectory(directoryName: "JavaSpringBoot.AppHost.Java");
+        tempDir.WriteWrapper(JavaHostingExtensions.s_defaultGradleWrapper);
+
+        File.WriteAllText(
+            Path.Combine(tempDir.Path, "settings.gradle"),
+            "rootProject.name = 'javaspringboot-apphost'\n");
+
+        var app = builder.AddJavaApp("apphost", tempDir.Path).WithGradleTask("bootRun");
+
+        var launchConfiguration = await GetLaunchConfigurationAsync(app);
+
+        // The language server appends the directory when it disagrees with the declared name, importing
+        // this project as "javaspringboot-apphost-JavaSpringBoot.AppHost.Java". Sending the declared name
+        // would name a project that does not exist and fail every launch, so nothing is sent and the
+        // adapter resolves the entry point across the workspace as it did before.
+        Assert.Null(launchConfiguration.ProjectName);
+    }
+
+    [Fact]
+    public async Task AddJavaApp_WithAnExplicitJar_DoesNotScopeResolutionToAProject()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Run);
+        using var tempDir = new TempJavaAppDirectory(directoryName: "worker");
+        tempDir.WriteWrapper(JavaHostingExtensions.s_defaultMavenWrapper);
+
+        File.WriteAllText(Path.Combine(tempDir.Path, "pom.xml"), """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+                <modelVersion>4.0.0</modelVersion>
+                <groupId>com.example</groupId>
+                <artifactId>worker</artifactId>
+                <version>0.0.1-SNAPSHOT</version>
+            </project>
+            """);
+
+        WriteJarWithManifest(
+            tempDir.Path,
+            Path.Combine("target", "worker-0.0.1-SNAPSHOT.jar"),
+            mainClass: "com.example.worker.Worker");
+
+        var app = builder
+            .AddJavaApp("worker", tempDir.Path, Path.Combine("target", "worker-0.0.1-SNAPSHOT.jar"))
+            .WithMavenBuild("package");
+
+        var launchConfiguration = await GetLaunchConfigurationAsync(app);
+
+        // The archive is on the classpath, so the adapter launches from it rather than from a project
+        // the language server compiled. Naming a project as well would ask it to resolve the class
+        // somewhere it does not have to exist.
+        Assert.Equal("com.example.worker.Worker", launchConfiguration.MainClass);
+        Assert.NotNull(launchConfiguration.ClassPaths);
+        Assert.Null(launchConfiguration.ProjectName);
     }
 }

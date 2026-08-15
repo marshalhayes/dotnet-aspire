@@ -201,15 +201,17 @@ export const javaDebuggerExtension: ResourceDebuggerExtension = {
         //
         // When it is absent the adapter resolves the entry point itself, and in a workspace holding
         // several Java resources it finds one main class per project and prompts the user to pick.
-        // projectName narrows that search to this resource's project so a single candidate remains
-        // and no prompt appears. It is only sent when the app host could not determine the class,
-        // because naming a project the tooling imported under a different name would turn a working
-        // launch into a class resolution failure.
+        // projectName narrows that search to this resource's project, and the app host sends it
+        // whenever it could read the project's name out of its build file -- with or without a main
+        // class. Scoping matters in both cases: without a main class it stops the prompt, and with one
+        // it stops the adapter failing with "Main class ... isn't unique in the workspace" when the
+        // same class is visible through two projects.
         // https://github.com/microsoft/vscode-java-debug/blob/main/Configuration.md#projectname
         if (launchConfig.main_class) {
             debugConfiguration.mainClass = launchConfig.main_class;
         }
-        else if (launchConfig.project_name) {
+
+        if (launchConfig.project_name) {
             debugConfiguration.projectName = launchConfig.project_name;
         }
 

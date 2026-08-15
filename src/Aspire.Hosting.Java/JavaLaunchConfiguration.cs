@@ -58,12 +58,15 @@ internal sealed class JavaLaunchConfiguration() : ExecutableLaunchConfiguration(
 
     /// <summary>
     /// The name the IDE's Java tooling imported this resource's project under, used to scope main class
-    /// resolution. Only sent when <see cref="MainClass"/> could not be determined.
+    /// resolution.
     /// </summary>
     /// <remarks>
-    /// Without it the debug adapter searches every project in the workspace, finds a main class in each
-    /// Java resource, and prompts the user to choose one on every launch. Scoping the search to one
-    /// project leaves a single candidate, which the adapter then uses without asking.
+    /// Sent whether or not <see cref="MainClass"/> is known, because the adapter needs the scope in
+    /// both cases. Without a main class it searches every project in the workspace, finds one in each
+    /// Java resource, and prompts the user to choose on every launch. With a main class it still
+    /// searches the whole workspace, and fails the launch with "Main class ... isn't unique in the
+    /// workspace" if the class is visible through more than one project. Scoping the search to a single
+    /// project resolves both.
     /// </remarks>
     [JsonPropertyName("project_name")]
     public string? ProjectName { get; set; }

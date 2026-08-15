@@ -169,9 +169,11 @@ suite('Java Debugger Extension Tests', () => {
         assert.ok(!('mainClass' in debugConfig), 'mainClass must stay unset so the adapter resolves it within the named project.');
     });
 
-    test('prefers a known main class over the project name', async () => {
-        // Naming a project the Java tooling imported under a different name turns a launch that would
-        // have worked into a class resolution failure, so it is only a fallback.
+    test('scopes a known main class to the reported project so it cannot resolve ambiguously', async () => {
+        // Regression: with mainClass alone the adapter searches every project in the workspace and
+        // fails with "Main class 'com.example.catalog.CatalogApplication' isn't unique in the
+        // workspace" as soon as the class is visible through two projects, which happens whenever a
+        // directory is covered both by its own build file and by another project's source root.
         const debugConfig = createDebugConfig();
 
         await javaDebuggerExtension.createDebugSessionConfigurationCallback!(
@@ -182,7 +184,7 @@ suite('Java Debugger Extension Tests', () => {
             debugConfig);
 
         assert.strictEqual(debugConfig.mainClass, 'com.example.api.Application');
-        assert.ok(!('projectName' in debugConfig), 'projectName must stay unset when the entry point is already known.');
+        assert.strictEqual(debugConfig.projectName, 'catalog');
     });
 
     test('forwards application arguments and defaults them to an empty array', async () => {

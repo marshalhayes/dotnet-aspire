@@ -7,8 +7,8 @@
     "experimentalPolyglot:java": true
   },
   "packages": {
-    "Aspire.Hosting.Java": "../../src/Aspire.Hosting.Java/Aspire.Hosting.Java.csproj",
-    "Aspire.Hosting.CodeGeneration.Java": "../../src/Aspire.Hosting.CodeGeneration.Java/Aspire.Hosting.CodeGeneration.Java.csproj"
+    "Aspire.Hosting.Java": "../../../src/Aspire.Hosting.Java/Aspire.Hosting.Java.csproj",
+    "Aspire.Hosting.CodeGeneration.Java": "../../../src/Aspire.Hosting.CodeGeneration.Java/Aspire.Hosting.CodeGeneration.Java.csproj"
   },
   "profiles": {
     "https": {

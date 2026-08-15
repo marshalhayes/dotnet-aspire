@@ -38,6 +38,10 @@ import {
     codeLensRustAppHostAlreadyRunningTooltip,
     codeLensRustAppHostUseAspire,
     codeLensRustAppHostUseAspireTooltip,
+    codeLensJavaAppHostAlreadyRunning,
+    codeLensJavaAppHostAlreadyRunningTooltip,
+    codeLensJavaAppHostUseAspire,
+    codeLensJavaAppHostUseAspireTooltip,
     codeLensSpringBootDashboardBypassesAspire,
     codeLensSpringBootDashboardBypassesAspireTooltip,
     codeLensResourceValueMissing,
@@ -48,6 +52,34 @@ import {
  * application directly, which is the hazard the Spring Boot warning lens exists to flag.
  */
 const springBootDashboardExtensionId = 'vscjava.vscode-spring-boot-dashboard';
+
+/**
+ * Extension that contributes the `Run | Debug` CodeLens above every Java `main` method. On an
+ * AppHost that action runs the file as a plain Java program, which is the hazard the entry-point
+ * warning exists to flag. It ships in the Java extension pack, so almost anyone editing Java in
+ * VS Code has it.
+ */
+const javaDebugExtensionId = 'vscjava.vscode-java-debug';
+
+/**
+ * Matches the Java entry point that `vscjava.vscode-java-debug` anchors its `Run | Debug` lens to:
+ *
+ *   public static void main(String[] args) {
+ *   static public void main(final String... argv)
+ *   public static void main(String args[]) throws Exception {
+ *   void main() throws Exception {          // JEP 512 implicitly declared class: no modifiers at all
+ *
+ * The modifiers are optional and unordered. Requiring `public static` would miss the form the Java
+ * AppHost actually ships: a source-launched `AppHost.java` is an implicitly declared class whose
+ * entry point is an instance `void main()` taking no parameters, and the Java extension offers
+ * Run/Debug on that just the same. See https://openjdk.org/jeps/512.
+ *
+ * Modelling Java's full entry-point rules is not worth it here, because the caller has already
+ * narrowed the document to a file named `AppHost.java`, where any `void main` is the entry point.
+ * The parameter list is captured only so an unrelated `void main(int)` helper can be skipped;
+ * nothing past it is parsed, since the lens goes on the declaration line and never inside the body.
+ */
+const javaMainMethodPattern = /^[^\S\r\n]*(?:(?:public|protected|private|static|final)[^\S\r\n]+)*void[^\S\r\n]+main[^\S\r\n]*\(([^)]*)\)/gm;
 
 /**
  * Matches an AppHost statement that launches a Java resource through Spring Boot's own plugin, e.g.
@@ -142,6 +174,7 @@ export class AspireCodeLensProvider implements vscode.CodeLensProvider {
             }
 
             const warningOnlyLenses: vscode.CodeLens[] = [];
+            await this._addJavaAppHostEntryPointLens(warningOnlyLenses, document);
             await this._addSpringBootDashboardLenses(warningOnlyLenses, document, parser);
 
             return warningOnlyLenses;
@@ -227,6 +260,79 @@ export class AspireCodeLensProvider implements vscode.CodeLensProvider {
             tooltip: codeLensDebugPipelineStep,
             arguments: [stepName],
         }));
+    }
+
+    /**
+     * Warns, on the `main` declaration of a Java AppHost, that the Java extension's `Run | Debug`
+     * lens directly above it starts the file outside Aspire.
+     *
+     * This is the Java counterpart to the rust-analyzer warning on a Rust AppHost, and the hazard is
+     * larger: running `AppHost.java` as a plain Java program starts the AppHost with no Aspire
+     * session at all, so none of its resources launch and no dashboard appears. The failure is quiet
+     * enough to look like the AppHost itself is broken.
+     *
+     * Gated on the Java debug extension for the same reason the Spring Boot warning is gated on the
+     * Spring Boot Dashboard: without it there is no Run/Debug lens to warn about, and VS Code still
+     * reports `java` as the language id from its built-in grammar alone.
+     */
+    private async _addJavaAppHostEntryPointLens(
+        lenses: vscode.CodeLens[],
+        document: vscode.TextDocument,
+    ): Promise<void> {
+        if (document.languageId !== 'java' || !this._isExtensionInstalled(javaDebugExtensionId)) {
+            return;
+        }
+
+        const text = document.getText();
+        // Shared regex literals keep `lastIndex` between calls, so reset before iterating.
+        javaMainMethodPattern.lastIndex = 0;
+
+        const offsets: number[] = [];
+        let match: RegExpExecArray | null;
+        while ((match = javaMainMethodPattern.exec(text)) !== null) {
+            const parameters = match[1].trim();
+            if (parameters !== '' && !parameters.includes('String')) {
+                continue;
+            }
+
+            offsets.push(match.index);
+        }
+
+        if (offsets.length === 0) {
+            return;
+        }
+
+        // A `main` inside a comment or a string is not an entry point, and the Java extension puts no
+        // lens on one. There is no Java parser here, so this is the same textual filter the Spring
+        // Boot warning falls back to.
+        const activeOffsets = filterActiveOffsetsInPlainText(document.languageId, text, offsets);
+        if (activeOffsets.length === 0) {
+            return;
+        }
+
+        // Only the first entry point is warned about. A second `void main` in the same file is not
+        // reachable as an entry point, so a warning there would point at something that cannot run.
+        const line = document.positionAt(activeOffsets[0]).line;
+        const runningAppHostPath = this._resolveAppHostPathForDocument(
+            document,
+            this._treeProvider.workspaceAppHostPath ?? '',
+            this._treeProvider.workspaceResources);
+
+        const range = new vscode.Range(line, 0, line, 0);
+        // The tree only holds running AppHosts, so revealing a stopped one has nothing to select. An
+        // empty command id makes VS Code render the warning as plain text instead of a dead link.
+        lenses.push(new vscode.CodeLens(range, runningAppHostPath
+            ? {
+                title: codeLensJavaAppHostAlreadyRunning,
+                command: 'aspire-vscode.codeLensRevealAppHost',
+                tooltip: codeLensJavaAppHostAlreadyRunningTooltip,
+                arguments: [runningAppHostPath],
+            }
+            : {
+                title: codeLensJavaAppHostUseAspire,
+                command: '',
+                tooltip: codeLensJavaAppHostUseAspireTooltip,
+            }));
     }
 
     /**
