@@ -35,10 +35,9 @@ Then, in the AppHost, add a Java application resource and reference it from anot
 ```csharp
 var builder = DistributedApplication.CreateBuilder(args);
 
-var catalog = builder.AddJavaApp("catalog", "../catalog")
-    .WithMavenGoal("spring-boot:run")
-    // Spring Boot reads SERVER_PORT, so the port Aspire assigns reaches the app with no code change.
-    .WithHttpEndpoint(env: "SERVER_PORT")
+// Detects Maven or Gradle from the build file, builds the app, launches it through the Spring Boot
+// plugin, and declares an HTTP endpoint through SERVER_PORT, which is the port Spring Boot listens on.
+var catalog = builder.AddSpringBootApp("catalog", "../catalog")
     .WithExternalHttpEndpoints();
 
 builder.AddProject<Projects.Frontend>("frontend")
@@ -55,14 +54,10 @@ import { createBuilder } from "./.aspire/modules/aspire.mjs";
 
 const builder = await createBuilder();
 
-const catalog = await builder.addJavaApp("catalog", "../catalog");
-await catalog.withMavenGoal("spring-boot:run", []);
-await catalog.withHttpEndpoint({ env: "SERVER_PORT" });
+const catalog = await builder.addSpringBootApp("catalog", "../catalog");
 await catalog.withExternalHttpEndpoints();
 
-const orders = await builder.addJavaApp("orders", "../orders");
-await orders.withGradleTask("bootRun", []);
-await orders.withHttpEndpoint({ env: "SERVER_PORT" });
+const orders = await builder.addSpringBootApp("orders", "../orders");
 await orders.withReference(catalog);
 await orders.waitFor(catalog);
 
@@ -71,6 +66,81 @@ await builder.build().run();
 
 `appDirectory` is the process working directory and the publish build context, so everything the build
 needs must live inside it.
+
+### Spring Boot
+
+`AddSpringBootApp` is `AddJavaApp` with the four calls every Spring Boot service repeats already made.
+It reads the build file in the directory to decide between Maven and Gradle, so the AppHost never
+restates something the project already declares:
+
+```csharp
+builder.AddSpringBootApp("catalog", "../catalog");
+```
+
+is the same as:
+
+```csharp
+builder.AddJavaApp("catalog", "../catalog")
+    .WithMavenBuild("-B", "-ntp", "-DskipTests", "package")
+    .WithMavenGoal("spring-boot:run")
+    .WithHttpEndpoint(env: "SERVER_PORT");
+```
+
+The build skips tests, because it runs every time the AppHost starts and a full suite in front of every
+debug session gets old quickly. Call `WithMavenBuild`/`WithGradleBuild` afterwards to choose your own
+arguments.
+
+No health check is added. `/actuator/health` only responds when the application depends on
+`spring-boot-starter-actuator`, and adding it unconditionally would leave applications without that
+dependency permanently unhealthy — which silently stalls every `WaitFor` on them. Add it yourself when
+the actuator is present:
+
+```csharp
+builder.AddSpringBootApp("catalog", "../catalog")
+    .WithHttpHealthCheck("/actuator/health");
+```
+
+Use `AddJavaApp` directly for anything else: a different Spring Boot plugin goal, a project laid out so
+the build file is not in the app directory, or a framework that is not Spring Boot.
+
+### Quarkus
+
+`AddQuarkusApp` is the Quarkus equivalent, and detects the build tool the same way:
+
+```csharp
+builder.AddQuarkusApp("inventory", "../inventory");
+```
+
+is the same as:
+
+```csharp
+builder.AddJavaApp("inventory", "../inventory")
+    .WithMavenBuild("-B", "-ntp", "-DskipTests", "package")
+    .WithMavenGoal("quarkus:dev")
+    .WithEnvironment("QUARKUS_PROFILE", "dev")
+    .WithHttpEndpoint(env: "QUARKUS_HTTP_PORT");
+```
+
+The application runs in Quarkus dev mode, so live coding works while the AppHost is running. Quarkus Dev
+Services stay enabled but do not activate for anything Aspire supplies, because a Dev Service only starts
+when the configuration it would provide is absent — and `WithReference` supplies it.
+
+`QUARKUS_PROFILE=dev` is set as an environment variable rather than left to the goal, because the VS Code
+debugger launches the packaged application directly rather than through `quarkus:dev`; setting it here
+means both resolve the same `%dev.` configuration. It is not set when publishing, where the image must
+resolve production configuration.
+
+No health check is added, for the same reason as Spring Boot: `/q/health` only responds when the
+application depends on `quarkus-smallrye-health`. Add it yourself when that extension is present:
+
+```csharp
+builder.AddQuarkusApp("inventory", "../inventory")
+    .WithHttpHealthCheck("/q/health");
+```
+
+`WithOtelAgent` is usually unnecessary for Quarkus. The `quarkus-opentelemetry` extension is compiled
+into the application and reads the same `OTEL_*` environment variables Aspire already supplies, so
+telemetry works with no AppHost configuration at all.
 
 ### Launch modes
 
@@ -129,6 +199,7 @@ for Gradle, for example.
 | `WithJarArtifact(string jarPath)` | Names the JAR the container build should deploy, when the build produces more than one |
 | `WithJvmArgs(params string[] args)` | Appends JVM arguments through `JAVA_TOOL_OPTIONS`. Also available on `AddJavaContainerApp` |
 | `WithOtelAgent(string agentPath)` | Runs the app under the OpenTelemetry Java agent |
+| `WithOtelAgent()` | Same, with the agent at `target/agent/` (Maven) or `build/agent/` (Gradle) |
 
 ### Telemetry
 
@@ -138,10 +209,17 @@ application needs. `WithOtelAgent(...)` additionally runs the
 instruments common frameworks with no code change:
 
 ```csharp
-builder.AddJavaApp("catalog", "../catalog")
-    .WithMavenBuild("-B", "-ntp", "-DskipTests", "package")
-    .WithMavenGoal("spring-boot:run")
+builder.AddSpringBootApp("catalog", "../catalog")
     .WithOtelAgent("target/agent/opentelemetry-javaagent.jar");
+```
+
+The no-argument `WithOtelAgent()` uses the conventional location for the build tool in use —
+`target/agent/opentelemetry-javaagent.jar` for Maven, `build/agent/opentelemetry-javaagent.jar` for
+Gradle — so a build that copies the agent there needs no path:
+
+```csharp
+builder.AddSpringBootApp("catalog", "../catalog")
+    .WithOtelAgent();
 ```
 
 The agent is not downloaded for you. Fetch it as a build dependency so it exists before the application

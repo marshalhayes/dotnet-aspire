@@ -42,6 +42,12 @@ public static partial class JavaHostingExtensions
     internal static readonly string s_defaultMavenWrapper = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "mvnw.cmd" : "mvnw";
     internal static readonly string s_defaultGradleWrapper = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "gradlew.bat" : "gradlew";
 
+    /// <summary>The directory Quarkus's default packaging writes under the build tool's output directory.</summary>
+    internal const string QuarkusFastJarDirectory = "quarkus-app";
+
+    /// <summary>The runnable artifact inside <see cref="QuarkusFastJarDirectory"/>.</summary>
+    internal const string QuarkusRunJarName = "quarkus-run.jar";
+
     /// <summary>
     /// Adds a Java application to the application model, launched with <c>java</c>.
     /// </summary>
@@ -243,6 +249,190 @@ public static partial class JavaHostingExtensions
     }
 
     /// <summary>
+    /// Adds a Spring Boot application to the application model, built and launched with its own Maven or Gradle wrapper.
+    /// </summary>
+    /// <param name="builder">The <see cref="IDistributedApplicationBuilder"/> to add the resource to.</param>
+    /// <param name="name">The name of the resource.</param>
+    /// <param name="appDirectory">The application directory, containing <c>pom.xml</c> or <c>build.gradle</c>. Relative paths are resolved against the AppHost directory.</param>
+    /// <returns>A reference to the <see cref="IResourceBuilder{T}"/>.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="builder"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException"><paramref name="name"/> or <paramref name="appDirectory"/> is <see langword="null"/>, empty, or whitespace.</exception>
+    /// <exception cref="InvalidOperationException">The directory contains neither a Maven nor a Gradle build file, or contains both.</exception>
+    /// <remarks>
+    /// This is <see cref="AddJavaApp(IDistributedApplicationBuilder, string, string)"/> with the four calls every
+    /// Spring Boot service repeats already made: the build tool is detected from the build file on disk, the
+    /// application is launched through that tool's Spring Boot plugin (<c>spring-boot:run</c> or <c>bootRun</c>),
+    /// a build runs first, and an HTTP endpoint is declared through <c>SERVER_PORT</c>, which is the environment
+    /// variable Spring Boot reads for its listening port. Everything else is the same, so any <c>With…</c> method
+    /// that works on <see cref="AddJavaApp(IDistributedApplicationBuilder, string, string)"/> works here too.
+    /// <para>
+    /// The build defaults to skipping tests (<c>-DskipTests</c> for Maven, <c>-x test</c> for Gradle). A build runs
+    /// every time the AppHost starts, so running the test suite on each launch would put the whole suite in front of
+    /// every debug session. Call <see cref="WithMavenBuild{T}(IResourceBuilder{T}, string[])"/> or
+    /// <see cref="WithGradleBuild{T}(IResourceBuilder{T}, string[])"/> afterwards to choose different arguments.
+    /// </para>
+    /// <para>
+    /// No health check is added. <c>/actuator/health</c> only exists when the application depends on
+    /// <c>spring-boot-starter-actuator</c>, and adding it unconditionally would leave applications without that
+    /// dependency permanently unhealthy and silently stall every <c>WaitFor</c> on them. Add
+    /// <c>WithHttpHealthCheck("/actuator/health")</c> when the actuator is present.
+    /// </para>
+    /// </remarks>
+    /// <example>
+    /// Two Spring Boot services and a database:
+    /// <code language="csharp">
+    /// var builder = DistributedApplication.CreateBuilder(args);
+    ///
+    /// var db = builder.AddPostgres("pg").AddDatabase("catalogdb");
+    ///
+    /// var catalog = builder.AddSpringBootApp("catalog", "../catalog")
+    ///                      .WithReference(db);
+    ///
+    /// builder.AddSpringBootApp("orders", "../orders")
+    ///        .WithReference(catalog)
+    ///        .WaitFor(catalog);
+    ///
+    /// builder.Build().Run();
+    /// </code>
+    /// </example>
+    [AspireExport]
+    public static IResourceBuilder<JavaAppResource> AddSpringBootApp(
+        this IDistributedApplicationBuilder builder,
+        [ResourceName] string name,
+        string appDirectory)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentException.ThrowIfNullOrWhiteSpace(appDirectory);
+
+        var resourceBuilder = builder.AddJavaApp(name, appDirectory);
+
+        // WorkingDirectory rather than appDirectory because AddJavaApp has already resolved it against the
+        // AppHost directory.
+        resourceBuilder = DetectBuildTool(resourceBuilder.Resource.WorkingDirectory, name) is JavaBuildTool.Maven
+            ? resourceBuilder
+                .WithMavenBuild("-B", "-ntp", "-DskipTests", "package")
+                .WithMavenGoal("spring-boot:run")
+            : resourceBuilder
+                // "build -x test" rather than "classes", because the same arguments drive the container
+                // build during publish and that needs a JAR in build/libs, which "classes" never produces.
+                .WithGradleBuild("build", "-x", "test")
+                .WithGradleTask("bootRun");
+
+        // Spring Boot reads SERVER_PORT for its listening port, so the port Aspire allocates reaches the
+        // application without any code in the application. No targetPort is pinned: these are host
+        // processes rather than containers, so a fixed target port is a real port on the machine and two
+        // Spring Boot services both asking for 8080 would collide.
+        return resourceBuilder.WithHttpEndpoint(env: "SERVER_PORT");
+    }
+
+    /// <summary>
+    /// Adds a Quarkus application to the application model, built and launched with its own Maven or Gradle wrapper.
+    /// </summary>
+    /// <param name="builder">The <see cref="IDistributedApplicationBuilder"/> to add the resource to.</param>
+    /// <param name="name">The name of the resource.</param>
+    /// <param name="appDirectory">The application directory, containing <c>pom.xml</c> or <c>build.gradle</c>. Relative paths are resolved against the AppHost directory.</param>
+    /// <returns>A reference to the <see cref="IResourceBuilder{T}"/>.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="builder"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException"><paramref name="name"/> or <paramref name="appDirectory"/> is <see langword="null"/>, empty, or whitespace.</exception>
+    /// <exception cref="InvalidOperationException">The directory contains neither a Maven nor a Gradle build file, or contains both.</exception>
+    /// <remarks>
+    /// The build tool is detected from the build file on disk, the application runs in Quarkus dev mode
+    /// (<c>quarkus:dev</c> or <c>quarkusDev</c>) so live coding works, and an HTTP endpoint is declared through
+    /// <c>QUARKUS_HTTP_PORT</c>, the environment variable Quarkus reads for its listening port. Everything else
+    /// behaves like <see cref="AddJavaApp(IDistributedApplicationBuilder, string, string)"/>.
+    /// <para>
+    /// Quarkus Dev Services are left enabled but do not activate for anything Aspire supplies: Dev Services only
+    /// start a container when the corresponding configuration is missing, and a <c>WithReference</c> to a database
+    /// or broker provides it. That means Aspire's resources are used rather than a second set started underneath.
+    /// </para>
+    /// <para>
+    /// <c>QUARKUS_PROFILE</c> is set to <c>dev</c> in run mode. Dev mode already selects that profile; setting it
+    /// explicitly means a debugger, which launches the packaged application rather than the dev-mode wrapper,
+    /// resolves the same <c>%dev.</c> configuration the application would see when run normally.
+    /// </para>
+    /// <para>
+    /// No health check is added. <c>/q/health</c> only exists when the application depends on
+    /// <c>quarkus-smallrye-health</c>, and adding it unconditionally would leave applications without that
+    /// extension permanently unhealthy and silently stall every <c>WaitFor</c> on them. Add
+    /// <c>WithHttpHealthCheck("/q/health")</c> when the extension is present.
+    /// </para>
+    /// </remarks>
+    /// <example>
+    /// A Quarkus service backed by a database Aspire provides:
+    /// <code language="csharp">
+    /// var builder = DistributedApplication.CreateBuilder(args);
+    ///
+    /// var db = builder.AddPostgres("pg").AddDatabase("inventorydb");
+    ///
+    /// builder.AddQuarkusApp("inventory", "../inventory")
+    ///        .WithReference(db)
+    ///        .WaitFor(db);
+    ///
+    /// builder.Build().Run();
+    /// </code>
+    /// </example>
+    [AspireExport]
+    public static IResourceBuilder<JavaAppResource> AddQuarkusApp(
+        this IDistributedApplicationBuilder builder,
+        [ResourceName] string name,
+        string appDirectory)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentException.ThrowIfNullOrWhiteSpace(appDirectory);
+
+        var resourceBuilder = builder.AddJavaApp(name, appDirectory)
+            .WithAnnotation(new JavaQuarkusAnnotation(), ResourceAnnotationMutationBehavior.Replace);
+
+        resourceBuilder = DetectBuildTool(resourceBuilder.Resource.WorkingDirectory, name) is JavaBuildTool.Maven
+            ? resourceBuilder
+                .WithMavenBuild("-B", "-ntp", "-DskipTests", "package")
+                .WithMavenGoal("quarkus:dev")
+            : resourceBuilder
+                .WithGradleBuild("build", "-x", "test")
+                .WithGradleTask("quarkusDev");
+
+        if (builder.ExecutionContext.IsRunMode)
+        {
+            resourceBuilder.WithEnvironment("QUARKUS_PROFILE", "dev");
+        }
+
+        return resourceBuilder.WithHttpEndpoint(env: "QUARKUS_HTTP_PORT");
+    }
+
+    /// <summary>
+    /// Determines whether an application directory is a Maven or a Gradle project.
+    /// </summary>
+    /// <remarks>
+    /// Detected from the build file rather than taken as a parameter: a directory that has a <c>pom.xml</c> is a
+    /// Maven project, and asking the author to restate that only invites the mismatch these helpers exist to avoid.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">The directory has no build file, or has one of each.</exception>
+    private static JavaBuildTool DetectBuildTool(string workingDirectory, string resourceName)
+    {
+        var hasMaven = File.Exists(Path.Combine(workingDirectory, "pom.xml"));
+        var hasGradle = File.Exists(Path.Combine(workingDirectory, "build.gradle"))
+            || File.Exists(Path.Combine(workingDirectory, "build.gradle.kts"));
+
+        if (hasMaven && hasGradle)
+        {
+            throw new InvalidOperationException(
+                $"Directory '{workingDirectory}' contains both a Maven and a Gradle build file, so the build tool for resource '{resourceName}' is ambiguous. " +
+                $"Use AddJavaApp and call either WithMavenGoal or WithGradleTask to choose one.");
+        }
+
+        if (!hasMaven && !hasGradle)
+        {
+            throw new InvalidOperationException(
+                $"Directory '{workingDirectory}' contains no pom.xml, build.gradle, or build.gradle.kts, so the build tool for resource '{resourceName}' cannot be detected. " +
+                $"Check the path, or use AddJavaApp for an application laid out differently.");
+        }
+
+        return hasMaven ? JavaBuildTool.Maven : JavaBuildTool.Gradle;
+    }
+
+    /// <summary>
     /// Launches the Java application through a Maven goal instead of <c>java</c>, for example <c>spring-boot:run</c>.
     /// </summary>
     /// <typeparam name="T">The Java application resource type.</typeparam>
@@ -257,6 +447,7 @@ public static partial class JavaHostingExtensions
     /// The wrapper defaults to <c>mvnw</c> (<c>mvnw.cmd</c> on Windows) in the resource's working directory
     /// and can be overridden with <see cref="WithWrapperPath{T}(IResourceBuilder{T}, string)"/>.
     /// </remarks>
+
     [AspireExport]
     public static IResourceBuilder<T> WithMavenGoal<T>(
         this IResourceBuilder<T> builder,
@@ -594,6 +785,45 @@ public static partial class JavaHostingExtensions
         }
 
         return builder.WithEnvironment(context => AppendJavaToolOptions(context.EnvironmentVariables, args));
+    }
+
+    /// <summary>
+    /// Runs the application with the OpenTelemetry Java agent from the location the build tool writes it to.
+    /// </summary>
+    /// <typeparam name="T">The Java application resource type.</typeparam>
+    /// <param name="builder">The resource builder.</param>
+    /// <returns>A reference to the <see cref="IResourceBuilder{T}"/>.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="builder"/> is <see langword="null"/>.</exception>
+    /// <exception cref="InvalidOperationException">The resource has no Maven or Gradle build configured, so the agent location cannot be inferred.</exception>
+    /// <remarks>
+    /// The agent is expected at <c>target/agent/opentelemetry-javaagent.jar</c> for Maven and
+    /// <c>build/agent/opentelemetry-javaagent.jar</c> for Gradle — the conventional output directory of each tool
+    /// with an <c>agent</c> subdirectory. The build has to put it there; nothing is downloaded. With Maven, copy it
+    /// with <c>maven-dependency-plugin</c>'s <c>copy</c> goal bound to <c>process-resources</c>; with Gradle,
+    /// declare the agent in its own configuration and add a <c>Copy</c> task that <c>compileJava</c> depends on.
+    /// <para>
+    /// Use <see cref="WithOtelAgent{T}(IResourceBuilder{T}, string)"/> when the agent lives anywhere else, including
+    /// when it is committed to the repository or supplied by the container base image.
+    /// </para>
+    /// </remarks>
+    [AspireExport("withOtelAgentDefaultPath")]
+    public static IResourceBuilder<T> WithOtelAgent<T>(
+        this IResourceBuilder<T> builder) where T : JavaAppResource
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+
+        // The launch tool is not consulted, only the build: a resource can be launched from a prebuilt JAR and
+        // still be built by Maven, and it is the build that decides whether the agent lands in target or build.
+        if (!builder.Resource.TryGetLastAnnotation<JavaBuildStepAnnotation>(out var buildStep))
+        {
+            throw new InvalidOperationException(
+                $"Resource '{builder.Resource.Name}' has no Maven or Gradle build configured, so the OpenTelemetry agent location cannot be inferred. " +
+                $"Call WithMavenBuild or WithGradleBuild first, or pass the agent path to WithOtelAgent.");
+        }
+
+        var outputDirectory = buildStep.Tool is JavaBuildTool.Gradle ? "build" : "target";
+
+        return builder.WithOtelAgent(Path.Combine(outputDirectory, "agent", "opentelemetry-javaagent.jar"));
     }
 
     /// <summary>
@@ -1024,10 +1254,24 @@ public static partial class JavaHostingExtensions
 
         if (!resource.TryGetLastAnnotation<JavaJarPathAnnotation>(out var jar))
         {
+            if (explicitMainClass is not null)
+            {
+                return (explicitMainClass, null);
+            }
+
+            // Quarkus is the exception to the rule below. Its entry point lives in the fast JAR's boot
+            // classpath rather than in the project, so the language server's classpath cannot start it and
+            // the archive has to be supplied. Breakpoints still bind, because the debugger maps loaded
+            // classes back to project sources by name.
+            if (TryGetQuarkusRunJar(resource) is { } quarkusRunJar)
+            {
+                return (TryReadJarManifestMainClass(quarkusRunJar), [quarkusRunJar]);
+            }
+
             // A Maven or Gradle resource deliberately sends no classpath: the language server already
             // knows the project's, and supplying one built from the JAR would bind breakpoints to
             // compiled classes instead of the source the user is editing.
-            return (explicitMainClass ?? TryDiscoverProjectMainClass(resource), null);
+            return (TryDiscoverProjectMainClass(resource), null);
         }
 
         // Resolved to an absolute path because the adapter reads the archive before the debuggee's
@@ -1123,6 +1367,34 @@ public static partial class JavaHostingExtensions
         return entryPoint.StartsWith("org.springframework.boot.loader.", StringComparison.Ordinal)
             ? null
             : entryPoint;
+    }
+
+    /// <summary>
+    /// Gets the Quarkus fast JAR the build produced, or <see langword="null"/> when the resource is not a
+    /// Quarkus application or has not been built yet.
+    /// </summary>
+    /// <remarks>
+    /// Quarkus's default packaging leaves the runnable artifact at <c>quarkus-app/quarkus-run.jar</c> under the
+    /// build tool's output directory. The JAR that sits directly in that output directory is the plain,
+    /// unrunnable one — it has no <c>Main-Class</c> — so the ordinary discovery path finds nothing to report and
+    /// the debugger would fall back to asking the user which application to start.
+    /// See https://quarkus.io/guides/maven-tooling#fast-jar.
+    /// </remarks>
+    private static string? TryGetQuarkusRunJar(JavaAppResource resource)
+    {
+        if (!resource.HasAnnotationOfType<JavaQuarkusAnnotation>()
+            || !resource.TryGetLastAnnotation<JavaBuildToolAnnotation>(out var buildTool))
+        {
+            return null;
+        }
+
+        var runJar = Path.Combine(
+            resource.WorkingDirectory,
+            buildTool.Tool is JavaBuildTool.Gradle ? "build" : "target",
+            QuarkusFastJarDirectory,
+            QuarkusRunJarName);
+
+        return File.Exists(runJar) ? Path.GetFullPath(runJar) : null;
     }
 
     private static bool IsAuxiliaryJar(string jarPath)

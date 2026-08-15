@@ -779,6 +779,119 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
         return (process.ExitCode, await stdoutTask, await stderrTask);
     }
 
+    [Fact]
+    public async Task VerifyPublish_Quarkus_StagesTheFastJarDirectoryAndRunsQuarkusRunJar()
+    {
+        var content = await PublishQuarkusDockerfileAsync(source => WritePom(source, javaVersion: "21"));
+
+        // The fast JAR's manifest Class-Path names lib/, app/, and quarkus/ relatively, so copying only
+        // quarkus-run.jar produces an image that starts and immediately fails to find its own classes.
+        Assert.Contains("cp -r target/quarkus-app/. /build/app/", content, StringComparison.Ordinal);
+        Assert.Contains("COPY --from=build /build/app /app", content, StringComparison.Ordinal);
+        Assert.Contains("ENTRYPOINT [\"java\",\"-jar\",\"/app/quarkus-run.jar\"]", content, StringComparison.Ordinal);
+        await Verify(content);
+    }
+
+    [Fact]
+    public async Task VerifyPublish_Quarkus_Gradle_StagesFromTheGradleOutputDirectory()
+    {
+        var content = await PublishQuarkusDockerfileAsync(source => WriteGradleBuild(source, """
+            plugins {
+                id 'io.quarkus'
+            }
+            java {
+                toolchain {
+                    languageVersion = JavaLanguageVersion.of(21)
+                }
+            }
+            """));
+
+        Assert.Contains("cp -r build/quarkus-app/. /build/app/", content, StringComparison.Ordinal);
+        await Verify(content);
+    }
+
+    [Fact]
+    public async Task VerifyPublish_Quarkus_FallsBackToASingleRunnerJarForUberJarPackaging()
+    {
+        // The packaging type is chosen in application configuration, which the AppHost cannot read, so both
+        // shapes have to be handled in the build stage where the output already exists.
+        var content = await PublishQuarkusDockerfileAsync(source => WritePom(source, javaVersion: "21"));
+
+        Assert.Contains("if [ -d target/quarkus-app ]; then", content, StringComparison.Ordinal);
+        Assert.Contains("cp $jars /build/app/quarkus-run.jar", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task VerifyPublish_Quarkus_WithJarArtifact_StagesThatFileInstead()
+    {
+        // Naming a single artifact is how an application that does not use the fast JAR layout at all opts
+        // out, so it has to keep staging as one file.
+        var content = await PublishQuarkusDockerfileAsync(
+            source => WritePom(source, javaVersion: "21"),
+            app => app.WithJarArtifact("target/api-runner.jar"));
+
+        Assert.Contains("cp 'target/api-runner.jar' /build/app.jar", content, StringComparison.Ordinal);
+        Assert.Contains("COPY --from=build /build/app.jar /app/app.jar", content, StringComparison.Ordinal);
+        Assert.Contains("ENTRYPOINT [\"java\",\"-jar\",\"/app/app.jar\"]", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task VerifyPublish_InstallsUnzipWhenTheMavenWrapperPinsADistributionChecksum()
+    {
+        // mvnw downloads the .tar.gz instead of the .zip when unzip is missing, then validates it against
+        // the .zip's checksum and stops. The Temurin build images have no unzip and the Quarkus generator
+        // pins this checksum by default, so without the install the build fails for every such project.
+        var content = await PublishDockerfileAsync(
+            configureSource: source =>
+            {
+                WritePom(source, javaVersion: "21");
+                File.AppendAllText(
+                    Path.Combine(source, ".mvn", "wrapper", "maven-wrapper.properties"),
+                    "distributionSha256Sum=5af3b743dd8b876b5c45da33b676251e5f1687712644abb4ee519ca56e1d89ce\n");
+            },
+            configureResource: app => app.WithMavenGoal("spring-boot:run"));
+
+        var unzipIndex = content.IndexOf("apt-get install -y --no-install-recommends unzip", StringComparison.Ordinal);
+        var wrapperIndex = content.IndexOf("./mvnw -B -ntp --version", StringComparison.Ordinal);
+
+        Assert.NotEqual(-1, unzipIndex);
+        // Installed before the wrapper runs, because the wrapper is what fails without it.
+        Assert.True(unzipIndex < wrapperIndex, "unzip must be installed before the wrapper runs");
+    }
+
+    [Fact]
+    public async Task VerifyPublish_DoesNotInstallUnzipWhenNoChecksumIsPinned()
+    {
+        var content = await PublishDockerfileAsync(
+            configureSource: source => WritePom(source, javaVersion: "21"),
+            configureResource: app => app.WithMavenGoal("spring-boot:run"));
+
+        Assert.DoesNotContain("unzip", content, StringComparison.Ordinal);
+    }
+
+    private async Task<string> PublishQuarkusDockerfileAsync(
+        Action<string> configureSource,
+        Func<IResourceBuilder<JavaAppResource>, IResourceBuilder<JavaAppResource>>? configureResource = null)
+    {
+        using var workspace = TemporaryWorkspace.Create(outputHelper);
+        var sourceDir = workspace.CreateDirectory("source");
+        var outputDir = workspace.CreateDirectory("output");
+
+        configureSource(sourceDir.FullName);
+
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish, outputDir.FullName, step: "publish-manifest");
+
+        // Assigned first because `configureResource?.Invoke(builder.AddQuarkusApp(...))` skips evaluating the
+        // argument entirely when the delegate is null, which would add no resource at all.
+        var app = builder.AddQuarkusApp("api", sourceDir.FullName);
+
+        configureResource?.Invoke(app);
+
+        builder.Build().Run();
+
+        return await File.ReadAllTextAsync(Path.Combine(outputDir.FullName, "api.Dockerfile"), TestContext.Current.CancellationToken);
+    }
+
     private async Task<string> PublishDockerfileAsync(
         Action<string>? configureSource = null,
         string? jarPath = null,

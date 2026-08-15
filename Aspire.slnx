@@ -372,6 +372,9 @@
   <Folder Name="/playground/JavaSpringBoot/">
     <Project Path="playground/JavaSpringBoot/JavaSpringBoot.AppHost/JavaSpringBoot.AppHost.csproj" />
   </Folder>
+  <Folder Name="/playground/JavaQuarkus/">
+    <Project Path="playground/JavaQuarkus/JavaQuarkus.AppHost/JavaQuarkus.AppHost.csproj" />
+  </Folder>
   <Folder Name="/playground/rust/">
     <Project Path="playground/rust/Rust.AppHost/Rust.AppHost.csproj" />
   </Folder>

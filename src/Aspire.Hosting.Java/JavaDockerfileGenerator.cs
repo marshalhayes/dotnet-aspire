@@ -26,6 +26,10 @@ internal static class JavaDockerfileGenerator
     // somewhere COPY --from does not look.
     private const string ContainerArtifactPath = "/build/app.jar";
 
+    // Quarkus's fast JAR is a directory of interdependent parts rather than a single file, so it is staged
+    // as a directory and copied into /app whole.
+    private const string ContainerArtifactDirectory = "/build/app";
+
     /// <summary>
     /// Where a build-produced OpenTelemetry agent lands in the runtime image. Fixed rather than mirroring
     /// the source layout so the entrypoint environment does not depend on the build tool's output paths.
@@ -132,9 +136,18 @@ internal static class JavaDockerfileGenerator
             // Add COPY --from=<source> instructions for each container files source.
             .AddContainerFiles(context.Resource, "/app", logger);
 
+        // Quarkus's fast JAR is a directory whose parts reference each other by relative path, so the whole
+        // staged directory is copied into /app and the entry point names the runnable JAR inside it.
+        var applicationJarPath = build?.ArtifactIsDirectory == true
+            ? $"/app/{JavaHostingExtensions.QuarkusRunJarName}"
+            : "/app/app.jar";
+
         if (prebuiltJar is null)
         {
-            runtimeStage.CopyFrom("build", ContainerArtifactPath, "/app/app.jar");
+            runtimeStage.CopyFrom(
+                "build",
+                build?.ArtifactIsDirectory == true ? ContainerArtifactDirectory : ContainerArtifactPath,
+                build?.ArtifactIsDirectory == true ? "/app" : "/app/app.jar");
         }
         else
         {
@@ -161,7 +174,7 @@ internal static class JavaDockerfileGenerator
             .User("app")
             // No shell form: with an ENTRYPOINT array the JVM is PID 1 and receives SIGTERM directly, so
             // Spring's shutdown hooks run instead of the container being killed after the stop timeout.
-            .Entrypoint(["java", "-jar", "/app/app.jar"]);
+            .Entrypoint(["java", "-jar", applicationJarPath]);
     }
 
     private static void WriteBuildStage(DockerfileBuilderCallbackContext context, JavaContainerBuild build, string buildImage)
@@ -192,6 +205,17 @@ internal static class JavaDockerfileGenerator
         // build layer below is invalidated by any file in the context.
         buildStage.Copy(build.WrapperPath, $"./{build.WrapperPath}");
         buildStage.Copy(build.WrapperSupportPath, $"./{build.WrapperSupportPath}");
+
+        if (build.RequiresUnzip)
+        {
+            // Both package managers are attempted because the base image is replaceable, and this runs
+            // before the wrapper so the failure it prevents cannot happen first.
+            buildStage.Run(
+                "if ! command -v unzip >/dev/null 2>&1; then " +
+                "(apt-get update && apt-get install -y --no-install-recommends unzip && rm -rf /var/lib/apt/lists/*) " +
+                "|| apk add --no-cache unzip; fi");
+        }
+
         buildStage.Run(build.WarmToolCommand);
 
         buildStage.Copy(".", ".");
@@ -372,6 +396,8 @@ internal static class JavaDockerfileGenerator
     /// <param name="WrapperPath">The wrapper script, relative to the build context.</param>
     /// <param name="WrapperSupportPath">The wrapper's support directory, relative to the build context.</param>
     /// <param name="WarmToolCommand">The shell command that makes the wrapper download and unpack the build tool.</param>
+    /// <param name="RequiresUnzip">Whether the build image needs <c>unzip</c> installed before the wrapper runs.</param>
+    /// <param name="ArtifactIsDirectory">Whether the staged artifact is a directory rather than a single JAR.</param>
     private sealed record JavaContainerBuild(
         JavaBuildTool Tool,
         string BuildCommand,
@@ -382,7 +408,9 @@ internal static class JavaDockerfileGenerator
         string CacheId,
         string WrapperPath,
         string WrapperSupportPath,
-        string WarmToolCommand)
+        string WarmToolCommand,
+        bool RequiresUnzip,
+        bool ArtifactIsDirectory)
     {
 
         public static JavaContainerBuild Resolve(JavaAppResource resource, string appDirectory)
@@ -412,9 +440,22 @@ internal static class JavaDockerfileGenerator
 
             var wrapperSupportPath = ResolveWrapperSupportPath(resource, appDirectory, tool, wrapper, supportDirectoryName);
 
+            var isQuarkus = resource.HasAnnotationOfType<JavaQuarkusAnnotation>();
+
+            var outputDirectory = tool is JavaBuildTool.Gradle ? "build" : "target";
+
+            var requiresUnzip = tool is JavaBuildTool.Maven
+                && MavenWrapperPinsADistributionChecksum(appDirectory, wrapperSupportPath);
+
             var selectArtifact = resource.TryGetLastAnnotation<JavaJarArtifactAnnotation>(out var artifact)
                 ? $"cp {ShellQuote(artifact.RelativePath.Replace('\\', '/'))} {ContainerArtifactPath}"
-                : SelectSingleJarCommand(outputGlob, resource.Name);
+                : isQuarkus
+                    ? SelectQuarkusArtifactCommand(outputDirectory, outputGlob, resource.Name)
+                    : SelectSingleJarCommand(outputGlob, ContainerArtifactPath, resource.Name);
+
+            // An explicit WithJarArtifact names a single file, so it stages as one even for Quarkus - which
+            // is how an application packaged as an uber JAR names its runner.
+            var artifactIsDirectory = isQuarkus && !resource.HasAnnotationOfType<JavaJarArtifactAnnotation>();
 
             return new JavaContainerBuild(
                 tool,
@@ -434,7 +475,52 @@ internal static class JavaDockerfileGenerator
                 CacheId: $"aspire-java-{tool.ToString().ToLowerInvariant()}-{resource.Name.ToLowerInvariant()}",
                 WrapperPath: wrapper,
                 WrapperSupportPath: wrapperSupportPath,
-                WarmToolCommand: $"{invocation} {warmArgs}");
+                WarmToolCommand: $"{invocation} {warmArgs}",
+                RequiresUnzip: requiresUnzip,
+                ArtifactIsDirectory: artifactIsDirectory);
+        }
+
+        /// <summary>
+        /// Determines whether the Maven wrapper pins a checksum for the distribution it downloads.
+        /// </summary>
+        /// <remarks>
+        /// <c>distributionSha256Sum</c> is the checksum of the <c>-bin.zip</c> named by
+        /// <c>distributionUrl</c>, but <c>mvnw</c> silently switches to the <c>-bin.tar.gz</c> of the same
+        /// release when <c>unzip</c> is not on the path, then compares that archive against the ZIP's
+        /// checksum and stops the build:
+        /// <code>
+        /// Error: Failed to validate Maven distribution SHA-256, your Maven distribution might be compromised.
+        /// </code>
+        /// The Quarkus project generator pins this checksum by default, and the Temurin images have no
+        /// <c>unzip</c>, so without this the build fails for every Quarkus application.
+        /// </remarks>
+        private static bool MavenWrapperPinsADistributionChecksum(string appDirectory, string wrapperSupportPath)
+        {
+            var propertiesPath = Path.Combine(
+                appDirectory,
+                wrapperSupportPath.Replace('/', Path.DirectorySeparatorChar),
+                "wrapper",
+                "maven-wrapper.properties");
+
+            // The file's presence is already validated by ResolveWrapperSupportPath, so an unreadable file
+            // here can only be a race with an editor. Treating that as "no checksum" keeps generation
+            // working and, at worst, produces the same Dockerfile as before this check existed.
+            try
+            {
+                foreach (var line in File.ReadLines(propertiesPath))
+                {
+                    if (line.AsSpan().TrimStart().StartsWith("distributionSha256Sum", StringComparison.Ordinal))
+                    {
+                        return true;
+                    }
+                }
+            }
+            catch (IOException)
+            {
+                return false;
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -627,7 +713,35 @@ internal static class JavaDockerfileGenerator
         /// arbitrarily and producing an image that starts and immediately exits with "no main manifest
         /// attribute".
         /// </remarks>
-        private static string SelectSingleJarCommand(string outputGlob, string resourceName)
+        /// <summary>
+        /// Emits a shell command that stages a Quarkus build's output as a directory containing
+        /// <c>quarkus-run.jar</c>, whichever packaging type the application uses.
+        /// </summary>
+        /// <remarks>
+        /// Quarkus's default "fast JAR" packaging writes <c>quarkus-app/</c>, whose <c>quarkus-run.jar</c> is
+        /// unusable without the <c>lib</c>, <c>app</c>, and <c>quarkus</c> directories beside it — its manifest
+        /// <c>Class-Path</c> names them relatively. An application configured for <c>uber-jar</c> instead leaves a
+        /// single self-contained <c>*-runner.jar</c> and no such directory. The packaging type is chosen in
+        /// application configuration, which is not something the AppHost can read, so the choice is made in the
+        /// build stage where the output already exists and both cases are normalised to the same shape.
+        /// See https://quarkus.io/guides/maven-tooling#quarkus-package-jar_quarkus.package.jar.type.
+        /// </remarks>
+        private static string SelectQuarkusArtifactCommand(string outputDirectory, string outputGlob, string resourceName)
+        {
+            var fastJarDirectory = $"{outputDirectory}/{JavaHostingExtensions.QuarkusFastJarDirectory}";
+            var uberJarFallback = SelectSingleJarCommand(
+                outputGlob,
+                $"{ContainerArtifactDirectory}/{JavaHostingExtensions.QuarkusRunJarName}",
+                resourceName);
+
+            // "cp -r <dir>/." rather than "cp -r <dir>" so the contents land directly in the destination
+            // whether or not it already exists, which "cp -r" alone does not guarantee.
+            return $"mkdir -p {ContainerArtifactDirectory} && "
+                + $"if [ -d {fastJarDirectory} ]; then cp -r {fastJarDirectory}/. {ContainerArtifactDirectory}/; "
+                + $"else {uberJarFallback}; fi";
+        }
+
+        private static string SelectSingleJarCommand(string outputGlob, string destination, string resourceName)
         {
             // Written as a single line because each Dockerfile RUN is one shell invocation. `ls` output is
             // safe to iterate here: Maven and Gradle artifact names come from the artifact id and version,
@@ -636,7 +750,7 @@ internal static class JavaDockerfileGenerator
                 $"jars=$(ls {outputGlob} 2>/dev/null | grep -Ev '(-plain|-sources|-javadoc)\\.jar$' || true)",
                 "count=$(printf '%s\\n' \"$jars\" | grep -c . || true)",
                 $"if [ \"$count\" != \"1\" ]; then echo \"Aspire: expected exactly one application JAR from the build of '{resourceName}' matching {outputGlob}, found $count:\" >&2; echo \"$jars\" >&2; echo \"Use WithJarArtifact(\\\"<relative path>\\\") to select one.\" >&2; exit 1; fi",
-                $"cp $jars {ContainerArtifactPath}");
+                $"cp $jars {destination}");
         }
 
         private static string ShellQuote(string value) => $"'{value.Replace("'", "'\\''")}'";

@@ -62,3 +62,18 @@ internal sealed record JavaBuildStepAnnotation(string? ResourceName, JavaBuildTo
 /// </remarks>
 /// <param name="AgentPath">The agent path exactly as authored, before any resolution.</param>
 internal sealed record JavaOtelAgentAnnotation(string AgentPath) : IResourceAnnotation;
+
+/// <summary>
+/// Records that a Java application is a Quarkus application, which packages differently from every other
+/// build the integration supports.
+/// </summary>
+/// <remarks>
+/// Quarkus's default packaging is the "fast JAR": the runnable artifact is <c>quarkus-app/quarkus-run.jar</c>
+/// and it is useless on its own, because its manifest <c>Class-Path</c> points at sibling <c>lib</c>,
+/// <c>app</c>, and <c>quarkus</c> directories. Publishing has to carry that whole directory rather than a
+/// single file, and the plain JAR the build leaves in the output directory alongside it has no
+/// <c>Main-Class</c> at all. Neither is discoverable from the build file at publish time, when nothing has
+/// been built yet, so it is recorded when the resource is added.
+/// See https://quarkus.io/guides/maven-tooling#fast-jar.
+/// </remarks>
+internal sealed class JavaQuarkusAnnotation : IResourceAnnotation;

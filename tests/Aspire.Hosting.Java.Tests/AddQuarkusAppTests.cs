@@ -1,0 +1,174 @@
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+
+using Aspire.Hosting.ApplicationModel;
+using Aspire.Hosting.Tests.Utils;
+using Aspire.Hosting.Utils;
+
+namespace Aspire.Hosting.Java.Tests;
+
+public class AddQuarkusAppTests
+{
+    [Fact]
+    public async Task AddQuarkusApp_MavenProject_LaunchesInDevMode()
+    {
+        // Dev mode is what "run my Quarkus application locally" means: it is the only mode with live coding,
+        // and it is what the Quarkus documentation tells every reader to start with.
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.Write("pom.xml", "<project/>");
+
+        var app = builder.AddQuarkusApp("inventory", tempDir.Path);
+
+        Assert.Equal(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultMavenWrapper), app.Resource.Command);
+        Assert.Equal(["quarkus:dev"], await ArgumentEvaluator.GetArgumentListAsync(app.Resource));
+    }
+
+    [Fact]
+    public async Task AddQuarkusApp_GradleProject_LaunchesInDevMode()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.Write("build.gradle", "plugins { id 'io.quarkus' }");
+
+        var app = builder.AddQuarkusApp("pricing", tempDir.Path);
+
+        Assert.Equal(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultGradleWrapper), app.Resource.Command);
+        Assert.Equal(["quarkusDev"], await ArgumentEvaluator.GetArgumentListAsync(app.Resource));
+    }
+
+    [Theory]
+    [InlineData("pom.xml", "-B", "-ntp", "-DskipTests", "package")]
+    [InlineData("build.gradle", "build", "-x", "test")]
+    public async Task AddQuarkusApp_BuildsBeforeStartingAndSkipsTests(string buildFile, params string[] expectedArgs)
+    {
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.Write(buildFile, "");
+
+        builder.AddQuarkusApp("inventory", tempDir.Path);
+
+        var buildResource = Assert.Single(builder.Resources, r => r.Name.EndsWith("-build", StringComparison.Ordinal));
+
+        Assert.Equal(expectedArgs, await ArgumentEvaluator.GetArgumentListAsync(buildResource));
+    }
+
+    [Fact]
+    public void AddQuarkusApp_DeclaresHttpEndpointThroughQuarkusHttpPort()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.Write("pom.xml", "<project/>");
+
+        var app = builder.AddQuarkusApp("inventory", tempDir.Path);
+
+        var endpoint = Assert.Single(app.Resource.Annotations.OfType<EndpointAnnotation>());
+        Assert.Equal("http", endpoint.Name);
+        Assert.Equal("QUARKUS_HTTP_PORT", endpoint.TargetPortEnvironmentVariable);
+        Assert.Null(endpoint.TargetPort);
+    }
+
+    [Fact]
+    public void AddQuarkusApp_GradleProject_DeclaresHttpEndpointThroughQuarkusHttpPort()
+    {
+        // The endpoint has to be declared for both build tools. Attaching it to only one branch of the
+        // detection is an easy mistake that leaves half of all applications with no endpoint at all.
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.Write("build.gradle", "plugins { id 'io.quarkus' }");
+
+        var app = builder.AddQuarkusApp("pricing", tempDir.Path);
+
+        var endpoint = Assert.Single(app.Resource.Annotations.OfType<EndpointAnnotation>());
+        Assert.Equal("QUARKUS_HTTP_PORT", endpoint.TargetPortEnvironmentVariable);
+    }
+
+    [Fact]
+    public async Task AddQuarkusApp_SetsTheDevProfileInRunMode()
+    {
+        // The IDE launches the packaged application rather than quarkus:dev, so the profile has to be set
+        // as an environment variable for both to resolve the same %dev. configuration.
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.Write("pom.xml", "<project/>");
+
+        var app = builder.AddQuarkusApp("inventory", tempDir.Path);
+
+        AllocateEndpoints(app.Resource);
+
+        var envVars = await EnvironmentVariableEvaluator.GetEnvironmentVariablesAsync(
+            app.Resource, DistributedApplicationOperation.Run, TestServiceProvider.Instance);
+
+        Assert.Equal("dev", envVars["QUARKUS_PROFILE"]);
+    }
+
+    [Fact]
+    public async Task AddQuarkusApp_DoesNotSetTheDevProfileWhenPublishing()
+    {
+        // A published image runs the packaged application, which must resolve prod configuration.
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.Write("pom.xml", "<project/>");
+
+        var app = builder.AddQuarkusApp("inventory", tempDir.Path);
+
+        var envVars = await EnvironmentVariableEvaluator.GetEnvironmentVariablesAsync(
+            app.Resource, DistributedApplicationOperation.Publish, TestServiceProvider.Instance);
+
+        Assert.False(envVars.ContainsKey("QUARKUS_PROFILE"));
+    }
+
+    [Fact]
+    public void AddQuarkusApp_AddsNoHealthCheck()
+    {
+        // /q/health only exists with the smallrye-health extension. Adding it unconditionally would leave
+        // applications without that extension permanently unhealthy and stall every WaitFor on them.
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.Write("pom.xml", "<project/>");
+
+        var app = builder.AddQuarkusApp("inventory", tempDir.Path);
+
+        Assert.Empty(app.Resource.Annotations.OfType<HealthCheckAnnotation>());
+    }
+
+    [Fact]
+    public void AddQuarkusApp_NoBuildFile_Throws()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+        using var tempDir = new TempJavaAppDirectory();
+
+        var ex = Assert.Throws<InvalidOperationException>(() => builder.AddQuarkusApp("inventory", tempDir.Path));
+
+        Assert.Contains("no pom.xml, build.gradle, or build.gradle.kts", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AddQuarkusApp_RemainsAJavaAppResource()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.Write("pom.xml", "<project/>");
+
+        var app = builder.AddQuarkusApp("inventory", tempDir.Path)
+            .WithJvmArgs("-Xmx256m")
+            .WithExternalHttpEndpoints();
+
+        AllocateEndpoints(app.Resource);
+
+        var envVars = await EnvironmentVariableEvaluator.GetEnvironmentVariablesAsync(
+            app.Resource, DistributedApplicationOperation.Run, TestServiceProvider.Instance);
+
+        Assert.Equal("-Xmx256m", envVars["JAVA_TOOL_OPTIONS"]);
+    }
+
+    // Endpoints are allocated by the orchestrator at run time. Environment variable evaluation waits on that
+    // allocation, so a test that never starts the application has to supply it or the evaluation never returns.
+    private static void AllocateEndpoints(IResource resource)
+    {
+        foreach (var endpoint in resource.Annotations.OfType<EndpointAnnotation>())
+        {
+            endpoint.AllocatedEndpoint = new AllocatedEndpoint(endpoint, "localhost", 8080, targetPortExpression: "8080");
+        }
+    }
+}
