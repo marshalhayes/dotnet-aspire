@@ -258,28 +258,49 @@ internal static class JavaDockerfileGenerator
         }
 
         // Container paths are POSIX even when the AppHost authored a Windows-style relative path.
-        var normalized = annotation.JarPath.Replace('\\', '/');
-
-        // Only a single leading "./" is stripped. Trimming every leading '.' and '/' would turn
+        // Only a single leading "./" is stripped; trimming every leading '.' and '/' would turn
         // "../outside.jar" into "outside.jar", erasing the traversal before it could be detected and
         // silently publishing a COPY of the wrong file.
+        jarPath = NormalizeContextRelativePath(annotation.JarPath, resource.Name, appDirectory, "its JAR");
+
+        return jarPath.Length > 0;
+    }
+
+    /// <summary>
+    /// Normalizes an authored path for use inside the container build, rejecting anything that would
+    /// reach outside the build context.
+    /// </summary>
+    /// <remarks>
+    /// The build context is the application directory, so only files under it are uploaded to the daemon.
+    /// A rooted path or one containing a <c>..</c> segment names something that is not in the image, and
+    /// emitting it anyway fails the build with a path the author never wrote, or silently selects a
+    /// different in-context file.
+    /// <para>
+    /// Only a single leading <c>./</c> is stripped. Trimming <c>.</c> and <c>/</c> as a character set would
+    /// turn <c>../outside.jar</c> into <c>outside.jar</c>, erasing the traversal before it could be
+    /// detected.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="DistributedApplicationException">The path reaches outside the build context.</exception>
+    private static string NormalizeContextRelativePath(string authored, string resourceName, string appDirectory, string description)
+    {
+        // Container paths are POSIX even when the AppHost authored a Windows-style relative path.
+        var normalized = authored.Replace('\\', '/');
+
         if (normalized.StartsWith("./", StringComparison.Ordinal))
         {
             normalized = normalized[2..];
         }
 
-        if (Path.IsPathRooted(annotation.JarPath)
-            || normalized.Split('/').Contains(".."))
+        if (Path.IsPathRooted(authored) || normalized.Split('/').Contains(".."))
         {
             throw new DistributedApplicationException(
-                $"Java application '{resource.Name}' cannot be published because its JAR " +
-                $"'{annotation.JarPath}' is outside the build context '{appDirectory}'. Only files under " +
-                "the application directory are uploaded to the container build.");
+                $"Java application '{resourceName}' cannot be published because {description} '{authored}' " +
+                $"is outside the build context '{appDirectory}'. Only files under the application " +
+                "directory are uploaded to the container build.");
         }
 
-        jarPath = normalized;
-
-        return jarPath.Length > 0;
+        return normalized;
     }
 
     private static bool HasBuildFile(string appDirectory)
@@ -476,7 +497,7 @@ internal static class JavaDockerfileGenerator
                 && MavenWrapperPinsADistributionChecksum(appDirectory, wrapperSupportPath);
 
             var selectArtifact = resource.TryGetLastAnnotation<JavaJarArtifactAnnotation>(out var artifact)
-                ? $"cp {ShellQuote(artifact.RelativePath.Replace('\\', '/'))} {ContainerArtifactPath}"
+                ? $"cp {ShellQuote(NormalizeContextRelativePath(artifact.RelativePath, resource.Name, appDirectory, "its JAR artifact"))} {ContainerArtifactPath}"
                 : isQuarkus
                     ? SelectQuarkusArtifactCommand(outputDirectory, outputGlob, resource.Name)
                     : SelectSingleJarCommand(outputGlob, ContainerArtifactPath, resource.Name);

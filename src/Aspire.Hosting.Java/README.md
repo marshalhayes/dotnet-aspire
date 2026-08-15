@@ -194,7 +194,7 @@ for Gradle, for example.
 | `WithGradleTask(string task, params string[] args)` | Launches through `gradlew` with the given task |
 | `WithMavenBuild(params string[] args)` | Builds with Maven before the app runs, and in the published container |
 | `WithGradleBuild(params string[] args)` | Builds with Gradle before the app runs, and in the published container |
-| `WithWrapperPath(string wrapperScript)` | Selects a wrapper outside the app directory. May be called before or after the build tool is configured |
+| `WithWrapperPath(string wrapperScript)` | Selects a custom wrapper path. May be called before or after the build tool is configured. Must stay inside the app directory for an app that will be published, because that directory is the container build context |
 | `WithMainClass(string mainClass)` | The fully qualified class the IDE launches when debugging |
 | `WithJarArtifact(string jarPath)` | Names the JAR the container build should deploy, when the build produces more than one |
 | `WithJvmArgs(params string[] args)` | Appends JVM arguments through `JAVA_TOOL_OPTIONS`. Also available on `AddJavaContainerApp` |

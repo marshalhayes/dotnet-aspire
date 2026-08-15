@@ -518,6 +518,29 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
     }
 
     [Theory]
+    [InlineData("../outside.jar")]
+    [InlineData("./../outside.jar")]
+    [InlineData("nested/../../outside.jar")]
+    public void PublishingAJarArtifactOutsideTheBuildContextIsRejected(string artifactPath)
+    {
+        // WithJarArtifact reaches the build stage as a cp after only the application directory has been
+        // copied in, so a traversal names something that is not in the image at all.
+        using var workspace = TemporaryWorkspace.Create(outputHelper);
+        var sourceDir = workspace.CreateDirectory("source");
+        WritePom(sourceDir.FullName, javaVersion: "21");
+
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish);
+        var app = builder.AddJavaApp("api", sourceDir.FullName)
+                         .WithMavenBuild()
+                         .WithJarArtifact(artifactPath);
+
+        var ex = Assert.Throws<DistributedApplicationException>(
+            () => JavaDockerfileGenerator.ResolveContainerBuildForTesting(app.Resource, sourceDir.FullName));
+
+        Assert.Contains("is outside the build context", ex.Message);
+    }
+
+    [Theory]
     [InlineData("target/worker.jar", "target/worker.jar")]
     [InlineData("./target/worker.jar", "target/worker.jar")]
     [InlineData("target\\worker.jar", "target/worker.jar")]

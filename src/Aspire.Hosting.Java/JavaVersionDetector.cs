@@ -18,8 +18,9 @@ namespace Aspire.Hosting.Java;
 internal static partial class JavaVersionDetector
 {
     /// <summary>
-    /// The Java release used when a project's build files declare none. Chosen as the newest long-term
-    /// support release, which is what current Spring Boot and Quarkus releases target by default.
+    /// The Java release used when a project's build files declare none. Chosen as a broadly supported
+    /// long-term support release, which is what current Spring Boot and Quarkus releases target by
+    /// default, rather than the newest one.
     /// </summary>
     internal const string DefaultJavaVersion = "21";
 
