@@ -70,15 +70,34 @@ internal static partial class JavaVersionDetector
 
         // Element names are matched without their namespace so both the Maven 4 POM namespace and the
         // long-standing http://maven.apache.org/POM/4.0.0 namespace are handled.
-        foreach (var name in (string[])["java.version", "maven.compiler.release", "maven.compiler.target", "release", "target"])
+        //
+        // Every element with a matching name is considered, not just the first: a POM often declares
+        // <release>${java.version}</release> on the compiler plugin and a literal elsewhere, and stopping
+        // at the unresolvable property reference would fall back to the default version instead.
+        foreach (var (name, mustBePluginConfiguration) in ((string, bool)[])
+        [
+            ("java.version", false),
+            ("maven.compiler.release", false),
+            ("maven.compiler.target", false),
+            // <release> and <target> are only meaningful inside a plugin's <configuration>. Matched
+            // anywhere they would also pick up unrelated elements, for example a <target> in an
+            // antrun or assembly plugin, or a profile's <activation>.
+            ("release", true),
+            ("target", true),
+        ])
         {
-            var value = document.Descendants()
-                .FirstOrDefault(e => string.Equals(e.Name.LocalName, name, StringComparison.Ordinal))
-                ?.Value;
-
-            if (Normalize(value) is { } version)
+            foreach (var element in document.Descendants().Where(e => string.Equals(e.Name.LocalName, name, StringComparison.Ordinal)))
             {
-                return version;
+                if (mustBePluginConfiguration
+                    && !string.Equals(element.Parent?.Name.LocalName, "configuration", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (Normalize(element.Value) is { } version)
+                {
+                    return version;
+                }
             }
         }
 

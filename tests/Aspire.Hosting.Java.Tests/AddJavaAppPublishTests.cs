@@ -333,6 +333,60 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
         Assert.Equal(expected, JavaVersionDetector.Detect(appDirectory.Path));
     }
 
+    [Fact]
+    public void JavaVersionDetector_SkipsAPropertyReferenceInFavourOfALaterLiteral()
+    {
+        // Stopping at the first <release> would fall back to the default even though the POM plainly
+        // declares a target, and publish a runtime image the bytecode does not match.
+        using var appDirectory = new TempJavaAppDirectory();
+
+        File.WriteAllText(Path.Combine(appDirectory.Path, "pom.xml"), """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+              <modelVersion>4.0.0</modelVersion>
+              <artifactId>demo</artifactId>
+              <build>
+                <plugins>
+                  <plugin>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <configuration><release>${java.release}</release></configuration>
+                  </plugin>
+                  <plugin>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <configuration><release>17</release></configuration>
+                  </plugin>
+                </plugins>
+              </build>
+            </project>
+            """);
+
+        Assert.Equal("17", JavaVersionDetector.Detect(appDirectory.Path));
+    }
+
+    [Fact]
+    public void JavaVersionDetector_IgnoresATargetOutsideAPluginConfiguration()
+    {
+        // <target> is a common element name in other plugins. Matched anywhere, an antrun target that
+        // happens to hold a number would decide the runtime image.
+        using var appDirectory = new TempJavaAppDirectory();
+
+        File.WriteAllText(Path.Combine(appDirectory.Path, "pom.xml"), """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+              <modelVersion>4.0.0</modelVersion>
+              <artifactId>demo</artifactId>
+              <profiles>
+                <profile>
+                  <id>legacy</id>
+                  <target>11</target>
+                </profile>
+              </profiles>
+            </project>
+            """);
+
+        Assert.Equal(JavaVersionDetector.DefaultJavaVersion, JavaVersionDetector.Detect(appDirectory.Path));
+    }
+
     [Theory]
     [InlineData("java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }", "21")]
     [InlineData("java.toolchain.languageVersion.set(JavaLanguageVersion.of(17))", "17")]
@@ -996,14 +1050,44 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
     [Fact]
     public async Task VerifyPublish_RaisesTheBuildJdkWhenTheProjectTargetsAnOlderRelease()
     {
-        // Gradle 9 refuses to start on anything below Java 17 and Maven 4 needs the same, so a build stage
-        // matching an older target would die before compiling. The runtime stage still matches the target,
-        // because that is what the produced bytecode needs.
+        // Maven 4 refuses to start on anything below Java 17, so a build stage matching an older target
+        // would die before compiling. The runtime stage still matches the target, because that is what the
+        // produced bytecode needs.
         var content = await PublishDockerfileAsync(
-            configureSource: source => WritePom(source, javaVersion: "8"),
+            configureSource: source => WritePom(source, javaVersion: "8", mavenVersion: "4.0.0"),
             configureResource: app => app.WithMavenGoal("spring-boot:run"));
 
         Assert.Contains("FROM --platform=$BUILDPLATFORM docker.io/library/eclipse-temurin:17-jdk AS build", content, StringComparison.Ordinal);
+        Assert.Contains("FROM docker.io/library/eclipse-temurin:8-jre", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task VerifyPublish_RaisesTheBuildJdkForGradle9()
+    {
+        var content = await PublishDockerfileAsync(
+            configureSource: source =>
+            {
+                WriteGradleBuild(source, "sourceCompatibility = '11'", gradleVersion: "9.0.0");
+            },
+            configureResource: app => app.WithGradleTask("bootRun"));
+
+        Assert.Contains("FROM --platform=$BUILDPLATFORM docker.io/library/eclipse-temurin:17-jdk AS build", content, StringComparison.Ordinal);
+        Assert.Contains("FROM docker.io/library/eclipse-temurin:11-jre", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task VerifyPublish_KeepsTheBuildJdkOnTheTargetForAToolThatCannotRunOnANewerJdk()
+    {
+        // Gradle releases before 7.3 cannot run *on* Java 17, and are exactly what an old Java 8 project
+        // tends to pin. Raising the build stage unconditionally would break them.
+        var content = await PublishDockerfileAsync(
+            configureSource: source =>
+            {
+                WriteGradleBuild(source, "sourceCompatibility = '8'", gradleVersion: "6.9.4");
+            },
+            configureResource: app => app.WithGradleTask("bootRun"));
+
+        Assert.Contains("FROM --platform=$BUILDPLATFORM docker.io/library/eclipse-temurin:8-jdk AS build", content, StringComparison.Ordinal);
         Assert.Contains("FROM docker.io/library/eclipse-temurin:8-jre", content, StringComparison.Ordinal);
     }
 
@@ -1145,10 +1229,10 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
             : null;
     }
 
-    private static void WritePom(string sourceDirectory, string javaVersion)
+    private static void WritePom(string sourceDirectory, string javaVersion, string mavenVersion = "3.9.9")
     {
         // Publishing requires a wrapper, so every project that publishes has to ship one.
-        WriteWrapper(sourceDirectory, "mvnw");
+        WriteWrapper(sourceDirectory, "mvnw", mavenVersion);
         File.WriteAllText(Path.Combine(sourceDirectory, "pom.xml"), $"""
             <?xml version="1.0" encoding="UTF-8"?>
             <project xmlns="http://maven.apache.org/POM/4.0.0">
@@ -1163,25 +1247,34 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
             """);
     }
 
-    private static void WriteGradleBuild(string sourceDirectory, string contents)
+    private static void WriteGradleBuild(string sourceDirectory, string contents, string gradleVersion = "8.10")
     {
-        WriteWrapper(sourceDirectory, "gradlew");
+        WriteWrapper(sourceDirectory, "gradlew", gradleVersion);
         File.WriteAllText(Path.Combine(sourceDirectory, "build.gradle"), contents);
     }
 
-    private static void WriteWrapper(string sourceDirectory, string wrapperName)
+    private static void WriteWrapper(string sourceDirectory, string wrapperName, string? toolVersion = null)
     {
         Directory.CreateDirectory(sourceDirectory);
         File.WriteAllText(Path.Combine(sourceDirectory, wrapperName), "#!/bin/sh\nexit 0\n");
 
         // A real wrapper always ships the properties file that pins the tool version, and publishing
-        // requires it so the distribution can be unpacked in its own image layer.
+        // requires it so the distribution can be unpacked in its own image layer. The URLs match what the
+        // real wrappers write, including the escaped ':' Gradle uses and the version Maven repeats.
         var gradle = wrapperName.Contains("gradle", StringComparison.OrdinalIgnoreCase);
         var supportDirectory = Path.Combine(sourceDirectory, gradle ? "gradle" : ".mvn", "wrapper");
+
+        // Versions that impose no build JDK requirement of their own, so a test that does not care about
+        // tool compatibility sees the targeted release in both stages.
+        var version = toolVersion ?? (gradle ? "8.10" : "3.9.9");
+
+        var distributionUrl = gradle
+            ? $"https\\://services.gradle.org/distributions/gradle-{version}-bin.zip"
+            : $"https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/{version}/apache-maven-{version}-bin.zip";
 
         Directory.CreateDirectory(supportDirectory);
         File.WriteAllText(
             Path.Combine(supportDirectory, gradle ? "gradle-wrapper.properties" : "maven-wrapper.properties"),
-            "distributionUrl=https\\://example.invalid/tool-bin.zip\n");
+            $"distributionUrl={distributionUrl}\n");
     }
 }

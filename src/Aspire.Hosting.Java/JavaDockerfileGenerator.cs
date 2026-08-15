@@ -6,6 +6,7 @@
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using System.Text.RegularExpressions;
 using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.ApplicationModel.Docker;
 using Microsoft.Extensions.DependencyInjection;
@@ -21,7 +22,7 @@ namespace Aspire.Hosting.Java;
 /// runs the project's own Maven or Gradle wrapper so the image is produced by exactly the tool version the
 /// repository pins, and the runtime stage carries only a JRE and the resulting JAR.
 /// </remarks>
-internal static class JavaDockerfileGenerator
+internal static partial class JavaDockerfileGenerator
 {
     // Kept outside /app so a build that writes into its own working directory cannot move the JAR
     // somewhere COPY --from does not look.
@@ -113,7 +114,7 @@ internal static class JavaDockerfileGenerator
         // tool version the project pins, so nothing has to come from the image. That also keeps the build
         // stage off the maven/gradle images, whose tags only exist for a subset of JDK releases and which
         // would otherwise pin a second, unrelated tool version.
-        var buildImage = baseImageAnnotation?.BuildImage ?? $"docker.io/library/eclipse-temurin:{BuildJdkVersion(javaVersion)}-jdk";
+        var buildImage = baseImageAnnotation?.BuildImage ?? $"docker.io/library/eclipse-temurin:{BuildJdkVersion(javaVersion, build?.MinimumBuildJdk ?? 0)}-jdk";
         var runtimeImage = baseImageAnnotation?.RuntimeImage ?? $"docker.io/library/eclipse-temurin:{javaVersion}-jre";
 
         if (build is not null)
@@ -315,24 +316,26 @@ internal static class JavaDockerfileGenerator
     /// </summary>
     /// <remarks>
     /// The build tool itself needs a JDK new enough to run it, independently of the bytecode the project
-    /// produces: Gradle 9 requires Java 17 or later to start at all, and Maven 4 requires 17. A project
-    /// targeting Java 8 or 11 would otherwise get an <c>eclipse-temurin:8-jdk</c> build stage where the
-    /// wrapper dies with "Unsupported class file major version" before compiling anything.
+    /// produces: Gradle 9 and Maven 4 refuse to start on anything below Java 17. A project targeting Java 8
+    /// or 11 would otherwise get an <c>eclipse-temurin:8-jdk</c> build stage where the wrapper dies with
+    /// "Unsupported class file major version" before compiling anything.
+    /// <para>
+    /// The requirement is read from the version the wrapper pins rather than applied to every build,
+    /// because it also runs the other way: Gradle releases before 7.3 cannot run <em>on</em> Java 17, and
+    /// those are exactly the wrappers an old Java 8 project tends to carry. A build whose tool version
+    /// cannot be determined keeps the targeted version.
+    /// </para>
     /// <para>
     /// Compiling for the older target still works, because that is what <c>--release</c> and
     /// <c>maven.compiler.release</c> are for, and JDK 17's javac still supports targets back to 7. Only the
     /// build stage is raised; the runtime stage stays on the targeted version so the image is no larger and
     /// no newer than the application actually needs.
     /// </para>
-    /// See https://docs.gradle.org/current/userguide/compatibility.html and
-    /// https://maven.apache.org/docs/history.html.
     /// </remarks>
-    private static string BuildJdkVersion(string targetVersion)
-        => int.TryParse(targetVersion, CultureInfo.InvariantCulture, out var parsed) && parsed < MinimumBuildJdkVersion
-            ? MinimumBuildJdkVersion.ToString(CultureInfo.InvariantCulture)
+    private static string BuildJdkVersion(string targetVersion, int minimumBuildJdk)
+        => int.TryParse(targetVersion, CultureInfo.InvariantCulture, out var parsed) && parsed < minimumBuildJdk
+            ? minimumBuildJdk.ToString(CultureInfo.InvariantCulture)
             : targetVersion;
-
-    private const int MinimumBuildJdkVersion = 17;
 
     /// <summary>
     /// The default <c>.dockerignore</c> content, with exceptions for files the image needs from the context.
@@ -444,6 +447,7 @@ internal static class JavaDockerfileGenerator
     /// <param name="WarmToolCommand">The shell command that makes the wrapper download and unpack the build tool.</param>
     /// <param name="RequiresUnzip">Whether the build image needs <c>unzip</c> installed before the wrapper runs.</param>
     /// <param name="ArtifactIsDirectory">Whether the staged artifact is a directory rather than a single JAR.</param>
+    /// <param name="MinimumBuildJdk">The JDK release the pinned build tool needs to start, or 0 when unknown.</param>
     private sealed record JavaContainerBuild(
         JavaBuildTool Tool,
         string BuildCommand,
@@ -456,7 +460,8 @@ internal static class JavaDockerfileGenerator
         string WrapperSupportPath,
         string WarmToolCommand,
         bool RequiresUnzip,
-        bool ArtifactIsDirectory)
+        bool ArtifactIsDirectory,
+        int MinimumBuildJdk)
     {
 
         public static JavaContainerBuild Resolve(JavaAppResource resource, string appDirectory)
@@ -526,7 +531,81 @@ internal static class JavaDockerfileGenerator
                 WrapperSupportPath: wrapperSupportPath,
                 WarmToolCommand: $"{invocation} {warmArgs}",
                 RequiresUnzip: requiresUnzip,
-                ArtifactIsDirectory: artifactIsDirectory);
+                ArtifactIsDirectory: artifactIsDirectory,
+                MinimumBuildJdk: ResolveMinimumBuildJdk(appDirectory, wrapperSupportPath, tool));
+        }
+
+        /// <summary>
+        /// Reads the minimum JDK the pinned build tool needs to start.
+        /// </summary>
+        /// <remarks>
+        /// The build tool's own JVM requirement is independent of the bytecode the project produces, and it
+        /// cuts both ways. Gradle 9 and Maven 4 refuse to start on anything below Java 17, so a project
+        /// targeting Java 8 cannot build on an <c>eclipse-temurin:8-jdk</c> stage. Gradle 6 refuses to run
+        /// <em>on</em> Java 17, so raising every build unconditionally would break the older wrappers that
+        /// usually accompany those same Java 8 projects.
+        /// <para>
+        /// The version comes from the distribution the wrapper pins, for example:
+        /// <code>
+        /// distributionUrl=https\://services.gradle.org/distributions/gradle-9.0.0-bin.zip
+        /// distributionUrl=https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.9.9/apache-maven-3.9.9-bin.zip
+        /// </code>
+        /// Note the escaped <c>\:</c> that the Gradle wrapper writes, and that the Maven URL carries the
+        /// version twice. Only the leading major version is needed, so both are read from the archive name.
+        /// </para>
+        /// A URL that cannot be parsed contributes no requirement, which leaves the target version in
+        /// charge — the behaviour before any of this existed.
+        /// See https://docs.gradle.org/current/userguide/compatibility.html and
+        /// https://maven.apache.org/docs/history.html.
+        /// </remarks>
+        private static int ResolveMinimumBuildJdk(string appDirectory, string wrapperSupportPath, JavaBuildTool tool)
+        {
+            var propertiesPath = Path.Combine(
+                appDirectory,
+                wrapperSupportPath.Replace('/', Path.DirectorySeparatorChar),
+                "wrapper",
+                $"{tool.ToString().ToLowerInvariant()}-wrapper.properties");
+
+            string? distributionUrl = null;
+            try
+            {
+                foreach (var line in File.ReadLines(propertiesPath))
+                {
+                    var trimmed = line.AsSpan().TrimStart();
+                    if (trimmed.StartsWith("distributionUrl", StringComparison.Ordinal))
+                    {
+                        var separator = trimmed.IndexOf('=');
+                        if (separator >= 0)
+                        {
+                            distributionUrl = trimmed[(separator + 1)..].Trim().ToString();
+                        }
+
+                        break;
+                    }
+                }
+            }
+            catch (IOException)
+            {
+                return 0;
+            }
+
+            if (distributionUrl is null)
+            {
+                return 0;
+            }
+
+            var match = (tool is JavaBuildTool.Gradle ? GradleDistributionRegex() : MavenDistributionRegex()).Match(distributionUrl);
+            if (!match.Success || !int.TryParse(match.Groups["major"].ValueSpan, CultureInfo.InvariantCulture, out var major))
+            {
+                return 0;
+            }
+
+            return tool switch
+            {
+                JavaBuildTool.Gradle when major >= 9 => 17,
+                JavaBuildTool.Maven when major >= 4 => 17,
+                _ => 0
+            };
         }
 
         /// <summary>
@@ -830,6 +909,12 @@ internal static class JavaDockerfileGenerator
                 ? value
                 : ShellQuote(value);
     }
+
+    [GeneratedRegex(@"gradle-(?<major>\d+)(?:[.\-]|-bin|-all)")]
+    private static partial Regex GradleDistributionRegex();
+
+    [GeneratedRegex(@"apache-maven-(?<major>\d+)\.")]
+    private static partial Regex MavenDistributionRegex();
 }
 
 #pragma warning restore ASPIREDOCKERFILEBUILDER001
