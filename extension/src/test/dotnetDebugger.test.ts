@@ -1955,9 +1955,11 @@ suite('Dotnet Debugger Extension Tests', () => {
         assert.strictEqual(debugConfig.executablePath, 'exePath');
         assert.strictEqual(debugConfig.checkForDevCert, true);
 
-        // serverReadyAction should be present with the applicationUrl
-        assert.notStrictEqual(debugConfig.serverReadyAction, undefined);
-        assert.strictEqual(debugConfig.serverReadyAction.uriFormat, 'https://localhost:5001');
+        // launchSettings.json sets launchBrowser with applicationUrl https://localhost:5001, but the app
+        // host owns this resource's endpoints and can bind it elsewhere, so that address is not where the
+        // resource actually listens. `aspire run` never opens it either — Aspire.Hosting parses
+        // launchBrowser and never reads it — so the extension must not open a URL the CLI would not.
+        assert.strictEqual(debugConfig.serverReadyAction, undefined);
 
         // cleanup
         fs.rmSync(tempDir, { recursive: true, force: true });
@@ -2018,6 +2020,61 @@ suite('Dotnet Debugger Extension Tests', () => {
             extension);
 
         assert.deepStrictEqual(debugConfig.serverReadyAction, serverReadyAction);
+
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    });
+
+    test('does not open the launch profile URL for the orchestrated dashboard resource', async () => {
+        // Bug: running an AppHost from VS Code opened http://localhost:15888 — the address in the Aspire
+        // dashboard project's own launchSettings.json — instead of the dashboard the app host actually
+        // started, which listens on a dynamic port and needs a login token. The app host reassigns this
+        // resource's URLs, so the on-disk profile is stale, and the run-session payload carries no
+        // endpoint data for the extension to correct it with.
+        const fs = require('fs');
+        const os = require('os');
+        const path = require('path');
+
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aspire-test-'));
+        const projectDir = path.join(tempDir, 'Aspire.Dashboard');
+        const propertiesDir = path.join(projectDir, 'Properties');
+        fs.mkdirSync(propertiesDir, { recursive: true });
+
+        const projectPath = path.join(projectDir, 'Aspire.Dashboard.csproj');
+        fs.writeFileSync(projectPath, '<Project></Project>');
+        fs.writeFileSync(path.join(propertiesDir, 'launchSettings.json'), JSON.stringify({
+            profiles: {
+                Development: {
+                    commandName: 'Project',
+                    launchBrowser: true,
+                    applicationUrl: 'http://localhost:15888'
+                }
+            }
+        }, null, 2));
+
+        const outputPath = path.join(projectDir, 'bin', 'Debug', 'net10.0', 'Aspire.Dashboard.dll');
+        const { extension } = createDebuggerExtension(outputPath, null, true, true);
+        const launchConfig: ProjectLaunchConfiguration = {
+            type: 'project',
+            project_path: projectPath,
+            launch_profile: 'Development'
+        };
+        const debugConfig: AspireResourceExtendedDebugConfiguration = {
+            runId: '1',
+            debugSessionId: '1',
+            type: 'coreclr',
+            name: 'Aspire.Dashboard',
+            request: 'launch'
+        };
+        const fakeAspireDebugSession = sinon.createStubInstance(AspireDebugSession);
+
+        await extension.createDebugSessionConfigurationCallback!(
+            launchConfig,
+            undefined,
+            [],
+            { debug: true, runId: '1', debugSessionId: '1', isApphost: false, debugSession: fakeAspireDebugSession },
+            debugConfig);
+
+        assert.strictEqual(debugConfig.serverReadyAction, undefined);
 
         fs.rmSync(tempDir, { recursive: true, force: true });
     });

@@ -17,7 +17,6 @@ import {
     mergeEnvironmentVariables,
     determineArguments,
     determineWorkingDirectory,
-    determineServerReadyAction,
     LaunchProfileCommandName,
     LaunchProfile,
     expandEnvironmentVariables
@@ -447,21 +446,21 @@ export function createProjectDebuggerExtension(dotNetServiceProducer: (debugSess
             debugConfiguration.executablePath = baseProfile?.executablePath;
             debugConfiguration.checkForDevCert = baseProfile?.useSSL;
 
-            // The apphost's application URL is the Aspire dashboard URL. We already get the dashboard login URL later on,
-            // so avoid generating a serverReadyAction for the apphost and manually open the browser ourselves.
-            // For project resources, launch settings supply a default only when debugger settings did not provide one.
-            if (!launchOptions.isApphost && debugConfiguration.serverReadyAction === undefined) {
-                debugConfiguration.serverReadyAction = determineServerReadyAction(baseProfile?.launchBrowser, baseProfile?.applicationUrl, baseProfile?.launchUrl);
-
-                // The URL comes from launchSettings.json on disk, but under orchestration the app host owns the
-                // resource's endpoints and can bind it somewhere else entirely — the Aspire dashboard resource is
-                // the extreme case, because the app host replaces its URLs and its real address carries a login
-                // token. The payload carries no endpoint data, so the extension cannot correct the URL here; log
-                // the address that will be opened so a wrong one is diagnosable instead of silent.
-                if (debugConfiguration.serverReadyAction) {
-                    extensionLogOutputChannel.info(`Launch profile '${profileName}' will open ${debugConfiguration.serverReadyAction.uriFormat} for project: ${projectPath}. This address comes from launchSettings.json, not from the app host.`);
-                }
-            }
+            // `launchBrowser` from launchSettings.json is deliberately not honoured here. Every project that
+            // reaches this callback is started by the app host, and the app host owns its endpoints: it
+            // assigns ports and can front the project with a proxy, so the `applicationUrl` on disk is
+            // routinely not where the resource actually listens. The Aspire dashboard resource is the
+            // extreme case, because the app host both replaces its URLs and puts a login token on the real
+            // address, so honouring the profile opened a stale port and an unauthenticated page.
+            //
+            // The run-session payload carries no endpoint data, so the extension cannot correct the URL.
+            // The CLI resolves this by ignoring the setting outright — `LaunchProfile.LaunchBrowser` is
+            // parsed but never read anywhere in Aspire.Hosting or Aspire.Cli, so `aspire run` opens nothing
+            // for a project resource and leaves URLs to the dashboard. Matching that keeps the two front
+            // ends consistent instead of having VS Code open a URL the CLI never would.
+            //
+            // A serverReadyAction the user configured explicitly in launch.json is still respected; it is
+            // read from `debugConfiguration` above and never overwritten here.
 
             // TODO: Remove this block — the dashboard no longer recognizes ASPIRE_DASHBOARD_AI_DISABLED.
             // See https://github.com/microsoft/aspire/issues/18751
