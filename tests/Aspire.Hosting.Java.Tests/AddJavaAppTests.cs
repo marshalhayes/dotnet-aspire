@@ -25,6 +25,7 @@ public class AddJavaAppTests
     {
         using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
         using var tempDir = new TempJavaAppDirectory();
+        tempDir.WriteWrapper(JavaHostingExtensions.s_defaultMavenWrapper);
 
         var app = builder.AddJavaApp("api", tempDir.Path).WithMavenGoal("spring-boot:run");
 
@@ -39,6 +40,7 @@ public class AddJavaAppTests
     {
         using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
         using var tempDir = new TempJavaAppDirectory();
+        tempDir.WriteWrapper(JavaHostingExtensions.s_defaultGradleWrapper);
 
         var app = builder.AddJavaApp("api", tempDir.Path).WithGradleTask("bootRun", "--no-daemon");
 
@@ -293,6 +295,7 @@ public class AddJavaAppTests
     {
         using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
         using var tempDir = new TempJavaAppDirectory();
+        tempDir.WriteWrapper(JavaHostingExtensions.s_defaultGradleWrapper);
 
         var app = builder.AddJavaApp("api", tempDir.Path)
             .WithGradleTask("bootRun");
@@ -310,6 +313,7 @@ public class AddJavaAppTests
     {
         using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
         using var tempDir = new TempJavaAppDirectory();
+        tempDir.WriteWrapper(JavaHostingExtensions.s_defaultMavenWrapper);
 
         var app = builder.AddJavaApp("api", tempDir.Path)
             .WithMavenGoal("spring-boot:run");
@@ -594,6 +598,96 @@ public class AddJavaAppTests
             app.Resource, DistributedApplicationOperation.Run, TestServiceProvider.Instance);
 
         Assert.Equal($"-Xmx512m -javaagent:{AbsoluteAgentPath}", envVars["JAVA_TOOL_OPTIONS"]);
+    }
+
+    [Fact]
+    public void WithMavenGoal_WithoutAWrapperOnDisk_FallsBackToMavenOnThePath()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+        using var tempDir = new TempJavaAppDirectory();
+
+        var app = builder.AddJavaApp("api", tempDir.Path).WithMavenGoal("spring-boot:run");
+
+        // Pointing at a wrapper the project does not ship fails at process start with an exec error naming
+        // a file the author never added, and it would leave the resource unable to run while `aspire
+        // publish` still succeeded -- the generated Dockerfile already falls back to the bare command.
+        Assert.Equal("mvn", app.Resource.Command);
+    }
+
+    [Fact]
+    public void WithGradleTask_WithoutAWrapperOnDisk_FallsBackToGradleOnThePath()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+        using var tempDir = new TempJavaAppDirectory();
+
+        var app = builder.AddJavaApp("api", tempDir.Path).WithGradleTask("bootRun");
+
+        Assert.Equal("gradle", app.Resource.Command);
+    }
+
+    [Fact]
+    public void WithWrapperPath_IsHonouredEvenWhenNoWrapperExistsOnDisk()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+        using var tempDir = new TempJavaAppDirectory();
+
+        var app = builder.AddJavaApp("api", tempDir.Path)
+            .WithMavenGoal("spring-boot:run")
+            .WithWrapperPath("/opt/maven/bin/mvn");
+
+        // An explicit override is a deliberate choice and must win over both the wrapper probe and the
+        // PATH fallback.
+        Assert.Equal("/opt/maven/bin/mvn", app.Resource.Command);
+    }
+
+    [Fact]
+    public void AddJavaApp_RequestsSystemCertificateTrustScope()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+
+        var app = builder.AddJavaApp("api", AppContext.BaseDirectory);
+
+        // -Djavax.net.ssl.trustStore replaces the JVM's trust anchors rather than adding to them, so the
+        // generated bundle has to contain the system roots as well. Under the default Append scope the
+        // bundle would hold only Aspire's own certificates and the JVM would stop trusting every public
+        // CA -- which also breaks Maven Central and Gradle distribution downloads, because
+        // JAVA_TOOL_OPTIONS is inherited by the build tool's JVM.
+        Assert.True(app.Resource.TryGetLastAnnotation<CertificateAuthorityCollectionAnnotation>(out var certAnnotation));
+        Assert.Equal(CertificateTrustScope.System, certAnnotation.Scope);
+    }
+
+    [Fact]
+    public async Task AddJavaApp_WithAppendCertificateTrustScope_DoesNotOverrideTheJvmTrustStore()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+
+        var javaApp = builder.AddJavaApp("api", AppContext.BaseDirectory);
+
+        using var app = builder.Build();
+
+        Assert.True(javaApp.Resource.TryGetLastAnnotation<CertificateTrustConfigurationCallbackAnnotation>(out var annotation));
+
+        var envVars = new Dictionary<string, object>();
+        await annotation.Callback(new CertificateTrustConfigurationCallbackAnnotationContext
+        {
+            ExecutionContext = new DistributedApplicationExecutionContext(
+                new DistributedApplicationExecutionContextOptions(DistributedApplicationOperation.Run)
+                {
+                    Services = app.Services
+                }),
+            Resource = javaApp.Resource,
+            Arguments = [],
+            EnvironmentVariables = envVars,
+            CertificateBundlePath = ReferenceExpression.Create($"/etc/ssl/aspire/bundle.p12"),
+            CertificateDirectoriesPath = ReferenceExpression.Create($"/etc/ssl/aspire/certs"),
+            Scope = CertificateTrustScope.Append,
+            CancellationToken = default
+        });
+
+        // Under Append the bundle holds only Aspire's own certificates. Pointing the JVM at it would
+        // drop every public certificate authority, so the override is skipped entirely rather than
+        // applied against an incomplete bundle.
+        Assert.Empty(envVars);
     }
 
     [Fact]

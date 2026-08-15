@@ -15,6 +15,8 @@ using System.Security.Cryptography.X509Certificates;
 using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Java;
 using Aspire.Hosting.Utils;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Aspire.Hosting;
 
@@ -85,6 +87,9 @@ public static class JavaHostingExtensions
             // configuration, which starts the JVM directly instead of going through the build tool.
             .WithLaunchToolArgs(ctx => AddLaunchArgs(resource, ctx), ownedByLaunchConfigurationType: "java")
             .WithOtlpExporter()
+            // Requested explicitly because the JVM's trust store setting replaces the default certificate
+            // authorities instead of adding to them, so the bundle has to carry the system roots too.
+            .WithCertificateTrustScope(CertificateTrustScope.System)
             .WithCertificateTrustConfiguration(JavaCertificateTrustCallback)
             .WithVSCodeDebugging()
             .PublishAsDockerFile(containerBuilder =>
@@ -590,6 +595,12 @@ public static class JavaHostingExtensions
     /// Resolves the wrapper script for <paramref name="tool"/>, honouring an override set by
     /// <see cref="WithWrapperPath{T}(IResourceBuilder{T}, string)"/>.
     /// </summary>
+    /// <remarks>
+    /// A project that ships no wrapper falls back to the bare <c>mvn</c>/<c>gradle</c> command so it is
+    /// resolved from <c>PATH</c>. Without the fallback such a project starts with an exec failure naming a
+    /// wrapper the author never added, and it would publish successfully while being unable to run —
+    /// <see cref="JavaDockerfileGenerator"/> already selects the bare command for the container build.
+    /// </remarks>
     private static string ResolveWrapperPath(JavaAppResource resource, JavaBuildTool tool)
     {
         if (resource.TryGetLastAnnotation<WrapperAnnotation>(out var wrapper))
@@ -604,7 +615,19 @@ public static class JavaHostingExtensions
             _ => throw new ArgumentOutOfRangeException(nameof(tool), tool, null)
         };
 
-        return PathNormalizer.NormalizePathForCurrentPlatform(Path.Combine(resource.WorkingDirectory, wrapperName));
+        var wrapperPath = Path.Combine(resource.WorkingDirectory, wrapperName);
+
+        if (!File.Exists(wrapperPath))
+        {
+            return tool switch
+            {
+                JavaBuildTool.Maven => "mvn",
+                JavaBuildTool.Gradle => "gradle",
+                _ => throw new ArgumentOutOfRangeException(nameof(tool), tool, null)
+            };
+        }
+
+        return PathNormalizer.NormalizePathForCurrentPlatform(wrapperPath);
     }
 
     /// <summary>
@@ -687,9 +710,30 @@ public static class JavaHostingExtensions
     /// The JVM ignores the <c>SSL_CERT_DIR</c> and <c>SSL_CERT_FILE</c> variables Aspire sets for other
     /// languages, so without this a Java application fails to export telemetry over HTTPS with
     /// <c>PKIX path building failed</c>. See https://github.com/CommunityToolkit/Aspire/issues/1517.
+    /// <para>
+    /// <c>javax.net.ssl.trustStore</c> <em>replaces</em> the JVM's trust anchors rather than adding to
+    /// them: once it is set, <c>cacerts</c> is not consulted at all. Aspire therefore has to request
+    /// <see cref="CertificateTrustScope.System"/> so the generated bundle carries the system roots
+    /// alongside the development certificate. If the scope is still
+    /// <see cref="CertificateTrustScope.Append"/>, the bundle would contain only Aspire's own
+    /// certificates, and pointing the JVM at it would strip every public CA — breaking outbound HTTPS
+    /// from the application and, because <c>JAVA_TOOL_OPTIONS</c> is inherited by the build tool's JVM,
+    /// breaking Maven Central and Gradle distribution downloads too. In that case the override is
+    /// skipped instead.
+    /// </para>
     /// </remarks>
     private static async Task JavaCertificateTrustCallback(CertificateTrustConfigurationCallbackAnnotationContext ctx)
     {
+        if (ctx.Scope == CertificateTrustScope.Append)
+        {
+            var resourceLoggerService = ctx.ExecutionContext.Services.GetRequiredService<ResourceLoggerService>();
+            resourceLoggerService.GetLogger(ctx.Resource).LogInformation(
+                "Certificate trust scope is set to 'Append', but the JVM's trust store setting replaces the default " +
+                "certificate authorities rather than adding to them. Skipping the trust store override so the JVM " +
+                "keeps trusting its built-in certificate authorities.");
+            return;
+        }
+
         var bundlePath = ctx.CreateCustomBundle((certificates, ct) =>
         {
             var pkcs12Builder = new Pkcs12Builder();

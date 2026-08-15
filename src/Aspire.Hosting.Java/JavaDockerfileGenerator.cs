@@ -173,7 +173,28 @@ internal static class JavaDockerfileGenerator
         }
 
         // Container paths are POSIX even when the AppHost authored a Windows-style relative path.
-        agentPath = authored.Replace('\\', '/').TrimStart('.', '/');
+        var normalized = authored.Replace('\\', '/');
+
+        // Strip a single leading "./" only. Trimming the '.' and '/' characters as a set would turn
+        // "../agents/otel.jar" into "agents/otel.jar" and emit a COPY for a path that was never in the
+        // build context, failing the container build with a path the author never wrote.
+        if (normalized.StartsWith("./", StringComparison.Ordinal))
+        {
+            normalized = normalized[2..];
+        }
+
+        // The Docker build context is the application directory, so a path that walks above it cannot be
+        // copied forward no matter how it is spelled. Say so instead of silently rewriting it.
+        if (normalized.Split('/').Any(segment => segment == ".."))
+        {
+            throw new DistributedApplicationException(
+                $"The OpenTelemetry agent path '{annotation.AgentPath}' configured on resource '{resource.Name}' " +
+                $"points outside the application directory, which is the Docker build context, so it cannot be " +
+                $"published. Use a path inside '{resource.WorkingDirectory}', or an absolute path that the base " +
+                $"image or a mount provides at runtime.");
+        }
+
+        agentPath = normalized;
 
         return agentPath.Length > 0;
     }

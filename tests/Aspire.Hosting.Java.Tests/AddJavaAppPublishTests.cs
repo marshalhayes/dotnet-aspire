@@ -61,6 +61,40 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
     }
 
     [Fact]
+    public async Task VerifyPublish_StripsExactlyOneLeadingDotSlashFromTheOtelAgentPath()
+    {
+        var content = await PublishDockerfileAsync(
+            configureSource: source => WritePom(source, javaVersion: "21"),
+            configureResource: app => app
+                .WithMavenGoal("spring-boot:run")
+                .WithOtelAgent("./target/agent/opentelemetry-javaagent.jar"));
+
+        Assert.Contains(
+            "COPY --from=build /app/target/agent/opentelemetry-javaagent.jar /app/agent.jar",
+            content);
+    }
+
+    [Fact]
+    public void AnOtelAgentPathOutsideTheBuildContextIsRejected()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish);
+        using var tempDir = new TempJavaAppDirectory();
+
+        var app = builder.AddJavaApp("api", tempDir.Path)
+            .WithMavenGoal("spring-boot:run")
+            .WithOtelAgent("../agents/opentelemetry-javaagent.jar");
+
+        // The Docker build context is the application directory, so "../" can never be copied forward.
+        // Trimming the leading dots instead would emit a COPY for "agents/opentelemetry-javaagent.jar" --
+        // a path the author never wrote -- and fail the container build with a confusing message.
+        var exception = Assert.Throws<DistributedApplicationException>(
+            () => JavaDockerfileGenerator.TryGetBuildProducedAgentPath(app.Resource, out _));
+
+        Assert.Contains("../agents/opentelemetry-javaagent.jar", exception.Message);
+        Assert.Contains("outside the application directory", exception.Message);
+    }
+
+    [Fact]
     public async Task VerifyPublish_DoesNotCopyAnAbsoluteOtelAgentPath()
     {
         var agentPath = OperatingSystem.IsWindows() ? @"C:\opt\otel\agent.jar" : "/opt/otel/agent.jar";

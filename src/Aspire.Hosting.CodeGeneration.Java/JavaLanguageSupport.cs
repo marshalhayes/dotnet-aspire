@@ -93,6 +93,32 @@ internal sealed class JavaLanguageSupport : ILanguageSupport
         return DetectionResult.Found(LanguageId, "AppHost.java");
     }
 
+    /// <summary>
+    /// Directory that the generated SDK sources and the AppHost are compiled into.
+    /// </summary>
+    private const string BuildOutputDirectory = ".java-build";
+
+    /// <summary>
+    /// Compiler options used to build the AppHost.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The scaffolded AppHost is a compact source file with an instance <c>main</c> method, which
+    /// requires Java 25. That feature was previewed in Java 21 through 24 (JEP 445, 463, 477, and
+    /// 495) and finalized in Java 25 by <see href="https://openjdk.org/jeps/512">JEP 512</see>, so
+    /// <c>--enable-preview</c> is deliberately absent: passing it here compiles no preview feature
+    /// and only risks stamping the class files with the preview minor version (65535), which binds
+    /// them to one exact JDK release and forces the flag at run time too.
+    /// </para>
+    /// <para>
+    /// <c>--release</c> is used rather than <c>--source</c> because only <c>--release</c> also
+    /// constrains the visible API surface. With <c>--source</c> alone a newer JDK still compiles
+    /// against its own class library, so an AppHost can bind to APIs that do not exist in Java 25
+    /// and then fail at run time on a conforming Java 25 runtime.
+    /// </para>
+    /// </remarks>
+    private const string JavacOptions = "--release 25";
+
     /// <inheritdoc />
     public RuntimeSpec GetRuntimeSpec()
     {
@@ -110,8 +136,8 @@ internal sealed class JavaLanguageSupport : ILanguageSupport
                 // On Windows, use cmd /c; on Unix, use sh -c
                 Command = OperatingSystem.IsWindows() ? "cmd" : "sh",
                 Args = OperatingSystem.IsWindows()
-                    ? ["/c", "if not exist .java-build mkdir .java-build && javac --enable-preview --source 25 -d .java-build @.aspire\\modules\\sources.txt AppHost.java && java --enable-preview -cp .java-build AppHost {args}"]
-                    : ["-c", "mkdir -p .java-build && javac --enable-preview --source 25 -d .java-build @.aspire/modules/sources.txt AppHost.java && java --enable-preview -cp .java-build AppHost {args}"]
+                    ? ["/c", $"if not exist {BuildOutputDirectory} mkdir {BuildOutputDirectory} && javac {JavacOptions} -d {BuildOutputDirectory} @.aspire\\modules\\sources.txt AppHost.java && java -cp {BuildOutputDirectory} AppHost {{args}}"]
+                    : ["-c", $"mkdir -p {BuildOutputDirectory} && javac {JavacOptions} -d {BuildOutputDirectory} @.aspire/modules/sources.txt AppHost.java && java -cp {BuildOutputDirectory} AppHost {{args}}"]
             }
         };
     }
