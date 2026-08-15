@@ -16,4 +16,4 @@ namespace Aspire.Hosting.Java;
 /// </remarks>
 [AspireExport(ExposeProperties = true)]
 public class JavaAppResource(string name, string workingDirectory)
-    : ExecutableResource(name, "java", workingDirectory), IResourceWithServiceDiscovery, IContainerFilesDestinationResource;
+    : ExecutableResource(name, "java", workingDirectory), IJavaAppResource, IResourceWithServiceDiscovery, IContainerFilesDestinationResource;

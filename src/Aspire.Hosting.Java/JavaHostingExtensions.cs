@@ -179,6 +179,66 @@ public static class JavaHostingExtensions
     }
 
     /// <summary>
+    /// Adds a Java application that runs from an existing container image.
+    /// </summary>
+    /// <param name="builder">The <see cref="IDistributedApplicationBuilder"/> to add the resource to.</param>
+    /// <param name="name">The name of the resource.</param>
+    /// <param name="image">The container image that runs the application, for example <c>mycompany/catalog</c>.</param>
+    /// <param name="imageTag">The image tag. Defaults to the image's <c>latest</c> tag.</param>
+    /// <returns>A reference to the <see cref="IResourceBuilder{T}"/>.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="builder"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException"><paramref name="name"/> or <paramref name="image"/> is <see langword="null"/>, empty, or whitespace.</exception>
+    /// <remarks>
+    /// Use this when the image is built elsewhere — by a separate CI pipeline, or by a team that ships the
+    /// application as a container. Aspire runs the image as-is and never rebuilds it, so the JAR, the JDK,
+    /// and any OpenTelemetry agent all come from the image. Use
+    /// <see cref="AddJavaApp(IDistributedApplicationBuilder, string, string)"/> instead when Aspire should
+    /// build and run the application from source.
+    /// <para>
+    /// No endpoint is declared, because the port the image listens on is a property of the image. Add one
+    /// with <c>WithHttpEndpoint(targetPort: 8080)</c>, using whichever port the application binds — 8080
+    /// for a default Spring Boot or Quarkus image.
+    /// </para>
+    /// </remarks>
+    /// <example>
+    /// Run a published Spring Boot image and give it a database:
+    /// <code language="csharp">
+    /// var builder = DistributedApplication.CreateBuilder(args);
+    ///
+    /// var db = builder.AddPostgres("pg").AddDatabase("catalogdb");
+    ///
+    /// builder.AddJavaContainerApp("catalog", "mycompany/catalog", "1.4.0")
+    ///        .WithHttpEndpoint(targetPort: 8080)
+    ///        .WithReference(db)
+    ///        .WithJvmArgs("-Xmx512m");
+    ///
+    /// builder.Build().Run();
+    /// </code>
+    /// </example>
+    [AspireExport]
+    public static IResourceBuilder<JavaAppContainerResource> AddJavaContainerApp(
+        this IDistributedApplicationBuilder builder,
+        [ResourceName] string name,
+        string image,
+        string? imageTag = null)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentException.ThrowIfNullOrWhiteSpace(image);
+
+        var resource = new JavaAppContainerResource(name);
+
+        return builder.AddResource(resource)
+            .WithImage(image, imageTag)
+            .WithIconName(JavaIconName)
+            .WithOtlpExporter()
+            // Requested explicitly because the JVM's trust store setting replaces the default certificate
+            // authorities instead of adding to them, so the bundle has to carry the system roots too.
+            .WithCertificateTrustScope(CertificateTrustScope.System)
+            .WithCertificateTrustConfiguration(JavaCertificateTrustCallback);
+    }
+
+    /// <summary>
     /// Launches the Java application through a Maven goal instead of <c>java</c>, for example <c>spring-boot:run</c>.
     /// </summary>
     /// <typeparam name="T">The Java application resource type.</typeparam>
@@ -498,14 +558,20 @@ public static class JavaHostingExtensions
     /// <exception cref="ArgumentNullException"><paramref name="builder"/> or <paramref name="args"/> is <see langword="null"/>.</exception>
     /// <remarks>
     /// Arguments are passed through the <c>JAVA_TOOL_OPTIONS</c> environment variable, which the JVM reads
-    /// however it was started — <c>java -jar</c>, a Maven goal, or a Gradle task, including the JVM those
-    /// build tools fork. Values containing spaces are quoted, because the JVM splits this variable on
-    /// whitespace.
+    /// however it was started — <c>java -jar</c>, a Maven goal, a Gradle task, or a container image's own
+    /// entrypoint, including the JVM those build tools fork. Values containing spaces are quoted, because
+    /// the JVM splits this variable on whitespace.
+    /// <para>
+    /// This is also how a container image that already carries the OpenTelemetry Java agent turns it on,
+    /// since <see cref="WithOtelAgent{T}(IResourceBuilder{T}, string)"/> copies an agent from the build
+    /// context and so applies only to applications Aspire itself launches or builds:
+    /// <c>WithJvmArgs("-javaagent:/app/opentelemetry-javaagent.jar")</c>.
+    /// </para>
     /// </remarks>
     [AspireExport]
     public static IResourceBuilder<T> WithJvmArgs<T>(
         this IResourceBuilder<T> builder,
-        params string[] args) where T : JavaAppResource
+        params string[] args) where T : IJavaAppResource
     {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(args);

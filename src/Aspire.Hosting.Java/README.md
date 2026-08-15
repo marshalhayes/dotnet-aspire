@@ -86,6 +86,24 @@ Arguments passed to `AddJavaApp` or `WithArgs(...)` belong to the application. A
 tool are passed to `WithMavenGoal`/`WithGradleTask`, which keeps the two sets separable — the IDE needs
 to drop the wrapper's arguments when it launches the JVM directly to debug it.
 
+### Running an image someone else built
+
+When the application ships as a container image — built by a separate pipeline, or by a team that hands
+you an image rather than source — use `AddJavaContainerApp` instead. Aspire runs the image as-is and
+never rebuilds it, so the JAR, the JDK, and any OpenTelemetry agent all come from the image:
+
+```csharp
+builder.AddJavaContainerApp("catalog", "mycompany/catalog", "1.4.0")
+    .WithHttpEndpoint(targetPort: 8080)
+    .WithReference(db)
+    .WithJvmArgs("-Xmx512m");
+```
+
+No endpoint is declared for you, because the port is a property of the image; 8080 is the default for
+Spring Boot and Quarkus. `WithOtelAgent` does not apply here — it copies an agent out of the build
+context, and there is no build. If the image already carries the agent, turn it on with
+`WithJvmArgs("-javaagent:/app/opentelemetry-javaagent.jar")`.
+
 ### Building before running
 
 ```csharp
@@ -109,7 +127,7 @@ for Gradle, for example.
 | `WithWrapperPath(string wrapperScript)` | Selects a wrapper outside the app directory. May be called before or after the build tool is configured |
 | `WithMainClass(string mainClass)` | The fully qualified class the IDE launches when debugging |
 | `WithJarArtifact(string jarPath)` | Names the JAR the container build should deploy, when the build produces more than one |
-| `WithJvmArgs(params string[] args)` | Appends JVM arguments through `JAVA_TOOL_OPTIONS` |
+| `WithJvmArgs(params string[] args)` | Appends JVM arguments through `JAVA_TOOL_OPTIONS`. Also available on `AddJavaContainerApp` |
 | `WithOtelAgent(string agentPath)` | Runs the app under the OpenTelemetry Java agent |
 
 ### Telemetry
