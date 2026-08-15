@@ -296,13 +296,6 @@ internal static class JavaAppHostToolchainResolver
         JavaAppHostToolchainResolution resolution,
         CancellationToken cancellationToken)
     {
-        if (resolution.Toolchain == JavaAppHostToolchain.Maven)
-        {
-            ClearMavenDependencyDirectory(resolution.ProjectDirectory);
-
-            return;
-        }
-
         if (resolution.Toolchain != JavaAppHostToolchain.Gradle)
         {
             return;
@@ -320,22 +313,34 @@ internal static class JavaAppHostToolchainResolver
     }
 
     /// <summary>
-    /// Removes the staged Maven dependencies so the next run restages them from scratch.
+    /// Removes staged dependencies that the build tool will not remove itself, immediately before it
+    /// restages them.
     /// </summary>
     /// <remarks>
     /// The AppHost is launched with the whole staging directory on its classpath as <c>dir/*</c>, and
     /// <c>dependency:copy-dependencies</c> only ever adds to that directory. Upgrading a dependency
     /// changes the file name, so the old JAR stays behind and both versions end up on the classpath,
-    /// where which one wins is left to directory order. Gradle solves this with <c>Sync</c>; Maven has
-    /// no equivalent, so the directory is cleared here instead.
+    /// where which one wins is left to directory order.
     /// <para>
-    /// Restaging is a copy from the local repository rather than a download, and it only runs when
-    /// dependencies are installed, so paying it every time is cheaper than being wrong occasionally.
+    /// Gradle needs nothing here because its staging task is a <c>Sync</c>, which prunes the destination
+    /// itself and stays incremental while doing it. Maven has no equivalent.
+    /// </para>
+    /// <para>
+    /// This is called from the install path rather than when the toolchain is resolved so that clearing
+    /// and restaging cannot be separated. Clearing without restaging would leave the AppHost with an
+    /// empty classpath.
     /// </para>
     /// </remarks>
-    private static void ClearMavenDependencyDirectory(DirectoryInfo projectDirectory)
+    public static void ClearStagedDependencies(JavaAppHostToolchainResolution resolution)
     {
-        var dependencyDirectory = Path.Combine(projectDirectory.FullName, "target", DependencyDirectoryName);
+        if (resolution.Toolchain != JavaAppHostToolchain.Maven)
+        {
+            return;
+        }
+
+        var dependencyDirectory = Path.Combine(
+            resolution.ProjectDirectory.FullName,
+            GetDependencyDirectory(resolution.Toolchain));
 
         try
         {

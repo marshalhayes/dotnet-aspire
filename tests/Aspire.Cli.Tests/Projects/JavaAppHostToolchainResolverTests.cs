@@ -300,19 +300,16 @@ public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
     }
 
     [Fact]
-    public async Task EnsureToolchainFilesExistAsync_ForMaven_ClearsPreviouslyStagedDependencies()
+    public async Task ClearStagedDependencies_ForMaven_RemovesPreviouslyStagedDependencies()
     {
         using var workspace = TemporaryWorkspace.Create(outputHelper);
         File.WriteAllText(Path.Combine(workspace.Path, "pom.xml"), "<project />");
 
         var dependencyDirectory = Path.Combine(workspace.Path, "target", "aspire-deps");
         Directory.CreateDirectory(dependencyDirectory);
-        var staleJar = Path.Combine(dependencyDirectory, "library-1.0.jar");
-        await File.WriteAllTextAsync(staleJar, "");
+        await File.WriteAllTextAsync(Path.Combine(dependencyDirectory, "library-1.0.jar"), "");
 
-        await JavaAppHostToolchainResolver.EnsureToolchainFilesExistAsync(
-            JavaAppHostToolchainResolver.Resolve(workspace.WorkspaceRoot),
-            CancellationToken.None);
+        JavaAppHostToolchainResolver.ClearStagedDependencies(JavaAppHostToolchainResolver.Resolve(workspace.WorkspaceRoot));
 
         // dependency:copy-dependencies only ever adds, so library-1.0.jar would survive an upgrade to
         // library-2.0.jar and both would be on the AppHost's dir/* classpath.
@@ -320,16 +317,32 @@ public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
     }
 
     [Fact]
-    public async Task EnsureToolchainFilesExistAsync_ForMaven_WithNothingStagedYet_DoesNotThrow()
+    public void ClearStagedDependencies_ForMaven_WithNothingStagedYet_DoesNotThrow()
     {
         using var workspace = TemporaryWorkspace.Create(outputHelper);
         File.WriteAllText(Path.Combine(workspace.Path, "pom.xml"), "<project />");
 
-        await JavaAppHostToolchainResolver.EnsureToolchainFilesExistAsync(
-            JavaAppHostToolchainResolver.Resolve(workspace.WorkspaceRoot),
-            CancellationToken.None);
+        JavaAppHostToolchainResolver.ClearStagedDependencies(JavaAppHostToolchainResolver.Resolve(workspace.WorkspaceRoot));
 
         Assert.False(Directory.Exists(Path.Combine(workspace.Path, "target")));
+    }
+
+    [Fact]
+    public async Task ClearStagedDependencies_ForGradle_LeavesTheDirectoryToTheSyncTask()
+    {
+        using var workspace = TemporaryWorkspace.Create(outputHelper);
+        File.WriteAllText(Path.Combine(workspace.Path, "build.gradle"), "");
+        WriteWrapper(workspace.Path, OperatingSystem.IsWindows() ? "gradlew.bat" : "gradlew");
+
+        var dependencyDirectory = Path.Combine(workspace.Path, "build", "aspire-deps");
+        Directory.CreateDirectory(dependencyDirectory);
+        await File.WriteAllTextAsync(Path.Combine(dependencyDirectory, "library-1.0.jar"), "");
+
+        JavaAppHostToolchainResolver.ClearStagedDependencies(JavaAppHostToolchainResolver.Resolve(workspace.WorkspaceRoot));
+
+        // Sync prunes the destination itself and stays incremental, so deleting it here would only
+        // force Gradle to recopy everything.
+        Assert.True(Directory.Exists(dependencyDirectory));
     }
 
     [Theory]

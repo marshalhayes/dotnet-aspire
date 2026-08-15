@@ -58,6 +58,12 @@ internal sealed class GuestAppHostProject : IAppHostProject, IGuestAppHostSdkGen
     private readonly LanguageInfo _resolvedLanguage;
     private GuestRuntime? _guestRuntime;
 
+    /// <summary>
+    /// Set when the AppHost is Java, so the install path can clear staged dependencies the build tool
+    /// will not prune itself. Null for every other language.
+    /// </summary>
+    private JavaAppHostToolchainResolution? _javaToolchainResolution;
+
     public GuestAppHostProject(
         LanguageInfo language,
         IInteractionService interactionService,
@@ -1877,6 +1883,7 @@ internal sealed class GuestAppHostProject : IAppHostProject, IGuestAppHostSdkGen
                 var resolution = JavaAppHostToolchainResolver.Resolve(directory, _logger);
                 await JavaAppHostToolchainResolver.EnsureToolchainFilesExistAsync(resolution, cancellationToken);
                 runtimeSpec = JavaAppHostToolchainResolver.ApplyToRuntimeSpec(runtimeSpec, resolution, directory);
+                _javaToolchainResolution = resolution;
             }
 
             _guestRuntime = new GuestRuntime(runtimeSpec, _logger, PathLookupHelper.FindFullPathFromPath, _environment, _profilingTelemetry, _fileLoggerProvider);
@@ -1922,6 +1929,12 @@ internal sealed class GuestAppHostProject : IAppHostProject, IGuestAppHostSdkGen
                 _interactionService.DisplayError($"Failed to initialize {_resolvedLanguage?.DisplayName ?? "guest"} environment.");
             }
             return initResult;
+        }
+
+        if (_javaToolchainResolution is { } javaToolchain)
+        {
+            // Immediately before staging, so the AppHost can never be left with a cleared classpath.
+            JavaAppHostToolchainResolver.ClearStagedDependencies(javaToolchain);
         }
 
         var (result, output) = await _guestRuntime.InstallDependenciesAsync(directory, cancellationToken);
