@@ -33,10 +33,10 @@ public class AtsJavaCodeGeneratorTests
         var files = _generator.GenerateDistributedApplication(atsContext);
 
         // Assert
-        Assert.Contains("Aspire.java", files.Keys);
-        Assert.Contains("AspireClient.java", files.Keys);
-        Assert.Contains("HandleWrapperBase.java", files.Keys);
-        Assert.Contains("TestRedisResource.java", files.Keys);
+        Assert.Contains("aspire/Aspire.java", files.Keys);
+        Assert.Contains("aspire/AspireClient.java", files.Keys);
+        Assert.Contains("aspire/HandleWrapperBase.java", files.Keys);
+        Assert.Contains("aspire/TestRedisResource.java", files.Keys);
         Assert.Contains("sources.txt", files.Keys);
 
         await Verify(JoinGeneratedFiles(files), extension: "java")
@@ -80,7 +80,7 @@ public class AtsJavaCodeGeneratorTests
         Assert.Contains(atsContext.ExportedValues, value => string.Join(".", value.PathSegments) == "TestConfigs.Profiles.Development");
 
         var files = _generator.GenerateDistributedApplication(atsContext);
-        var testConfigsJava = files["TestConfigs.java"];
+        var testConfigsJava = files["aspire/TestConfigs.java"];
 
         Assert.Contains("public final class TestConfigs", testConfigsJava);
         Assert.Contains("static final TestConfigDto Default", testConfigsJava);
@@ -217,7 +217,7 @@ public class AtsJavaCodeGeneratorTests
         var atsContext = CreateContextFromBothAssemblies();
 
         var files = _generator.GenerateDistributedApplication(atsContext);
-        var containerResourceJava = files["ContainerResource.java"];
+        var containerResourceJava = files["aspire/ContainerResource.java"];
 
         Assert.Contains("public ContainerResource withReference(IResource source, WithReferenceOptions options)", containerResourceJava);
         Assert.Contains("public ContainerResource waitFor(IResource dependency)", containerResourceJava);
@@ -280,7 +280,7 @@ public class AtsJavaCodeGeneratorTests
         var atsContext = CreateContextFromBothAssemblies();
 
         var files = _generator.GenerateDistributedApplication(atsContext);
-        var testRedisJava = files["TestRedisResource.java"];
+        var testRedisJava = files["aspire/TestRedisResource.java"];
 
         Assert.Contains("public class TestRedisResource extends ContainerResource", testRedisJava);
     }
@@ -294,7 +294,7 @@ public class AtsJavaCodeGeneratorTests
 
         // Generate Java
         var files = _generator.GenerateDistributedApplication(atsContext);
-        var testRedisJava = files["TestRedisResource.java"];
+        var testRedisJava = files["aspire/TestRedisResource.java"];
 
         // Verify withEnvironment appears (method should exist for resources that support it)
         Assert.Contains("withEnvironment", testRedisJava);
@@ -311,8 +311,8 @@ public class AtsJavaCodeGeneratorTests
         var atsContext = CreateContextFromBothAssemblies();
 
         var files = _generator.GenerateDistributedApplication(atsContext);
-        var builderJava = files["IDistributedApplicationBuilder.java"];
-        var testRedisJava = files["TestRedisResource.java"];
+        var builderJava = files["aspire/IDistributedApplicationBuilder.java"];
+        var testRedisJava = files["aspire/TestRedisResource.java"];
 
         // Java uses camelCase for methods
         Assert.Contains("addContainer", builderJava);
@@ -326,7 +326,7 @@ public class AtsJavaCodeGeneratorTests
         var atsContext = CreateContextFromBothAssemblies();
 
         var files = _generator.GenerateDistributedApplication(atsContext);
-        var distributedApplicationJava = files["DistributedApplication.java"];
+        var distributedApplicationJava = files["aspire/DistributedApplication.java"];
 
         Assert.Contains("createBuilder", distributedApplicationJava);
     }
@@ -338,7 +338,7 @@ public class AtsJavaCodeGeneratorTests
         var atsContext = CreateContextFromBothAssemblies();
 
         var files = _generator.GenerateDistributedApplication(atsContext);
-        var aspireJava = files["Aspire.java"];
+        var aspireJava = files["aspire/Aspire.java"];
 
         Assert.Contains("public class Aspire", aspireJava);
     }
@@ -349,7 +349,7 @@ public class AtsJavaCodeGeneratorTests
         var atsContext = CreateContextFromBothAssemblies();
 
         var files = _generator.GenerateDistributedApplication(atsContext);
-        var aspireClientJava = files["AspireClient.java"];
+        var aspireClientJava = files["aspire/AspireClient.java"];
 
         Assert.Contains("private String getCallbackId(Object params)", aspireClientJava);
         Assert.Contains("if (params instanceof List<?> list && !list.isEmpty())", aspireClientJava);
@@ -362,10 +362,10 @@ public class AtsJavaCodeGeneratorTests
         var atsContext = CreateContextFromTestAssembly();
 
         var files = _generator.GenerateDistributedApplication(atsContext);
-        var aspireClientJava = files["AspireClient.java"];
-        var testConfigDtoJava = files["TestConfigDto.java"];
+        var aspireClientJava = files["aspire/AspireClient.java"];
+        var testConfigDtoJava = files["aspire/TestConfigDto.java"];
 
-        Assert.Contains("interface JsonSerializable", files["JsonSerializable.java"]);
+        Assert.Contains("interface JsonSerializable", files["aspire/JsonSerializable.java"]);
         Assert.Contains("if (value instanceof JsonSerializable jsonSerializable)", aspireClientJava);
         Assert.Contains("public class TestConfigDto implements JsonSerializable", testConfigDtoJava);
     }

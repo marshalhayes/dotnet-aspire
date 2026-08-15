@@ -85,6 +85,33 @@ internal sealed class AtsJavaCodeGenerator : ICodeGenerator
         }
     }
 
+    /// <summary>
+    /// Maps a generated type to its output path, placing it in the directory its package declares.
+    /// </summary>
+    /// <remarks>
+    /// The generated SDK declares <c>package aspire;</c>, so the sources have to live in an
+    /// <c>aspire/</c> directory rather than flat in <c>.aspire/modules</c>. javac itself does not care
+    /// when every file is named explicitly, which is how the CLI compiles, but anything that resolves
+    /// types through a source path does: IDEs build from the project model rather than the CLI's
+    /// argument file, so a flat layout makes the Java language server report
+    /// "package aspire does not exist" against a working AppHost. Emitting the package directory is
+    /// what lets an editor add <c>.aspire/modules</c> as a source root and resolve the SDK.
+    /// </remarks>
+    private static string GetGeneratedFilePath(string packageLine, string fileName)
+    {
+        // "package aspire;" or "package a.b.c;" -> "aspire" / "a/b/c". Always forward slashes: the
+        // value is a relative path key that also gets written into the javac argument file, and javac
+        // accepts forward slashes on every platform.
+        var packageName = packageLine
+            .Replace("package ", string.Empty, StringComparison.Ordinal)
+            .Replace(";", string.Empty, StringComparison.Ordinal)
+            .Trim();
+
+        return string.IsNullOrEmpty(packageName)
+            ? fileName
+            : $"{packageName.Replace('.', '/')}/{fileName}";
+    }
+
     private static Dictionary<string, string> SplitJavaSourceFiles(string source)
     {
         var packageLine = string.Empty;
@@ -174,7 +201,7 @@ internal sealed class AtsJavaCodeGenerator : ICodeGenerator
             if (braceDepth == 0)
             {
                 declarations.Add(
-                    $"{currentTypeName}.java",
+                    GetGeneratedFilePath(packageLine, $"{currentTypeName}.java"),
                     CreateJavaSourceFile($"{currentTypeName}.java", packageLine, importLines, currentDeclaration));
 
                 currentDeclaration = null;

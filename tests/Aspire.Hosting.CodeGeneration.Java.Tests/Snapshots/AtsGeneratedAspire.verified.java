@@ -1,4 +1,4 @@
-﻿// ===== Aspire.java =====
+﻿// ===== aspire/Aspire.java =====
 // Aspire.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -57,7 +57,7 @@ public class Aspire {
     }
 }
 
-// ===== AspireAction0.java =====
+// ===== aspire/AspireAction0.java =====
 // AspireAction0.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -69,7 +69,7 @@ public interface AspireAction0 {
     void invoke();
 }
 
-// ===== AspireAction1.java =====
+// ===== aspire/AspireAction1.java =====
 // AspireAction1.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -81,7 +81,7 @@ public interface AspireAction1<T1> {
     void invoke(T1 arg1);
 }
 
-// ===== AspireAction2.java =====
+// ===== aspire/AspireAction2.java =====
 // AspireAction2.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -93,7 +93,7 @@ public interface AspireAction2<T1, T2> {
     void invoke(T1 arg1, T2 arg2);
 }
 
-// ===== AspireAction3.java =====
+// ===== aspire/AspireAction3.java =====
 // AspireAction3.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -105,7 +105,7 @@ public interface AspireAction3<T1, T2, T3> {
     void invoke(T1 arg1, T2 arg2, T3 arg3);
 }
 
-// ===== AspireAction4.java =====
+// ===== aspire/AspireAction4.java =====
 // AspireAction4.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -117,7 +117,7 @@ public interface AspireAction4<T1, T2, T3, T4> {
     void invoke(T1 arg1, T2 arg2, T3 arg3, T4 arg4);
 }
 
-// ===== AspireClient.java =====
+// ===== aspire/AspireClient.java =====
 // AspireClient.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -899,7 +899,7 @@ public class AspireClient {
     }
 }
 
-// ===== AspireDict.java =====
+// ===== aspire/AspireDict.java =====
 // AspireDict.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -987,7 +987,7 @@ public class AspireDict<K, V> extends HandleWrapperBase {
     }
 }
 
-// ===== AspireFunc0.java =====
+// ===== aspire/AspireFunc0.java =====
 // AspireFunc0.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -999,7 +999,7 @@ public interface AspireFunc0<R> {
     R invoke();
 }
 
-// ===== AspireFunc1.java =====
+// ===== aspire/AspireFunc1.java =====
 // AspireFunc1.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -1011,7 +1011,7 @@ public interface AspireFunc1<T1, R> {
     R invoke(T1 arg1);
 }
 
-// ===== AspireFunc2.java =====
+// ===== aspire/AspireFunc2.java =====
 // AspireFunc2.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -1023,7 +1023,7 @@ public interface AspireFunc2<T1, T2, R> {
     R invoke(T1 arg1, T2 arg2);
 }
 
-// ===== AspireFunc3.java =====
+// ===== aspire/AspireFunc3.java =====
 // AspireFunc3.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -1035,7 +1035,7 @@ public interface AspireFunc3<T1, T2, T3, R> {
     R invoke(T1 arg1, T2 arg2, T3 arg3);
 }
 
-// ===== AspireFunc4.java =====
+// ===== aspire/AspireFunc4.java =====
 // AspireFunc4.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -1047,7 +1047,7 @@ public interface AspireFunc4<T1, T2, T3, T4, R> {
     R invoke(T1 arg1, T2 arg2, T3 arg3, T4 arg4);
 }
 
-// ===== AspireList.java =====
+// ===== aspire/AspireList.java =====
 // AspireList.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -1092,7 +1092,7 @@ public class AspireList<T> extends HandleWrapperBase {
     }
 }
 
-// ===== AspireRegistrations.java =====
+// ===== aspire/AspireRegistrations.java =====
 // AspireRegistrations.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -1126,7 +1126,7 @@ public class AspireRegistrations {
     }
 }
 
-// ===== AspireUnion.java =====
+// ===== aspire/AspireUnion.java =====
 // AspireUnion.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -1175,7 +1175,7 @@ public final class AspireUnion {
     }
 }
 
-// ===== BaseRegistrations.java =====
+// ===== aspire/BaseRegistrations.java =====
 // BaseRegistrations.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -1197,7 +1197,7 @@ public final class BaseRegistrations {
     }
 }
 
-// ===== CancellationToken.java =====
+// ===== aspire/CancellationToken.java =====
 // CancellationToken.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -1265,7 +1265,7 @@ public class CancellationToken {
     }
 }
 
-// ===== CapabilityError.java =====
+// ===== aspire/CapabilityError.java =====
 // CapabilityError.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -1295,7 +1295,7 @@ public class CapabilityError extends RuntimeException {
     Object getData() { return data; }
 }
 
-// ===== Handle.java =====
+// ===== aspire/Handle.java =====
 // Handle.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -1336,7 +1336,7 @@ public class Handle {
     }
 }
 
-// ===== HandleWrapperBase.java =====
+// ===== aspire/HandleWrapperBase.java =====
 // HandleWrapperBase.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -1364,7 +1364,7 @@ public class HandleWrapperBase {
     }
 }
 
-// ===== IDistributedApplicationBuilder.java =====
+// ===== aspire/IDistributedApplicationBuilder.java =====
 // IDistributedApplicationBuilder.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -1405,7 +1405,7 @@ public class IDistributedApplicationBuilder extends HandleWrapperBase {
 
 }
 
-// ===== IResource.java =====
+// ===== aspire/IResource.java =====
 // IResource.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -1421,7 +1421,7 @@ public class IResource extends ResourceBuilderBase {
 
 }
 
-// ===== IResourceWithConnectionString.java =====
+// ===== aspire/IResourceWithConnectionString.java =====
 // IResourceWithConnectionString.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -1437,7 +1437,7 @@ public class IResourceWithConnectionString extends ResourceBuilderBase {
 
 }
 
-// ===== IResourceWithEnvironment.java =====
+// ===== aspire/IResourceWithEnvironment.java =====
 // IResourceWithEnvironment.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -1453,7 +1453,7 @@ public class IResourceWithEnvironment extends HandleWrapperBase {
 
 }
 
-// ===== ITestVaultResource.java =====
+// ===== aspire/ITestVaultResource.java =====
 // ITestVaultResource.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -1469,7 +1469,7 @@ public class ITestVaultResource extends ResourceBuilderBase {
 
 }
 
-// ===== JsonSerializable.java =====
+// ===== aspire/JsonSerializable.java =====
 // JsonSerializable.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -1486,7 +1486,7 @@ public interface JsonSerializable {
     Map<String, Object> toMap();
 }
 
-// ===== ReferenceExpression.java =====
+// ===== aspire/ReferenceExpression.java =====
 // ReferenceExpression.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -1614,7 +1614,7 @@ public class ReferenceExpression {
     }
 }
 
-// ===== ResourceBuilderBase.java =====
+// ===== aspire/ResourceBuilderBase.java =====
 // ResourceBuilderBase.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -1630,7 +1630,7 @@ public class ResourceBuilderBase extends HandleWrapperBase {
     }
 }
 
-// ===== TestCallbackContext.java =====
+// ===== aspire/TestCallbackContext.java =====
 // TestCallbackContext.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -1699,7 +1699,7 @@ public class TestCallbackContext extends HandleWrapperBase {
 
 }
 
-// ===== TestCollectionContext.java =====
+// ===== aspire/TestCollectionContext.java =====
 // TestCollectionContext.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -1733,7 +1733,7 @@ public class TestCollectionContext extends HandleWrapperBase {
 
 }
 
-// ===== TestConfigDto.java =====
+// ===== aspire/TestConfigDto.java =====
 // TestConfigDto.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -1781,7 +1781,7 @@ public class TestConfigDto implements JsonSerializable {
     }
 }
 
-// ===== TestConfigs.java =====
+// ===== aspire/TestConfigs.java =====
 // TestConfigs.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -1807,7 +1807,7 @@ public final class TestConfigs {
 
 }
 
-// ===== TestDatabaseResource.java =====
+// ===== aspire/TestDatabaseResource.java =====
 // TestDatabaseResource.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -2173,7 +2173,7 @@ public class TestDatabaseResource extends ResourceBuilderBase {
 
 }
 
-// ===== TestDeeplyNestedDto.java =====
+// ===== aspire/TestDeeplyNestedDto.java =====
 // TestDeeplyNestedDto.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -2209,7 +2209,7 @@ public class TestDeeplyNestedDto implements JsonSerializable {
     }
 }
 
-// ===== TestEnvironmentContext.java =====
+// ===== aspire/TestEnvironmentContext.java =====
 // TestEnvironmentContext.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -2276,7 +2276,7 @@ public class TestEnvironmentContext extends HandleWrapperBase {
 
 }
 
-// ===== TestMutableCollectionContext.java =====
+// ===== aspire/TestMutableCollectionContext.java =====
 // TestMutableCollectionContext.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -2328,7 +2328,7 @@ public class TestMutableCollectionContext extends HandleWrapperBase {
 
 }
 
-// ===== TestNestedDto.java =====
+// ===== aspire/TestNestedDto.java =====
 // TestNestedDto.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -2376,7 +2376,7 @@ public class TestNestedDto implements JsonSerializable {
     }
 }
 
-// ===== TestPersistenceMode.java =====
+// ===== aspire/TestPersistenceMode.java =====
 // TestPersistenceMode.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -2406,7 +2406,7 @@ public enum TestPersistenceMode implements WireValueEnum {
     }
 }
 
-// ===== TestRedisResource.java =====
+// ===== aspire/TestRedisResource.java =====
 // TestRedisResource.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -2908,7 +2908,7 @@ public class TestRedisResource extends ResourceBuilderBase {
 
 }
 
-// ===== TestResourceContext.java =====
+// ===== aspire/TestResourceContext.java =====
 // TestResourceContext.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -2982,7 +2982,7 @@ public class TestResourceContext extends HandleWrapperBase {
 
 }
 
-// ===== TestResourceStatus.java =====
+// ===== aspire/TestResourceStatus.java =====
 // TestResourceStatus.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -3013,7 +3013,7 @@ public enum TestResourceStatus implements WireValueEnum {
     }
 }
 
-// ===== TestVaultResource.java =====
+// ===== aspire/TestVaultResource.java =====
 // TestVaultResource.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -3367,7 +3367,7 @@ public class TestVaultResource extends ResourceBuilderBase {
 
 }
 
-// ===== WireValueEnum.java =====
+// ===== aspire/WireValueEnum.java =====
 // WireValueEnum.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -3381,7 +3381,7 @@ public interface WireValueEnum {
     String getValue();
 }
 
-// ===== WithDataVolumeOptions.java =====
+// ===== aspire/WithDataVolumeOptions.java =====
 // WithDataVolumeOptions.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -3408,7 +3408,7 @@ public final class WithDataVolumeOptions {
 
 }
 
-// ===== WithMergeLoggingOptions.java =====
+// ===== aspire/WithMergeLoggingOptions.java =====
 // WithMergeLoggingOptions.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -3435,7 +3435,7 @@ public final class WithMergeLoggingOptions {
 
 }
 
-// ===== WithMergeLoggingPathOptions.java =====
+// ===== aspire/WithMergeLoggingPathOptions.java =====
 // WithMergeLoggingPathOptions.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -3462,7 +3462,7 @@ public final class WithMergeLoggingPathOptions {
 
 }
 
-// ===== WithOptionalStringOptions.java =====
+// ===== aspire/WithOptionalStringOptions.java =====
 // WithOptionalStringOptions.java - GENERATED CODE - DO NOT EDIT
 
 package aspire;
@@ -3490,51 +3490,51 @@ public final class WithOptionalStringOptions {
 }
 
 // ===== sources.txt =====
-.aspire/modules/Aspire.java
-.aspire/modules/AspireAction0.java
-.aspire/modules/AspireAction1.java
-.aspire/modules/AspireAction2.java
-.aspire/modules/AspireAction3.java
-.aspire/modules/AspireAction4.java
-.aspire/modules/AspireClient.java
-.aspire/modules/AspireDict.java
-.aspire/modules/AspireFunc0.java
-.aspire/modules/AspireFunc1.java
-.aspire/modules/AspireFunc2.java
-.aspire/modules/AspireFunc3.java
-.aspire/modules/AspireFunc4.java
-.aspire/modules/AspireList.java
-.aspire/modules/AspireRegistrations.java
-.aspire/modules/AspireUnion.java
-.aspire/modules/BaseRegistrations.java
-.aspire/modules/CancellationToken.java
-.aspire/modules/CapabilityError.java
-.aspire/modules/Handle.java
-.aspire/modules/HandleWrapperBase.java
-.aspire/modules/IDistributedApplicationBuilder.java
-.aspire/modules/IResource.java
-.aspire/modules/IResourceWithConnectionString.java
-.aspire/modules/IResourceWithEnvironment.java
-.aspire/modules/ITestVaultResource.java
-.aspire/modules/JsonSerializable.java
-.aspire/modules/ReferenceExpression.java
-.aspire/modules/ResourceBuilderBase.java
-.aspire/modules/TestCallbackContext.java
-.aspire/modules/TestCollectionContext.java
-.aspire/modules/TestConfigDto.java
-.aspire/modules/TestConfigs.java
-.aspire/modules/TestDatabaseResource.java
-.aspire/modules/TestDeeplyNestedDto.java
-.aspire/modules/TestEnvironmentContext.java
-.aspire/modules/TestMutableCollectionContext.java
-.aspire/modules/TestNestedDto.java
-.aspire/modules/TestPersistenceMode.java
-.aspire/modules/TestRedisResource.java
-.aspire/modules/TestResourceContext.java
-.aspire/modules/TestResourceStatus.java
-.aspire/modules/TestVaultResource.java
-.aspire/modules/WireValueEnum.java
-.aspire/modules/WithDataVolumeOptions.java
-.aspire/modules/WithMergeLoggingOptions.java
-.aspire/modules/WithMergeLoggingPathOptions.java
-.aspire/modules/WithOptionalStringOptions.java
+.aspire/modules/aspire/Aspire.java
+.aspire/modules/aspire/AspireAction0.java
+.aspire/modules/aspire/AspireAction1.java
+.aspire/modules/aspire/AspireAction2.java
+.aspire/modules/aspire/AspireAction3.java
+.aspire/modules/aspire/AspireAction4.java
+.aspire/modules/aspire/AspireClient.java
+.aspire/modules/aspire/AspireDict.java
+.aspire/modules/aspire/AspireFunc0.java
+.aspire/modules/aspire/AspireFunc1.java
+.aspire/modules/aspire/AspireFunc2.java
+.aspire/modules/aspire/AspireFunc3.java
+.aspire/modules/aspire/AspireFunc4.java
+.aspire/modules/aspire/AspireList.java
+.aspire/modules/aspire/AspireRegistrations.java
+.aspire/modules/aspire/AspireUnion.java
+.aspire/modules/aspire/BaseRegistrations.java
+.aspire/modules/aspire/CancellationToken.java
+.aspire/modules/aspire/CapabilityError.java
+.aspire/modules/aspire/Handle.java
+.aspire/modules/aspire/HandleWrapperBase.java
+.aspire/modules/aspire/IDistributedApplicationBuilder.java
+.aspire/modules/aspire/IResource.java
+.aspire/modules/aspire/IResourceWithConnectionString.java
+.aspire/modules/aspire/IResourceWithEnvironment.java
+.aspire/modules/aspire/ITestVaultResource.java
+.aspire/modules/aspire/JsonSerializable.java
+.aspire/modules/aspire/ReferenceExpression.java
+.aspire/modules/aspire/ResourceBuilderBase.java
+.aspire/modules/aspire/TestCallbackContext.java
+.aspire/modules/aspire/TestCollectionContext.java
+.aspire/modules/aspire/TestConfigDto.java
+.aspire/modules/aspire/TestConfigs.java
+.aspire/modules/aspire/TestDatabaseResource.java
+.aspire/modules/aspire/TestDeeplyNestedDto.java
+.aspire/modules/aspire/TestEnvironmentContext.java
+.aspire/modules/aspire/TestMutableCollectionContext.java
+.aspire/modules/aspire/TestNestedDto.java
+.aspire/modules/aspire/TestPersistenceMode.java
+.aspire/modules/aspire/TestRedisResource.java
+.aspire/modules/aspire/TestResourceContext.java
+.aspire/modules/aspire/TestResourceStatus.java
+.aspire/modules/aspire/TestVaultResource.java
+.aspire/modules/aspire/WireValueEnum.java
+.aspire/modules/aspire/WithDataVolumeOptions.java
+.aspire/modules/aspire/WithMergeLoggingOptions.java
+.aspire/modules/aspire/WithMergeLoggingPathOptions.java
+.aspire/modules/aspire/WithOptionalStringOptions.java
