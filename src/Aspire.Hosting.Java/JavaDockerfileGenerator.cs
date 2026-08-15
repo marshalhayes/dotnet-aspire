@@ -167,7 +167,16 @@ internal static class JavaDockerfileGenerator
     private static void WriteBuildStage(DockerfileBuilderCallbackContext context, JavaContainerBuild build, string buildImage)
     {
         var buildStage = context.Builder
-            .From(buildImage, "build")
+            // The build stage runs natively even when the image targets another architecture. A JAR is
+            // portable, so there is nothing to gain from emulating the build, and a great deal to lose:
+            // cross-building an amd64 image on an arm64 machine runs Maven under QEMU, whose syscall
+            // translation is incomplete enough that the Maven wrapper cannot even unpack itself.
+            //
+            //   tar: apache-maven-3.9.9/lib/maven-artifact-3.9.9.jar: Cannot open: Function not implemented
+            //
+            // Only the runtime stage below inherits the requested platform, which is where it matters.
+            // https://docs.docker.com/build/building/multi-platform/#cross-compilation
+            .From($"--platform=$BUILDPLATFORM {buildImage}", "build")
             .WorkDir("/app");
 
         if (build.CacheHomeVariable is { } cacheHomeVariable)

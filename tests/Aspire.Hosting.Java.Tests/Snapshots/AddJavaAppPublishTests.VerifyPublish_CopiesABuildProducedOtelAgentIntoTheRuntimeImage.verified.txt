@@ -1,4 +1,4 @@
-﻿FROM docker.io/library/eclipse-temurin:21-jdk AS build
+﻿FROM --platform=$BUILDPLATFORM docker.io/library/eclipse-temurin:21-jdk AS build
 WORKDIR /app
 COPY mvnw ./mvnw
 COPY .mvn ./.mvn

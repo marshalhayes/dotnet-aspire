@@ -25,7 +25,7 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
             configureSource: source => WritePom(source, javaVersion: "21"),
             configureResource: app => app.WithMavenGoal("spring-boot:run"));
 
-        Assert.StartsWith("FROM docker.io/library/eclipse-temurin:21-jdk AS build", content);
+        Assert.StartsWith("FROM --platform=$BUILDPLATFORM docker.io/library/eclipse-temurin:21-jdk AS build", content);
         Assert.Contains("\nFROM docker.io/library/eclipse-temurin:21-jre\n", content);
         await Verify(content);
     }
@@ -43,7 +43,7 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
                 """),
             configureResource: app => app.WithGradleTask("bootRun"));
 
-        Assert.StartsWith("FROM docker.io/library/eclipse-temurin:17-jdk AS build", content);
+        Assert.StartsWith("FROM --platform=$BUILDPLATFORM docker.io/library/eclipse-temurin:17-jdk AS build", content);
         await Verify(content);
     }
 
@@ -126,7 +126,7 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
 
         // sh ./mvnw rather than ./mvnw: a wrapper checked out from a Windows clone arrives without the
         // executable bit, and invoking the interpreter directly does not depend on the file mode.
-        Assert.StartsWith("FROM docker.io/library/eclipse-temurin:21-jdk AS build", content);
+        Assert.StartsWith("FROM --platform=$BUILDPLATFORM docker.io/library/eclipse-temurin:21-jdk AS build", content);
         Assert.Contains("sh ./mvnw -B -ntp -DskipTests package", content);
         await Verify(content);
     }
@@ -212,7 +212,7 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
                 .WithMavenGoal("spring-boot:run")
                 .WithDockerfileBaseImage("docker.io/library/amazoncorretto:21", "docker.io/library/amazoncorretto:21-alpine"));
 
-        Assert.StartsWith("FROM docker.io/library/amazoncorretto:21 AS build", content);
+        Assert.StartsWith("FROM --platform=$BUILDPLATFORM docker.io/library/amazoncorretto:21 AS build", content);
         Assert.Contains("\nFROM docker.io/library/amazoncorretto:21-alpine\n", content);
         // Alpine's busybox tools take different switches than the glibc images the JRE default uses.
         Assert.Contains("addgroup -S app && adduser -S -G app app", content);

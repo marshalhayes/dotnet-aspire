@@ -1,4 +1,4 @@
-﻿FROM docker.io/library/eclipse-temurin:17-jdk AS build
+﻿FROM --platform=$BUILDPLATFORM docker.io/library/eclipse-temurin:17-jdk AS build
 WORKDIR /app
 ENV GRADLE_USER_HOME=/root/.gradle
 COPY gradlew ./gradlew
