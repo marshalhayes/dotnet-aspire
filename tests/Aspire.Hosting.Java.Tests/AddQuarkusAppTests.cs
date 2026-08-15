@@ -20,8 +20,8 @@ public class AddQuarkusAppTests
 
         var app = builder.AddQuarkusApp("inventory", tempDir.Path);
 
-        Assert.Equal(ExpectedWrapperInvocation.Command(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultMavenWrapper)), app.Resource.Command);
-        Assert.Equal(ExpectedWrapperInvocation.Args(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultMavenWrapper), "quarkus:dev"), await ArgumentEvaluator.GetArgumentListAsync(app.Resource));
+        Assert.Equal(ExpectedWrapperInvocation.Command(), app.Resource.Command);
+        Assert.Equal(ExpectedWrapperInvocation.Args(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultMavenWrapper), tempDir.Path, "quarkus:dev"), await ArgumentEvaluator.GetArgumentListAsync(app.Resource));
     }
 
     [Fact]
@@ -33,8 +33,8 @@ public class AddQuarkusAppTests
 
         var app = builder.AddQuarkusApp("pricing", tempDir.Path);
 
-        Assert.Equal(ExpectedWrapperInvocation.Command(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultGradleWrapper)), app.Resource.Command);
-        Assert.Equal(ExpectedWrapperInvocation.Args(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultGradleWrapper), "quarkusDev"), await ArgumentEvaluator.GetArgumentListAsync(app.Resource));
+        Assert.Equal(ExpectedWrapperInvocation.Command(), app.Resource.Command);
+        Assert.Equal(ExpectedWrapperInvocation.Args(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultGradleWrapper), tempDir.Path, "quarkusDev"), await ArgumentEvaluator.GetArgumentListAsync(app.Resource));
     }
 
     [Theory]
@@ -55,7 +55,7 @@ public class AddQuarkusAppTests
             buildFile == "pom.xml" ? JavaHostingExtensions.s_defaultMavenWrapper : JavaHostingExtensions.s_defaultGradleWrapper);
 
         Assert.Equal(
-            ExpectedWrapperInvocation.Args(wrapper, expectedArgs),
+            ExpectedWrapperInvocation.Args(wrapper, tempDir.Path, expectedArgs),
             await ArgumentEvaluator.GetArgumentListAsync(buildResource));
     }
 

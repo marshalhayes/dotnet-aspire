@@ -33,8 +33,8 @@ public class AddJavaAppTests
 
         // The command has to become the wrapper. Leaving it as "java" while the goal was still contributed
         // as an argument produced the uninvokable command line "java spring-boot:run".
-        Assert.Equal(ExpectedWrapperInvocation.Command(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultMavenWrapper)), app.Resource.Command);
-        Assert.Equal(ExpectedWrapperInvocation.Args(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultMavenWrapper), "spring-boot:run"), await ArgumentEvaluator.GetArgumentListAsync(app.Resource));
+        Assert.Equal(ExpectedWrapperInvocation.Command(), app.Resource.Command);
+        Assert.Equal(ExpectedWrapperInvocation.Args(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultMavenWrapper), tempDir.Path, "spring-boot:run"), await ArgumentEvaluator.GetArgumentListAsync(app.Resource));
     }
 
     [Fact]
@@ -46,8 +46,8 @@ public class AddJavaAppTests
 
         var app = builder.AddJavaApp("api", tempDir.Path).WithGradleTask("bootRun", "--no-daemon");
 
-        Assert.Equal(ExpectedWrapperInvocation.Command(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultGradleWrapper)), app.Resource.Command);
-        Assert.Equal(ExpectedWrapperInvocation.Args(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultGradleWrapper), "bootRun", "--no-daemon"), await ArgumentEvaluator.GetArgumentListAsync(app.Resource));
+        Assert.Equal(ExpectedWrapperInvocation.Command(), app.Resource.Command);
+        Assert.Equal(ExpectedWrapperInvocation.Args(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultGradleWrapper), tempDir.Path, "bootRun", "--no-daemon"), await ArgumentEvaluator.GetArgumentListAsync(app.Resource));
     }
 
     [Fact]
@@ -309,8 +309,8 @@ public class AddJavaAppTests
 
         // WithCommand sets the wrapper as the command, args contain only the task
         var expectedWrapper = Path.GetFullPath(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultGradleWrapper));
-        Assert.Equal(ExpectedWrapperInvocation.Command(expectedWrapper), app.Resource.Command);
-        Assert.Contains("bootRun", args);
+        Assert.Equal(ExpectedWrapperInvocation.Command(), app.Resource.Command);
+        Assert.Equal(ExpectedWrapperInvocation.Args(expectedWrapper, tempDir.Path, "bootRun"), args);
     }
 
     [Fact]
@@ -327,8 +327,8 @@ public class AddJavaAppTests
 
         // WithCommand sets the wrapper as the command, args contain only the goal
         var expectedWrapper = Path.GetFullPath(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultMavenWrapper));
-        Assert.Equal(ExpectedWrapperInvocation.Command(expectedWrapper), app.Resource.Command);
-        Assert.Contains("spring-boot:run", args);
+        Assert.Equal(ExpectedWrapperInvocation.Command(), app.Resource.Command);
+        Assert.Equal(ExpectedWrapperInvocation.Args(expectedWrapper, tempDir.Path, "spring-boot:run"), args);
     }
 
     [Fact]
@@ -453,8 +453,8 @@ public class AddJavaAppTests
 
         // WithCommand sets the custom wrapper as the command
         var expectedWrapper = Path.GetFullPath(Path.Combine(tempDir.Path, "scripts/custom-mvnw"));
-        Assert.Equal(ExpectedWrapperInvocation.Command(expectedWrapper), app.Resource.Command);
-        Assert.Contains("spring-boot:run", args);
+        Assert.Equal(ExpectedWrapperInvocation.Command(), app.Resource.Command);
+        Assert.Equal(ExpectedWrapperInvocation.Args(expectedWrapper, tempDir.Path, "spring-boot:run"), args);
     }
 
     [Fact]
@@ -471,8 +471,8 @@ public class AddJavaAppTests
 
         // WithCommand sets the custom wrapper as the command
         var expectedWrapper = Path.GetFullPath(Path.Combine(tempDir.Path, "scripts/custom-gradlew"));
-        Assert.Equal(ExpectedWrapperInvocation.Command(expectedWrapper), app.Resource.Command);
-        Assert.Contains("bootRun", args);
+        Assert.Equal(ExpectedWrapperInvocation.Command(), app.Resource.Command);
+        Assert.Equal(ExpectedWrapperInvocation.Args(expectedWrapper, tempDir.Path, "bootRun"), args);
     }
 
     // ---- WithJvmArgs --------------------------------------------------------
@@ -695,9 +695,9 @@ public class AddJavaAppTests
         // temp directory the same way on both sides so the comparison is about the wrapper, not the path.
         // On Unix the wrapper moves into the first argument, so asserting only the command would stop
         // checking that the override was applied at all.
-        Assert.Equal(ExpectedWrapperInvocation.Command(Path.GetFullPath(customWrapper)), app.Resource.Command);
+        Assert.Equal(ExpectedWrapperInvocation.Command(), app.Resource.Command);
         Assert.Equal(
-            ExpectedWrapperInvocation.Args(Path.GetFullPath(customWrapper), "spring-boot:run"),
+            ExpectedWrapperInvocation.Args(Path.GetFullPath(customWrapper), Path.GetFullPath(tempDir.Path), "spring-boot:run"),
             await ArgumentEvaluator.GetArgumentListAsync(app.Resource));
     }
 
@@ -759,7 +759,7 @@ public class AddJavaAppTests
     }
 
     [Fact]
-    public void WithWrapperPath_IsHonouredEvenWhenNoWrapperExistsOnDisk()
+    public async Task WithWrapperPath_IsHonouredEvenWhenNoWrapperExistsOnDisk()
     {
         using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
         using var tempDir = new TempJavaAppDirectory(withWrappers: false);
@@ -770,7 +770,10 @@ public class AddJavaAppTests
 
         // An explicit override is a deliberate choice and must win over the default wrapper probe, which
         // would otherwise reject this project for shipping no mvnw.
-        Assert.Equal(ExpectedWrapperInvocation.Command("/opt/maven/bin/mvn"), app.Resource.Command);
+        Assert.Equal(ExpectedWrapperInvocation.Command(), app.Resource.Command);
+        Assert.Equal(
+            ExpectedWrapperInvocation.Args("/opt/maven/bin/mvn", tempDir.Path, "spring-boot:run"),
+            await ArgumentEvaluator.GetArgumentListAsync(app.Resource));
     }
 
     [Fact]
@@ -1113,8 +1116,8 @@ public class AddJavaAppTests
 
         // WithCommand sets the custom wrapper as the command
         var expectedWrapper = Path.GetFullPath(Path.Combine(tempDir.Path, "tools/mvn"));
-        Assert.Equal(ExpectedWrapperInvocation.Command(expectedWrapper), app.Resource.Command);
-        Assert.Contains("spring-boot:run", args);
+        Assert.Equal(ExpectedWrapperInvocation.Command(), app.Resource.Command);
+        Assert.Equal(ExpectedWrapperInvocation.Args(expectedWrapper, tempDir.Path, "spring-boot:run"), args);
     }
 
     // ---- Manifest with Maven/Gradle goals -----------------------------------

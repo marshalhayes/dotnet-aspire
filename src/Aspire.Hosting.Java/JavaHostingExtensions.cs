@@ -781,7 +781,7 @@ public static partial class JavaHostingExtensions
         // WithWrapperPath after WithMavenGoal was silently ignored.
         if (builder.Resource.HasAnnotationOfType<JavaBuildToolAnnotation>())
         {
-            builder.WithCommand(WrapperInvocationFor(resolvedWrapperPath).Command);
+            builder.WithCommand(WrapperInvocationFor(resolvedWrapperPath, builder.Resource.WorkingDirectory).Command);
         }
 
         foreach (var buildStep in builder.Resource.Annotations.OfType<JavaBuildStepAnnotation>())
@@ -798,7 +798,7 @@ public static partial class JavaHostingExtensions
 
             if (buildResource is not null)
             {
-                builder.ApplicationBuilder.CreateResourceBuilder(buildResource).WithCommand(WrapperInvocationFor(resolvedWrapperPath).Command);
+                builder.ApplicationBuilder.CreateResourceBuilder(buildResource).WithCommand(WrapperInvocationFor(resolvedWrapperPath, builder.Resource.WorkingDirectory).Command);
             }
         }
 
@@ -1114,18 +1114,33 @@ public static partial class JavaHostingExtensions
     /// same reason (see <see cref="JavaDockerfileGenerator"/>), and run mode has to match or an identical
     /// checkout fails on Linux and macOS while succeeding inside the image.
     /// <para>
-    /// Windows wrappers are the <c>mvnw.cmd</c> and <c>gradlew.bat</c> batch files, which <c>sh</c> cannot
-    /// run, and Windows has no executable bit to be missing, so they are executed directly.
+    /// On Windows the wrappers are the <c>mvnw.cmd</c> and <c>gradlew.bat</c> batch files, which <c>sh</c>
+    /// cannot run. They are launched through the command interpreter rather than directly, because a
+    /// batch file started with redirected stdout can silently produce no output — the same constraint
+    /// <c>NpmRunner</c> hits with <c>npm.cmd</c>, and the same one
+    /// <c>JavaAppHostToolchainResolver.GetToolInvocation</c> handles for Java AppHosts.
     /// </para>
     /// </remarks>
     private static (string Command, string[] LeadingArgs) ResolveWrapperInvocation(JavaAppResource resource, JavaBuildTool tool)
-        => WrapperInvocationFor(ResolveWrapperPath(resource, tool));
+        => WrapperInvocationFor(ResolveWrapperPath(resource, tool), resource.WorkingDirectory);
 
     /// <inheritdoc cref="ResolveWrapperInvocation" />
-    private static (string Command, string[] LeadingArgs) WrapperInvocationFor(string wrapperPath)
-        => OperatingSystem.IsWindows()
-            ? (wrapperPath, [])
-            : ("sh", [wrapperPath]);
+    private static (string Command, string[] LeadingArgs) WrapperInvocationFor(string wrapperPath, string workingDirectory)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return ("sh", [wrapperPath]);
+        }
+
+        // cmd.exe strips quotes in a way that does not match how ProcessStartInfo escapes arguments: if
+        // the *first* token is quoted, cmd removes that quote and the last one on the line, mangling
+        // everything in between. Passing the wrapper as a path relative to the resource's working
+        // directory keeps that token free of spaces, so it is never quoted and the hazard cannot arise.
+        // See the quote-processing rules printed by `cmd /?`.
+        var relativeWrapperPath = Path.GetRelativePath(workingDirectory, wrapperPath);
+
+        return (Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe", ["/c", relativeWrapperPath]);
+    }
 
     private static string ResolveWrapperPath(JavaAppResource resource, JavaBuildTool tool)
     {
