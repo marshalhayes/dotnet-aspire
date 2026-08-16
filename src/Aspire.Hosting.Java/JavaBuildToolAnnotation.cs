@@ -51,6 +51,35 @@ internal sealed class JavaBuildToolAnnotation(JavaBuildTool tool, string[] args)
 internal sealed record JavaBuildStepAnnotation(string? ResourceName, JavaBuildTool Tool, string[] Args) : IResourceAnnotation;
 
 /// <summary>
+/// Defers choosing between Maven and Gradle until the application is about to start.
+/// </summary>
+/// <remarks>
+/// Spring Boot and Quarkus helpers support both tools. Keeping both configurations here lets those helpers
+/// build the model without touching the application directory, while run and publish still resolve the
+/// same project markers through <see cref="JavaBuildToolResolver"/>.
+/// </remarks>
+/// <param name="MavenBuildArgs">Arguments that package the application with Maven.</param>
+/// <param name="MavenLaunchArgs">Arguments that launch the application with Maven.</param>
+/// <param name="GradleBuildArgs">Arguments that package the application with Gradle.</param>
+/// <param name="GradleLaunchArgs">Arguments that launch the application with Gradle.</param>
+internal sealed record JavaDetectedBuildToolAnnotation(
+    string[] MavenBuildArgs,
+    string[] MavenLaunchArgs,
+    string[] GradleBuildArgs,
+    string[] GradleLaunchArgs) : IResourceAnnotation
+{
+    /// <summary>
+    /// Returns the build and launch arguments for <paramref name="tool"/>.
+    /// </summary>
+    internal (string[] BuildArgs, string[] LaunchArgs) GetConfiguration(JavaBuildTool tool) => tool switch
+    {
+        JavaBuildTool.Maven => (MavenBuildArgs, MavenLaunchArgs),
+        JavaBuildTool.Gradle => (GradleBuildArgs, GradleLaunchArgs),
+        _ => throw new ArgumentOutOfRangeException(nameof(tool), tool, null)
+    };
+}
+
+/// <summary>
 /// Records the OpenTelemetry Java agent configured by <c>WithOtelAgent</c>.
 /// </summary>
 /// <remarks>

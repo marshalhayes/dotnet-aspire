@@ -293,6 +293,7 @@ internal static partial class JavaDockerfileGenerator
         if (!resource.TryGetLastAnnotation<JavaJarPathAnnotation>(out var annotation)
             || resource.HasAnnotationOfType<JavaBuildStepAnnotation>()
             || resource.HasAnnotationOfType<JavaBuildToolAnnotation>()
+            || resource.HasAnnotationOfType<JavaDetectedBuildToolAnnotation>()
             || DetectBuildToolForPublish(resource, appDirectory) is not null)
         {
             return false;
@@ -1106,6 +1107,18 @@ internal static partial class JavaDockerfileGenerator
             if (resource.TryGetLastAnnotation<JavaBuildStepAnnotation>(out var buildStep))
             {
                 return (buildStep.Tool, buildStep.Args);
+            }
+
+            if (resource.TryGetLastAnnotation<JavaDetectedBuildToolAnnotation>(out var detected))
+            {
+                var tool = resource.TryGetLastAnnotation<JavaBuildToolAnnotation>(out var launch)
+                    ? launch.Tool
+                    : DetectBuildToolForPublish(resource, appDirectory)
+                        ?? throw new DistributedApplicationException(
+                            $"The Java application '{resource.Name}' cannot be published because no build tool was found. " +
+                            $"Add a pom.xml, build.gradle, build.gradle.kts, settings.gradle, or settings.gradle.kts to '{appDirectory}'.");
+
+                return (tool, detected.GetConfiguration(tool).BuildArgs);
             }
 
             // A launch goal such as spring-boot:run or bootRun identifies the tool but never packages, so

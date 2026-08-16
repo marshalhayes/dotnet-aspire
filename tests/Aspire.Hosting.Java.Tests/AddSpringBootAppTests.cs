@@ -17,6 +17,10 @@ public class AddSpringBootAppTests
         tempDir.Write("pom.xml", "<project/>");
 
         var app = builder.AddSpringBootApp("catalog", tempDir.Path);
+        using var application = builder.Build();
+        await builder.Eventing.PublishAsync(
+            new BeforeResourceStartedEvent(app.Resource, application.Services),
+            TestContext.Current.CancellationToken);
 
         Assert.Equal(ExpectedWrapperInvocation.Command(), app.Resource.Command);
         Assert.Equal(ExpectedWrapperInvocation.Args(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultMavenWrapper), tempDir.Path, "spring-boot:run"), await ArgumentEvaluator.GetArgumentListAsync(app.Resource));
@@ -30,6 +34,10 @@ public class AddSpringBootAppTests
         tempDir.Write("build.gradle", "plugins { id 'org.springframework.boot' }");
 
         var app = builder.AddSpringBootApp("orders", tempDir.Path);
+        using var application = builder.Build();
+        await builder.Eventing.PublishAsync(
+            new BeforeResourceStartedEvent(app.Resource, application.Services),
+            TestContext.Current.CancellationToken);
 
         Assert.Equal(ExpectedWrapperInvocation.Command(), app.Resource.Command);
         Assert.Equal(ExpectedWrapperInvocation.Args(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultGradleWrapper), tempDir.Path, "bootRun"), await ArgumentEvaluator.GetArgumentListAsync(app.Resource));
@@ -43,6 +51,10 @@ public class AddSpringBootAppTests
         tempDir.Write("build.gradle.kts", "plugins { id(\"org.springframework.boot\") }");
 
         var app = builder.AddSpringBootApp("orders", tempDir.Path);
+        using var application = builder.Build();
+        await builder.Eventing.PublishAsync(
+            new BeforeResourceStartedEvent(app.Resource, application.Services),
+            TestContext.Current.CancellationToken);
 
         Assert.Equal(ExpectedWrapperInvocation.Command(), app.Resource.Command);
     }
@@ -52,13 +64,17 @@ public class AddSpringBootAppTests
     [InlineData("build.gradle.kts")]
     [InlineData("settings.gradle")]
     [InlineData("settings.gradle.kts")]
-    public void BuildToolDetection_GradleMarkersAgreeBetweenRunAndPublish(string marker)
+    public async Task BuildToolDetection_GradleMarkersAgreeBetweenRunAndPublish(string marker)
     {
         using var tempDir = new TempJavaAppDirectory();
         tempDir.Write(marker, "");
 
         using var runBuilder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
         var runApp = runBuilder.AddSpringBootApp("catalog", tempDir.Path);
+        using var application = runBuilder.Build();
+        await runBuilder.Eventing.PublishAsync(
+            new BeforeResourceStartedEvent(runApp.Resource, application.Services),
+            TestContext.Current.CancellationToken);
         var runTool = Assert.Single(runApp.Resource.Annotations.OfType<JavaBuildToolAnnotation>()).Tool;
 
         using var publishBuilder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish);
@@ -70,27 +86,60 @@ public class AddSpringBootAppTests
     }
 
     [Theory]
-    [InlineData("pom.xml", "-B", "-ntp", "-DskipTests", "package")]
-    [InlineData("build.gradle", "build", "-x", "test")]
-    public async Task AddSpringBootApp_BuildsBeforeStartingAndSkipsTests(string buildFile, params string[] expectedArgs)
+    [InlineData("pom.xml")]
+    [InlineData("build.gradle")]
+    public void AddSpringBootApp_DoesNotCreateASeparateBuildResource(string buildFile)
     {
-        // A build runs on every AppHost start, so running the test suite each time would put the whole
-        // suite in front of every debug session.
         using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
         using var tempDir = new TempJavaAppDirectory();
         tempDir.Write(buildFile, "");
 
-        builder.AddSpringBootApp("catalog", tempDir.Path);
+        var app = builder.AddSpringBootApp("catalog", tempDir.Path);
 
-        var buildResource = Assert.Single(builder.Resources, r => r.Name.EndsWith("-build", StringComparison.Ordinal));
+        Assert.Same(app.Resource, Assert.Single(builder.Resources));
+    }
 
-        var wrapper = Path.Combine(
-            tempDir.Path,
-            buildFile == "pom.xml" ? JavaHostingExtensions.s_defaultMavenWrapper : JavaHostingExtensions.s_defaultGradleWrapper);
+    [Fact]
+    public async Task AddSpringBootApp_ExplicitLaunchGoalOverridesTheDetectedDefault()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.Write("pom.xml", "<project/>");
+        tempDir.WriteWrapper(JavaHostingExtensions.s_defaultMavenWrapper);
+
+        var app = builder.AddSpringBootApp("catalog", tempDir.Path)
+            .WithMavenGoal("spring-boot:test-run");
+        using var application = builder.Build();
+        await builder.Eventing.PublishAsync(
+            new BeforeResourceStartedEvent(app.Resource, application.Services),
+            TestContext.Current.CancellationToken);
 
         Assert.Equal(
-            ExpectedWrapperInvocation.Args(wrapper, tempDir.Path, expectedArgs),
-            await ArgumentEvaluator.GetArgumentListAsync(buildResource));
+            ExpectedWrapperInvocation.Args(
+                Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultMavenWrapper),
+                tempDir.Path,
+                "spring-boot:test-run"),
+            await ArgumentEvaluator.GetArgumentListAsync(app.Resource));
+    }
+
+    [Fact]
+    public async Task AddSpringBootApp_ExplicitBuildArgumentsDoNotCreateASeparateBuildResource()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.Write("pom.xml", "<project/>");
+        tempDir.WriteWrapper(JavaHostingExtensions.s_defaultMavenWrapper);
+
+        var app = builder.AddSpringBootApp("catalog", tempDir.Path)
+            .WithMavenBuild("verify");
+        using var application = builder.Build();
+        await builder.Eventing.PublishAsync(
+            new BeforeResourceStartedEvent(app.Resource, application.Services),
+            TestContext.Current.CancellationToken);
+
+        Assert.Same(app.Resource, Assert.Single(builder.Resources));
+        Assert.Equal(["verify"], Assert.Single(app.Resource.Annotations.OfType<JavaBuildStepAnnotation>()).Args);
+        Assert.Equal(["spring-boot:run"], Assert.Single(app.Resource.Annotations.OfType<JavaBuildToolAnnotation>()).Args);
     }
 
     [Fact]
@@ -128,12 +177,18 @@ public class AddSpringBootAppTests
     }
 
     [Fact]
-    public void AddSpringBootApp_NoBuildFile_Throws()
+    public async Task AddSpringBootApp_NoBuildFile_ThrowsWhenTheResourceStarts()
     {
         using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
         using var tempDir = new TempJavaAppDirectory();
 
-        var ex = Assert.Throws<InvalidOperationException>(() => builder.AddSpringBootApp("catalog", tempDir.Path));
+        var app = builder.AddSpringBootApp("catalog", tempDir.Path);
+        using var application = builder.Build();
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => builder.Eventing.PublishAsync(
+                new BeforeResourceStartedEvent(app.Resource, application.Services),
+                TestContext.Current.CancellationToken));
 
         Assert.Equal(
             $"Directory '{tempDir.Path}' contains no pom.xml, build.gradle, build.gradle.kts, settings.gradle, or settings.gradle.kts, " +
@@ -142,15 +197,19 @@ public class AddSpringBootAppTests
     }
 
     [Fact]
-    public void BuildToolDetection_BothBuildToolsAreRejectedInRunAndPublish()
+    public async Task BuildToolDetection_BothBuildToolsAreRejectedInRunAndPublish()
     {
         using var tempDir = new TempJavaAppDirectory();
         tempDir.Write("pom.xml", "<project/>");
         tempDir.Write("build.gradle", "");
 
         using var runBuilder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
-        var runException = Assert.Throws<InvalidOperationException>(
-            () => runBuilder.AddSpringBootApp("catalog", tempDir.Path));
+        var runApp = runBuilder.AddSpringBootApp("catalog", tempDir.Path);
+        using var application = runBuilder.Build();
+        var runException = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => runBuilder.Eventing.PublishAsync(
+                new BeforeResourceStartedEvent(runApp.Resource, application.Services),
+                TestContext.Current.CancellationToken));
 
         using var publishBuilder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish);
         var publishApp = publishBuilder.AddJavaApp("catalog", tempDir.Path, "target/catalog.jar");
@@ -174,6 +233,10 @@ public class AddSpringBootAppTests
         tempDir.Write(buildFile, "");
 
         var app = builder.AddSpringBootApp("catalog", tempDir.Path).WithOtelAgent();
+        using var application = builder.Build();
+        await builder.Eventing.PublishAsync(
+            new BeforeResourceStartedEvent(app.Resource, application.Services),
+            TestContext.Current.CancellationToken);
 
         TestEndpointAllocator.AllocateEndpoints(app.Resource);
 

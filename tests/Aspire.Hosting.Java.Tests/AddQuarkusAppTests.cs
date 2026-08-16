@@ -19,6 +19,10 @@ public class AddQuarkusAppTests
         tempDir.Write("pom.xml", "<project/>");
 
         var app = builder.AddQuarkusApp("inventory", tempDir.Path);
+        using var application = builder.Build();
+        await builder.Eventing.PublishAsync(
+            new BeforeResourceStartedEvent(app.Resource, application.Services),
+            TestContext.Current.CancellationToken);
 
         Assert.Equal(ExpectedWrapperInvocation.Command(), app.Resource.Command);
         Assert.Equal(ExpectedWrapperInvocation.Args(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultMavenWrapper), tempDir.Path, "quarkus:dev"), await ArgumentEvaluator.GetArgumentListAsync(app.Resource));
@@ -32,31 +36,27 @@ public class AddQuarkusAppTests
         tempDir.Write("build.gradle", "plugins { id 'io.quarkus' }");
 
         var app = builder.AddQuarkusApp("pricing", tempDir.Path);
+        using var application = builder.Build();
+        await builder.Eventing.PublishAsync(
+            new BeforeResourceStartedEvent(app.Resource, application.Services),
+            TestContext.Current.CancellationToken);
 
         Assert.Equal(ExpectedWrapperInvocation.Command(), app.Resource.Command);
         Assert.Equal(ExpectedWrapperInvocation.Args(Path.Combine(tempDir.Path, JavaHostingExtensions.s_defaultGradleWrapper), tempDir.Path, "quarkusDev"), await ArgumentEvaluator.GetArgumentListAsync(app.Resource));
     }
 
     [Theory]
-    [InlineData("pom.xml", "-B", "-ntp", "-DskipTests", "package")]
-    [InlineData("build.gradle", "build", "-x", "test")]
-    public async Task AddQuarkusApp_BuildsBeforeStartingAndSkipsTests(string buildFile, params string[] expectedArgs)
+    [InlineData("pom.xml")]
+    [InlineData("build.gradle")]
+    public void AddQuarkusApp_DoesNotCreateASeparateBuildResource(string buildFile)
     {
         using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
         using var tempDir = new TempJavaAppDirectory();
         tempDir.Write(buildFile, "");
 
-        builder.AddQuarkusApp("inventory", tempDir.Path);
+        var app = builder.AddQuarkusApp("inventory", tempDir.Path);
 
-        var buildResource = Assert.Single(builder.Resources, r => r.Name.EndsWith("-build", StringComparison.Ordinal));
-
-        var wrapper = Path.Combine(
-            tempDir.Path,
-            buildFile == "pom.xml" ? JavaHostingExtensions.s_defaultMavenWrapper : JavaHostingExtensions.s_defaultGradleWrapper);
-
-        Assert.Equal(
-            ExpectedWrapperInvocation.Args(wrapper, tempDir.Path, expectedArgs),
-            await ArgumentEvaluator.GetArgumentListAsync(buildResource));
+        Assert.Same(app.Resource, Assert.Single(builder.Resources));
     }
 
     [Fact]
@@ -200,12 +200,18 @@ public class AddQuarkusAppTests
     }
 
     [Fact]
-    public void AddQuarkusApp_NoBuildFile_Throws()
+    public async Task AddQuarkusApp_NoBuildFile_ThrowsWhenTheResourceStarts()
     {
         using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
         using var tempDir = new TempJavaAppDirectory();
 
-        var ex = Assert.Throws<InvalidOperationException>(() => builder.AddQuarkusApp("inventory", tempDir.Path));
+        var app = builder.AddQuarkusApp("inventory", tempDir.Path);
+        using var application = builder.Build();
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => builder.Eventing.PublishAsync(
+                new BeforeResourceStartedEvent(app.Resource, application.Services),
+                TestContext.Current.CancellationToken));
 
         Assert.Equal(
             $"Directory '{tempDir.Path}' contains no pom.xml, build.gradle, build.gradle.kts, settings.gradle, or settings.gradle.kts, " +

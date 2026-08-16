@@ -997,6 +997,48 @@ public class AddJavaAppTests
         Assert.DoesNotContain(builder.Resources, r => r.Name == "api-gradle-build");
     }
 
+    [Theory]
+    [InlineData(nameof(JavaBuildTool.Maven), true)]
+    [InlineData(nameof(JavaBuildTool.Maven), false)]
+    [InlineData(nameof(JavaBuildTool.Gradle), true)]
+    [InlineData(nameof(JavaBuildTool.Gradle), false)]
+    public void WithBuildAndLaunch_DoesNotCreateASeparateBuildResource(string toolName, bool buildFirst)
+    {
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Run).WithResourceCleanUp(true);
+        using var tempDir = new TempJavaAppDirectory();
+        var app = builder.AddJavaApp("api", tempDir.Path);
+
+        if (toolName is nameof(JavaBuildTool.Maven))
+        {
+            if (buildFirst)
+            {
+                app.WithMavenBuild();
+                app.WithMavenGoal("spring-boot:run");
+            }
+            else
+            {
+                app.WithMavenGoal("spring-boot:run");
+                app.WithMavenBuild();
+            }
+        }
+        else
+        {
+            if (buildFirst)
+            {
+                app.WithGradleBuild();
+                app.WithGradleTask("bootRun");
+            }
+            else
+            {
+                app.WithGradleTask("bootRun");
+                app.WithGradleBuild();
+            }
+        }
+
+        Assert.Same(app.Resource, Assert.Single(builder.Resources));
+        Assert.Null(Assert.Single(app.Resource.Annotations.OfType<JavaBuildStepAnnotation>()).ResourceName);
+    }
+
     [Fact]
     public void WithMavenBuild_BuildResourceHasParentRelationship()
     {
@@ -1192,6 +1234,22 @@ public class AddJavaAppTests
             CancellationToken.None);
 
         return Assert.IsType<JavaLaunchConfiguration>(await annotation.LaunchConfigurationProducer(context));
+    }
+
+    [Theory]
+    [InlineData("pom.xml", "maven")]
+    [InlineData("settings.gradle", "gradle")]
+    public async Task AddSpringBootApp_DebugConfigurationUsesTheDetectedBuildTool(string marker, string expectedBuildTool)
+    {
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Run);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.Write(marker, "");
+
+        var app = builder.AddSpringBootApp("catalog", tempDir.Path);
+
+        var launchConfiguration = await GetLaunchConfigurationAsync(app);
+
+        Assert.Equal(expectedBuildTool, launchConfiguration.BuildTool);
     }
 
     /// <summary>

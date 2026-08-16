@@ -275,23 +275,23 @@ public static partial class JavaHostingExtensions
     /// </summary>
     /// <param name="builder">The <see cref="IDistributedApplicationBuilder"/> to add the resource to.</param>
     /// <param name="name">The name of the resource.</param>
-    /// <param name="appDirectory">The application directory, containing <c>pom.xml</c> or <c>build.gradle</c>. Relative paths are resolved against the AppHost directory.</param>
+    /// <param name="appDirectory">The application directory, containing <c>pom.xml</c>, <c>build.gradle</c>, <c>build.gradle.kts</c>, <c>settings.gradle</c>, or <c>settings.gradle.kts</c>. Relative paths are resolved against the AppHost directory.</param>
     /// <returns>A reference to the <see cref="IResourceBuilder{T}"/>.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="builder"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException"><paramref name="name"/> or <paramref name="appDirectory"/> is <see langword="null"/>, empty, or whitespace.</exception>
     /// <exception cref="InvalidOperationException">The directory contains neither a Maven nor a Gradle build file, or contains both.</exception>
     /// <remarks>
-    /// This is <see cref="AddJavaApp(IDistributedApplicationBuilder, string, string)"/> with the four calls every
-    /// Spring Boot service repeats already made: the build tool is detected from the build file on disk, the
+    /// This is <see cref="AddJavaApp(IDistributedApplicationBuilder, string, string)"/> with the common
+    /// Spring Boot configuration already applied: the build tool is detected when the resource starts, the
     /// application is launched through that tool's Spring Boot plugin (<c>spring-boot:run</c> or <c>bootRun</c>),
-    /// a build runs first, and an HTTP endpoint is declared through <c>SERVER_PORT</c>, which is the environment
+    /// and an HTTP endpoint is declared through <c>SERVER_PORT</c>, which is the environment
     /// variable Spring Boot reads for its listening port. Everything else is the same, so any <c>With…</c> method
     /// that works on <see cref="AddJavaApp(IDistributedApplicationBuilder, string, string)"/> works here too.
     /// <para>
-    /// The build defaults to skipping tests (<c>-DskipTests</c> for Maven, <c>-x test</c> for Gradle). A build runs
-    /// every time the AppHost starts, so running the test suite on each launch would put the whole suite in front of
-    /// every debug session. Call <see cref="WithMavenBuild{T}(IResourceBuilder{T}, string[])"/> or
-    /// <see cref="WithGradleBuild{T}(IResourceBuilder{T}, string[])"/> afterwards to choose different arguments.
+    /// The launch goal compiles the application itself, so Aspire does not add a separate build resource before
+    /// it. Publishing still packages the application with tests skipped (<c>-DskipTests</c> for Maven,
+    /// <c>-x test</c> for Gradle). Call <see cref="WithMavenBuild{T}(IResourceBuilder{T}, string[])"/> or
+    /// <see cref="WithGradleBuild{T}(IResourceBuilder{T}, string[])"/> afterwards to customize those package arguments.
     /// </para>
     /// <para>
     /// No health check is added. <c>/actuator/health</c> only exists when the application depends on
@@ -327,19 +327,12 @@ public static partial class JavaHostingExtensions
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentException.ThrowIfNullOrWhiteSpace(appDirectory);
 
-        var resourceBuilder = builder.AddJavaApp(name, appDirectory);
-
-        // WorkingDirectory rather than appDirectory because AddJavaApp has already resolved it against the
-        // AppHost directory.
-        resourceBuilder = RequireBuildTool(resourceBuilder.Resource.WorkingDirectory, name) is JavaBuildTool.Maven
-            ? resourceBuilder
-                .WithMavenBuild("-B", "-ntp", "-DskipTests", "package")
-                .WithMavenGoal("spring-boot:run")
-            : resourceBuilder
-                // "build -x test" rather than "classes", because the same arguments drive the container
-                // build during publish and that needs a JAR in build/libs, which "classes" never produces.
-                .WithGradleBuild("build", "-x", "test")
-                .WithGradleTask("bootRun");
+        var resourceBuilder = builder.AddJavaApp(name, appDirectory)
+            .WithDetectedBuildTool(
+                mavenBuildArgs: ["-B", "-ntp", "-DskipTests", "package"],
+                mavenLaunchArgs: ["spring-boot:run"],
+                gradleBuildArgs: ["build", "-x", "test"],
+                gradleLaunchArgs: ["bootRun"]);
 
         // Spring Boot reads SERVER_PORT for its listening port, so the port Aspire allocates reaches the
         // application without any code in the application. No targetPort is pinned: these are host
@@ -353,16 +346,17 @@ public static partial class JavaHostingExtensions
     /// </summary>
     /// <param name="builder">The <see cref="IDistributedApplicationBuilder"/> to add the resource to.</param>
     /// <param name="name">The name of the resource.</param>
-    /// <param name="appDirectory">The application directory, containing <c>pom.xml</c> or <c>build.gradle</c>. Relative paths are resolved against the AppHost directory.</param>
+    /// <param name="appDirectory">The application directory, containing <c>pom.xml</c>, <c>build.gradle</c>, <c>build.gradle.kts</c>, <c>settings.gradle</c>, or <c>settings.gradle.kts</c>. Relative paths are resolved against the AppHost directory.</param>
     /// <returns>A reference to the <see cref="IResourceBuilder{T}"/>.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="builder"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException"><paramref name="name"/> or <paramref name="appDirectory"/> is <see langword="null"/>, empty, or whitespace.</exception>
     /// <exception cref="InvalidOperationException">The directory contains neither a Maven nor a Gradle build file, or contains both.</exception>
     /// <remarks>
-    /// The build tool is detected from the build file on disk, the application runs in Quarkus dev mode
+    /// The build tool is detected when the resource starts, the application runs in Quarkus dev mode
     /// (<c>quarkus:dev</c> or <c>quarkusDev</c>) so live coding works, and an HTTP endpoint is declared through
     /// <c>QUARKUS_HTTP_PORT</c>, the environment variable Quarkus reads for its listening port. Everything else
     /// behaves like <see cref="AddJavaApp(IDistributedApplicationBuilder, string, string)"/>.
+    /// The dev-mode goal compiles the application itself, so Aspire does not add a separate build resource before it.
     /// <para>
     /// Quarkus Dev Services are left enabled but do not activate for anything Aspire supplies: Dev Services only
     /// start a container when the corresponding configuration is missing, and a <c>WithReference</c> to a database
@@ -411,15 +405,12 @@ public static partial class JavaHostingExtensions
         ArgumentException.ThrowIfNullOrWhiteSpace(appDirectory);
 
         var resourceBuilder = builder.AddJavaApp(name, appDirectory)
-            .WithAnnotation(new JavaQuarkusAnnotation(), ResourceAnnotationMutationBehavior.Replace);
-
-        resourceBuilder = RequireBuildTool(resourceBuilder.Resource.WorkingDirectory, name) is JavaBuildTool.Maven
-            ? resourceBuilder
-                .WithMavenBuild("-B", "-ntp", "-DskipTests", "package")
-                .WithMavenGoal("quarkus:dev")
-            : resourceBuilder
-                .WithGradleBuild("build", "-x", "test")
-                .WithGradleTask("quarkusDev");
+            .WithAnnotation(new JavaQuarkusAnnotation(), ResourceAnnotationMutationBehavior.Replace)
+            .WithDetectedBuildTool(
+                mavenBuildArgs: ["-B", "-ntp", "-DskipTests", "package"],
+                mavenLaunchArgs: ["quarkus:dev"],
+                gradleBuildArgs: ["build", "-x", "test"],
+                gradleLaunchArgs: ["quarkusDev"]);
 
         // Declared before the run-mode block so the Host validation configuration below can name this
         // endpoint's host. QUARKUS_HTTP_PORT is the variable Quarkus reads for its listening port.
@@ -540,6 +531,86 @@ public static partial class JavaHostingExtensions
         return tool;
     }
 
+    private static IResourceBuilder<T> WithDetectedBuildTool<T>(
+        this IResourceBuilder<T> builder,
+        string[] mavenBuildArgs,
+        string[] mavenLaunchArgs,
+        string[] gradleBuildArgs,
+        string[] gradleLaunchArgs)
+        where T : JavaAppResource
+    {
+        builder.WithAnnotation(
+            new JavaDetectedBuildToolAnnotation(
+                mavenBuildArgs,
+                mavenLaunchArgs,
+                gradleBuildArgs,
+                gradleLaunchArgs),
+            ResourceAnnotationMutationBehavior.Replace);
+
+        // Maven and Gradle both launch through the platform's command interpreter. The wrapper and its
+        // arguments are resolved later, after the complete AppHost has had a chance to supply an override.
+        builder.WithCommand(WrapperCommand());
+
+        return builder.OnBeforeResourceStarted((resource, _, _) =>
+        {
+            var (tool, configuration) = ResolveDetectedBuildTool(resource);
+
+            // Explicit WithMaven*/WithGradle* calls identify the tool without disk detection and must
+            // keep their authored arguments. The deferred defaults only fill the missing half.
+            if (!resource.HasAnnotationOfType<JavaBuildToolAnnotation>())
+            {
+                builder.WithAnnotation(
+                    new JavaBuildToolAnnotation(tool, configuration.LaunchArgs),
+                    ResourceAnnotationMutationBehavior.Replace);
+            }
+
+            if (!resource.HasAnnotationOfType<JavaBuildStepAnnotation>())
+            {
+                builder.WithAnnotation(
+                    new JavaBuildStepAnnotation(ResourceName: null, tool, configuration.BuildArgs),
+                    ResourceAnnotationMutationBehavior.Replace);
+            }
+
+            ValidateWrapperExists(resource, tool);
+            return Task.CompletedTask;
+        });
+    }
+
+    private static (JavaBuildTool Tool, (string[] BuildArgs, string[] LaunchArgs) Configuration) ResolveDetectedBuildTool(
+        JavaAppResource resource)
+    {
+        var annotation = resource.Annotations.OfType<JavaDetectedBuildToolAnnotation>().Single();
+        var tool = TryResolveConfiguredBuildTool(resource, out var configuredTool)
+            ? configuredTool
+            : RequireBuildTool(resource.WorkingDirectory, resource.Name);
+
+        return (tool, annotation.GetConfiguration(tool));
+    }
+
+    private static bool TryResolveConfiguredBuildTool(JavaAppResource resource, out JavaBuildTool tool)
+    {
+        if (resource.TryGetLastAnnotation<JavaBuildStepAnnotation>(out var buildStep))
+        {
+            tool = buildStep.Tool;
+            return true;
+        }
+
+        if (resource.TryGetLastAnnotation<JavaBuildToolAnnotation>(out var launch))
+        {
+            tool = launch.Tool;
+            return true;
+        }
+
+        if (resource.HasAnnotationOfType<JavaDetectedBuildToolAnnotation>())
+        {
+            tool = RequireBuildTool(resource.WorkingDirectory, resource.Name);
+            return true;
+        }
+
+        tool = default;
+        return false;
+    }
+
     /// <summary>
     /// Launches the Java application through a Maven goal instead of <c>java</c>, for example <c>spring-boot:run</c>.
     /// </summary>
@@ -620,9 +691,21 @@ public static partial class JavaHostingExtensions
                 $"{existing.Tool}. A Java application is launched by a single build tool.");
         }
 
+        if (builder.Resource.TryGetLastAnnotation<JavaBuildStepAnnotation>(out var buildStep) && buildStep.Tool != tool)
+        {
+            throw new InvalidOperationException(
+                $"{methodName} cannot be used when the application is already configured to build with " +
+                $"{buildStep.Tool}. A Java application is built and launched by a single build tool.");
+        }
+
         builder.WithAnnotation(
             new JavaBuildToolAnnotation(tool, args.Length > 0 ? [goalOrTask, .. args] : [goalOrTask]),
             ResourceAnnotationMutationBehavior.Replace);
+
+        if (buildStep is not null && builder.ApplicationBuilder.ExecutionContext.IsRunMode)
+        {
+            RemoveRunBuildResource(builder, buildStep);
+        }
 
         // Set the command in every execution context. Setting it only in run mode left publish emitting
         // "java" as the command while the goal was still contributed as an argument, producing the
@@ -642,9 +725,10 @@ public static partial class JavaHostingExtensions
     /// <exception cref="ArgumentNullException"><paramref name="builder"/> or <paramref name="args"/> is <see langword="null"/>.</exception>
     /// <exception cref="InvalidOperationException">The application is already configured to build with Gradle.</exception>
     /// <remarks>
-    /// The build step is a child resource that the application waits for. It is created only in run mode:
-    /// when publishing, the generated container image performs the build, so a host-side build step would
-    /// build the application twice.
+    /// When the application launches with <see cref="WithMavenGoal{T}(IResourceBuilder{T}, string, string[])"/>,
+    /// that goal performs the local compilation, so these arguments configure publishing without adding a
+    /// second run-mode build. Otherwise, the build step is a child resource that the application waits for.
+    /// No child is created when publishing because the generated container image performs the build.
     /// <para>
     /// This runs a build before the application starts. To launch the application <em>through</em> Maven,
     /// use <see cref="WithMavenGoal{T}(IResourceBuilder{T}, string, string[])"/> instead.
@@ -675,9 +759,10 @@ public static partial class JavaHostingExtensions
     /// <exception cref="ArgumentNullException"><paramref name="builder"/> or <paramref name="args"/> is <see langword="null"/>.</exception>
     /// <exception cref="InvalidOperationException">The application is already configured to build with Maven.</exception>
     /// <remarks>
-    /// The build step is a child resource that the application waits for. It is created only in run mode:
-    /// when publishing, the generated container image performs the build, so a host-side build step would
-    /// build the application twice.
+    /// When the application launches with <see cref="WithGradleTask{T}(IResourceBuilder{T}, string, string[])"/>,
+    /// that task performs the local compilation, so these arguments configure publishing without adding a
+    /// second run-mode build. Otherwise, the build step is a child resource that the application waits for.
+    /// No child is created when publishing because the generated container image performs the build.
     /// <para>
     /// This runs a build before the application starts. To launch the application <em>through</em> Gradle,
     /// use <see cref="WithGradleTask{T}(IResourceBuilder{T}, string, string[])"/> instead.
@@ -716,16 +801,27 @@ public static partial class JavaHostingExtensions
                 $"Call either WithMavenBuild or WithGradleBuild, not both.");
         }
 
+        if (builder.Resource.TryGetLastAnnotation<JavaBuildToolAnnotation>(out var launchTool) && launchTool.Tool != tool)
+        {
+            throw new InvalidOperationException(
+                $"Resource '{builder.Resource.Name}' is already configured to launch with {launchTool.Tool}. " +
+                "A Java application is built and launched by a single build tool.");
+        }
+
+        var createRunResource = builder.ApplicationBuilder.ExecutionContext.IsRunMode
+            && launchTool is null
+            && !builder.Resource.HasAnnotationOfType<JavaDetectedBuildToolAnnotation>();
+
         // Recorded in every execution context: in publish mode there is no build-step resource, but the
         // generated Dockerfile still runs this tool and these arguments to produce the deployable JAR.
         builder.WithAnnotation(
             new JavaBuildStepAnnotation(
-                builder.ApplicationBuilder.ExecutionContext.IsRunMode ? buildResourceName : null,
+                createRunResource ? buildResourceName : null,
                 tool,
                 buildArgs),
             ResourceAnnotationMutationBehavior.Replace);
 
-        if (!builder.ApplicationBuilder.ExecutionContext.IsRunMode)
+        if (!createRunResource)
         {
             return builder;
         }
@@ -771,6 +867,45 @@ public static partial class JavaHostingExtensions
             });
 
         return builder.WaitForCompletion(buildBuilder);
+    }
+
+    private static void RemoveRunBuildResource<T>(
+        IResourceBuilder<T> builder,
+        JavaBuildStepAnnotation buildStep)
+        where T : JavaAppResource
+    {
+        if (buildStep.ResourceName is not { } buildResourceName)
+        {
+            return;
+        }
+
+        var buildResource = builder.ApplicationBuilder.Resources
+            .OfType<ExecutableResource>()
+            .FirstOrDefault(resource => string.Equals(resource.Name, buildResourceName, StringComparisons.ResourceName));
+
+        if (buildResource is null)
+        {
+            return;
+        }
+
+        // The child and both dependency annotations were added as one unit by WithJavaBuildStep. Removing
+        // all three prevents a launch goal configured later from leaving a dangling wait on a resource
+        // that no longer runs.
+        builder.ApplicationBuilder.Resources.Remove(buildResource);
+
+        foreach (var annotation in builder.Resource.Annotations
+            .Where(annotation =>
+                annotation is WaitAnnotation wait && ReferenceEquals(wait.Resource, buildResource)
+                || annotation is ResourceRelationshipAnnotation relationship
+                    && ReferenceEquals(relationship.Resource, buildResource))
+            .ToArray())
+        {
+            builder.Resource.Annotations.Remove(annotation);
+        }
+
+        builder.WithAnnotation(
+            buildStep with { ResourceName = null },
+            ResourceAnnotationMutationBehavior.Replace);
     }
 
     /// <summary>
@@ -977,14 +1112,24 @@ public static partial class JavaHostingExtensions
             return authored;
         }
 
-        if (!resource.TryGetLastAnnotation<JavaBuildStepAnnotation>(out var buildStep))
+        JavaBuildTool tool;
+
+        if (resource.TryGetLastAnnotation<JavaBuildStepAnnotation>(out var buildStep))
+        {
+            tool = buildStep.Tool;
+        }
+        else if (resource is JavaAppResource app && app.HasAnnotationOfType<JavaDetectedBuildToolAnnotation>())
+        {
+            tool = ResolveDetectedBuildTool(app).Tool;
+        }
+        else
         {
             throw new InvalidOperationException(
                 $"Resource '{resource.Name}' has no Maven or Gradle build configured, so the OpenTelemetry agent location cannot be inferred. " +
                 $"Call WithMavenBuild or WithGradleBuild, or pass the agent path to WithOtelAgent.");
         }
 
-        var outputDirectory = buildStep.Tool is JavaBuildTool.Gradle ? "build" : "target";
+        var outputDirectory = tool is JavaBuildTool.Gradle ? "build" : "target";
 
         return Path.Combine(outputDirectory, "agent", "opentelemetry-javaagent.jar");
     }
@@ -1080,14 +1225,34 @@ public static partial class JavaHostingExtensions
     /// </summary>
     private static void AddLaunchArgs(JavaAppResource resource, CommandLineArgsCallbackContext ctx)
     {
+        JavaBuildTool tool;
+        string[] args;
+
         if (resource.TryGetLastAnnotation<JavaBuildToolAnnotation>(out var buildTool))
         {
-            foreach (var leadingArg in ResolveWrapperInvocation(resource, buildTool.Tool).LeadingArgs)
+            tool = buildTool.Tool;
+            args = buildTool.Args;
+        }
+        else if (resource.HasAnnotationOfType<JavaDetectedBuildToolAnnotation>())
+        {
+            var detected = ResolveDetectedBuildTool(resource);
+            tool = detected.Tool;
+            args = detected.Configuration.LaunchArgs;
+        }
+        else
+        {
+            tool = default;
+            args = [];
+        }
+
+        if (args.Length > 0)
+        {
+            foreach (var leadingArg in ResolveWrapperInvocation(resource, tool).LeadingArgs)
             {
                 ctx.Args.Add(leadingArg);
             }
 
-            foreach (var arg in buildTool.Args)
+            foreach (var arg in args)
             {
                 ctx.Args.Add(arg);
             }
@@ -1180,6 +1345,11 @@ public static partial class JavaHostingExtensions
 
         return (Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe", ["/c", relativeWrapperPath]);
     }
+
+    private static string WrapperCommand()
+        => OperatingSystem.IsWindows()
+            ? Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe"
+            : "sh";
 
     /// <summary>
     /// Throws when the wrapper the resource will launch is not on disk.
@@ -1446,8 +1616,8 @@ public static partial class JavaHostingExtensions
                     ProjectName = classPaths is { Length: > 0 }
                         ? null
                         : TryResolveIdeProjectName(builder.Resource),
-                    BuildTool = builder.Resource.TryGetLastAnnotation<JavaBuildToolAnnotation>(out var buildTool)
-                        ? buildTool.Tool.ToString().ToLowerInvariant()
+                    BuildTool = TryResolveConfiguredBuildTool(builder.Resource, out var buildTool)
+                        ? buildTool.ToString().ToLowerInvariant()
                         : null
                 };
             },
@@ -1524,14 +1694,14 @@ public static partial class JavaHostingExtensions
     /// </remarks>
     private static string? TryDiscoverProjectMainClass(JavaAppResource resource)
     {
-        if (!resource.TryGetLastAnnotation<JavaBuildToolAnnotation>(out var buildTool))
+        if (!TryResolveConfiguredBuildTool(resource, out var buildTool))
         {
             return null;
         }
 
         // Both tools have a single conventional output directory, and neither lets the AppHost know
         // about a redirected one without parsing the build file.
-        var outputDirectory = buildTool.Tool switch
+        var outputDirectory = buildTool switch
         {
             JavaBuildTool.Maven => Path.Combine(resource.WorkingDirectory, "target"),
             JavaBuildTool.Gradle => Path.Combine(resource.WorkingDirectory, "build", "libs"),
@@ -1606,14 +1776,14 @@ public static partial class JavaHostingExtensions
     private static string? TryGetQuarkusRunJar(JavaAppResource resource)
     {
         if (!resource.HasAnnotationOfType<JavaQuarkusAnnotation>()
-            || !resource.TryGetLastAnnotation<JavaBuildToolAnnotation>(out var buildTool))
+            || !TryResolveConfiguredBuildTool(resource, out var buildTool))
         {
             return null;
         }
 
         var runJar = Path.Combine(
             resource.WorkingDirectory,
-            buildTool.Tool is JavaBuildTool.Gradle ? "build" : "target",
+            buildTool is JavaBuildTool.Gradle ? "build" : "target",
             QuarkusFastJarDirectory,
             QuarkusRunJarName);
 
@@ -1646,12 +1816,12 @@ public static partial class JavaHostingExtensions
     /// </summary>
     private static string? TryResolveIdeProjectName(JavaAppResource resource)
     {
-        if (!resource.TryGetLastAnnotation<JavaBuildToolAnnotation>(out var buildTool))
+        if (!TryResolveConfiguredBuildTool(resource, out var buildTool))
         {
             return null;
         }
 
-        var declaredName = buildTool.Tool switch
+        var declaredName = buildTool switch
         {
             JavaBuildTool.Maven => TryReadMavenArtifactId(Path.Combine(resource.WorkingDirectory, "pom.xml")),
             JavaBuildTool.Gradle => TryReadGradleProjectName(resource.WorkingDirectory),
