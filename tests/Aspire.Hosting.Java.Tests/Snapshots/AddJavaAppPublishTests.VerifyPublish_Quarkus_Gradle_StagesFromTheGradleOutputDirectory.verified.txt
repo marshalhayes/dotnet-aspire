@@ -6,7 +6,7 @@ COPY gradle ./gradle
 RUN sed -i 's/\r$//' ./gradlew && sh ./gradlew --no-daemon --version
 COPY . .
 RUN --mount=type=cache,id=aspire-java-gradle-api,target=/root/.gradle/caches,sharing=locked \
-    mkdir -p /build && sed -i 's/\r$//' ./gradlew && sh ./gradlew build -x test && mkdir -p /build/app && if [ -d build/quarkus-app ]; then cp -r build/quarkus-app/. /build/app/; else jars=$(ls build/libs/*.jar 2>/dev/null | grep -Ev '(-plain|-sources|-javadoc)\.jar$' || true) && count=$(printf '%s\n' "$jars" | grep -c . || true) && if [ "$count" != "1" ]; then echo "Aspire: expected exactly one application JAR from the build of 'api' matching build/libs/*.jar, found $count:" >&2; echo "$jars" >&2; echo "Use WithJarArtifact(\"<relative path>\") to select one." >&2; exit 1; fi && cp "$jars" /build/app/quarkus-run.jar; fi
+    mkdir -p /build && sed -i 's/\r$//' ./gradlew && sh ./gradlew --no-daemon build -x test && mkdir -p /build/app && if [ -d build/quarkus-app ]; then cp -r build/quarkus-app/. /build/app/; else jars=$(ls build/libs/*.jar 2>/dev/null | grep -Ev '(-plain|-sources|-javadoc)\.jar$' || true) && count=$(printf '%s\n' "$jars" | grep -c . || true) && if [ "$count" != "1" ]; then echo "Aspire: expected exactly one application JAR from the build of 'api' matching build/libs/*.jar, found $count:" >&2; echo "$jars" >&2; echo "Use WithJarArtifact(\"<relative path>\") to select one." >&2; exit 1; fi && cp "$jars" /build/app/quarkus-run.jar; fi
 
 FROM docker.io/library/eclipse-temurin:21-jre
 WORKDIR /app

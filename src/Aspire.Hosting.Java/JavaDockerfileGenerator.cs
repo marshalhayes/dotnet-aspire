@@ -1102,6 +1102,40 @@ internal static partial class JavaDockerfileGenerator
 
         internal static (JavaBuildTool Tool, string[] Args) ResolveToolAndArgs(JavaAppResource resource, string appDirectory)
         {
+            var (tool, args) = ResolveConfiguredToolAndArgs(resource, appDirectory);
+
+            return (tool, WithoutGradleDaemon(tool, args));
+        }
+
+        /// <summary>
+        /// Adds <c>--no-daemon</c> to a Gradle invocation that does not already carry it.
+        /// </summary>
+        /// <remarks>
+        /// The Gradle daemon outlives the <c>RUN</c> instruction's shell and is then killed with the
+        /// layer, so inside a container build it only adds startup cost and holds memory the build could
+        /// use. Run mode is deliberately left alone: there the daemon survives between builds and is what
+        /// makes an incremental rebuild fast.
+        /// <para>
+        /// Applied here rather than in each argument list so it also covers arguments the author supplied
+        /// through <c>WithGradleBuild</c> and the ones the Spring Boot and Quarkus defaults contribute.
+        /// </para>
+        /// </remarks>
+        private static string[] WithoutGradleDaemon(JavaBuildTool tool, string[] args)
+        {
+            if (tool is not JavaBuildTool.Gradle
+                || args.Contains("--no-daemon", StringComparer.Ordinal)
+                // An author who asked for the daemon is not overridden; Gradle takes the last flag to win,
+                // so appending --no-daemon would silently reverse an explicit choice.
+                || args.Contains("--daemon", StringComparer.Ordinal))
+            {
+                return args;
+            }
+
+            return ["--no-daemon", .. args];
+        }
+
+        private static (JavaBuildTool Tool, string[] Args) ResolveConfiguredToolAndArgs(JavaAppResource resource, string appDirectory)
+        {
             // A build step configured with WithMavenBuild/WithGradleBuild states both the tool and the
             // arguments that produce a deployable artifact, so it is the most precise source.
             if (resource.TryGetLastAnnotation<JavaBuildStepAnnotation>(out var buildStep))
@@ -1150,9 +1184,7 @@ internal static partial class JavaDockerfileGenerator
             // the per-artifact download lines. Tests are skipped because the container build produces a
             // deployable artifact; running the test suite belongs to CI, not to `aspire publish`.
             JavaBuildTool.Maven => ["-B", "-ntp", "-DskipTests", "package"],
-            // The Gradle daemon outlives the RUN instruction's shell and would be killed with the layer,
-            // so it only adds startup cost inside a container build.
-            JavaBuildTool.Gradle => ["--no-daemon", "-x", "test", "build"],
+            JavaBuildTool.Gradle => ["-x", "test", "build"],
             _ => throw new UnreachableException()
         };
 

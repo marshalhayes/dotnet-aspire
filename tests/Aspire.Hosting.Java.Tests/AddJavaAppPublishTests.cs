@@ -763,7 +763,9 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
         var (tool, args) = JavaDockerfileGenerator.ResolveBuildTool(app.Resource, appDirectory.Path);
 
         Assert.Equal(JavaBuildTool.Gradle, tool);
-        Assert.Equal(["bootJar"], args);
+        // The container build always adds --no-daemon: a daemon started inside a RUN layer dies with
+        // the layer, so it only costs startup time and memory.
+        Assert.Equal(["--no-daemon", "bootJar"], args);
     }
 
     [Fact]
@@ -1308,6 +1310,11 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
             """));
 
         Assert.Contains("cp -r build/quarkus-app/. /build/app/", content, StringComparison.Ordinal);
+
+        // The Gradle daemon outlives the RUN instruction's shell and is killed with the layer, so it only
+        // costs startup time here. The framework defaults do not carry the flag because run mode wants the
+        // daemon, which is why the container build has to add it.
+        Assert.Contains("sh ./gradlew --no-daemon build -x test", content, StringComparison.Ordinal);
         await Verify(content);
     }
 
