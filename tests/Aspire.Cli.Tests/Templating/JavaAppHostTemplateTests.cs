@@ -55,6 +55,19 @@ public class JavaAppHostTemplateTests
         Assert.Equal([".", ".aspire/modules"], sourcePaths);
     }
 
+    /// <summary>
+    /// The three tests above each assert one property the runner depends on, so between them a
+    /// template that had lost its entire class body still passed: nothing checked that the file
+    /// declares an AppHost at all, or that the sample it scaffolds still builds a real application.
+    /// Snapshotting the whole file closes that gap and makes any edit to the first thing a Java user
+    /// ever sees a deliberate, reviewable change.
+    /// </summary>
+    [Fact]
+    public async Task JavaStarterAppHost_MatchesTheScaffoldedSource()
+    {
+        await Verify(File.ReadAllText(GetJavaStarterAppHostPath()), extension: "java");
+    }
+
     private static string GetJavaStarterAppHostPath()
     {
         var path = Path.Combine(GetJavaStarterDirectory(), "AppHost.java");
