@@ -1,6 +1,9 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import * as sinon from 'sinon';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { AspireTerminalProvider, quoteShellArg, shellArg } from '../utils/AspireTerminalProvider';
 import * as cliPathModule from '../utils/cliPath';
 import { EnvironmentVariables } from '../utils/environment';
@@ -878,6 +881,55 @@ suite('AspireTerminalProvider tests', () => {
             }
             for (const key of Object.keys(inheritedVariables)) {
                 assert.strictEqual(env[key], undefined, key);
+            }
+        });
+
+        test('forwards the exact resolved CLI path even when a different configured path is valid', () => {
+            const otherExistingPath = path.join(__dirname, 'cliSpawn.test.js');
+            const getConfiguredCliPathStub = sinon.stub(cliPathModule, 'getConfiguredCliPath').returns(otherExistingPath);
+            try {
+                const env = terminalProvider.createEnvironment(undefined, undefined, undefined, __filename);
+                assert.strictEqual(env.AspireCliPath, __filename);
+            } finally {
+                getConfiguredCliPathStub.restore();
+            }
+        });
+
+        test('forwards the exact resolved CLI path when extension backchannel variables are suppressed', () => {
+            const otherExistingPath = path.join(__dirname, 'cliSpawn.test.js');
+            const getConfiguredCliPathStub = sinon.stub(cliPathModule, 'getConfiguredCliPath').returns(otherExistingPath);
+            try {
+                const env = terminalProvider.createEnvironment(undefined, undefined, true, __filename);
+                assert.strictEqual(env.AspireCliPath, __filename);
+            } finally {
+                getConfiguredCliPathStub.restore();
+            }
+        });
+
+        test('removes an ambient AspireCliPath when the resolved CLI path is a bare command name', () => {
+            // A bare command isn't forwardable, so any inherited AspireCliPath (e.g. from a
+            // parent shell) must not leak into this child and point ResolveAspireCliBundle at a
+            // CLI other than the one that was actually launched.
+            const previousAmbientCliPath = process.env.AspireCliPath;
+            process.env.AspireCliPath = '/ambient/stale/aspire';
+            try {
+                const env = terminalProvider.createEnvironment(undefined, undefined, undefined, 'aspire');
+                assert.strictEqual(env.AspireCliPath, undefined);
+            } finally {
+                restoreEnvironmentVariable('AspireCliPath', previousAmbientCliPath);
+            }
+        });
+
+        test('omits AspireCliPath for a resolved unbundled framework-dependent CLI build', () => {
+            const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'aspire-terminal-provider-unbundled-'));
+            const cliPath = path.join(tempDirectory, 'aspire');
+            fs.writeFileSync(cliPath, '');
+            fs.writeFileSync(path.join(tempDirectory, 'aspire.dll'), '');
+            try {
+                const env = terminalProvider.createEnvironment(undefined, undefined, undefined, cliPath);
+                assert.strictEqual(env.AspireCliPath, undefined);
+            } finally {
+                fs.rmSync(tempDirectory, { recursive: true, force: true });
             }
         });
     });

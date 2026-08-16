@@ -5,8 +5,10 @@ import {
     ASPIRE_CLI_PATH_ENV_VAR,
     CliPathEnvironmentCollection,
     CliPathEnvironmentDependencies,
+    ResolvedCliPathDependencies,
     createAspireCliPathProcessEnvironment,
     getForwardableAspireCliPath,
+    getForwardableResolvedAspireCliPath,
     initializeCliPathEnvironmentSync,
     registerCliPathEnvironmentSync,
     syncAspireCliPathEnvironment,
@@ -156,6 +158,62 @@ suite('cliPathEnvironment.getForwardableAspireCliPath tests', () => {
             },
             isRejectedForForwarding: (candidate) => candidate === '/some/other/aspire',
         })), '/work/aspire/bin/aspire');
+    });
+});
+
+function makeResolvedDeps(overrides: Partial<ResolvedCliPathDependencies> = {}): ResolvedCliPathDependencies {
+    return {
+        isAbsolute: (cliPath: string) => cliPath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(cliPath),
+        fileExists: (cliPath: string) => cliPath.endsWith('/aspire') || cliPath.endsWith('\\aspire.exe') || cliPath.endsWith('/aspire.exe'),
+        realpath: (cliPath: string) => cliPath,
+        ...overrides,
+    };
+}
+
+suite('cliPathEnvironment.getForwardableResolvedAspireCliPath tests', () => {
+    test('returns the supplied concrete path when it is absolute and exists', () => {
+        assert.strictEqual(
+            getForwardableResolvedAspireCliPath('/repo/a/bin/aspire', makeResolvedDeps()),
+            '/repo/a/bin/aspire');
+    });
+
+    test('returns undefined for a bare command name', () => {
+        assert.strictEqual(getForwardableResolvedAspireCliPath('aspire', makeResolvedDeps()), undefined);
+    });
+
+    test('returns undefined for a missing absolute path', () => {
+        assert.strictEqual(
+            getForwardableResolvedAspireCliPath('/repo/a/bin/missing-aspire', makeResolvedDeps({ fileExists: () => false })),
+            undefined);
+    });
+
+    test('returns undefined for undefined input', () => {
+        assert.strictEqual(getForwardableResolvedAspireCliPath(undefined, makeResolvedDeps()), undefined);
+    });
+
+    test('ignores configured-path rejection state for a concrete path the resolver already launched', () => {
+        // The resolver already selected and validated this exact executable, so raw-setting
+        // rejection state (which describes a different configured/target value) must not
+        // suppress forwarding it.
+        const cliPath = '/repo/a/bin/aspire';
+        const deps: ResolvedCliPathDependencies & { isRejectedForForwarding: () => boolean } = {
+            ...makeResolvedDeps(),
+            isRejectedForForwarding: () => true,
+        };
+
+        assert.strictEqual(getForwardableResolvedAspireCliPath(cliPath, deps), cliPath);
+    });
+
+    test('returns undefined for a resolved unbundled framework-dependent CLI build', () => {
+        assert.strictEqual(
+            getForwardableResolvedAspireCliPath('/work/aspire/artifacts/bin/Aspire.Cli/Debug/net10.0/aspire', makeResolvedDeps({
+                fileExists: (candidate) => {
+                    const normalized = normalizeCandidate(candidate);
+                    return normalized === '/work/aspire/artifacts/bin/Aspire.Cli/Debug/net10.0/aspire'
+                        || normalized === '/work/aspire/artifacts/bin/Aspire.Cli/Debug/net10.0/aspire.dll';
+                },
+            })),
+            undefined);
     });
 });
 

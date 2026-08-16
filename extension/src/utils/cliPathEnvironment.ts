@@ -40,10 +40,13 @@ export interface CliPathEnvironmentCollection {
     delete(variable: string): void;
 }
 
-export interface ForwardableCliPathDependencies {
+export interface ResolvedCliPathDependencies {
     isAbsolute: (cliPath: string) => boolean;
     fileExists: (cliPath: string) => boolean;
     realpath: (cliPath: string) => string | undefined;
+}
+
+export interface ForwardableCliPathDependencies extends ResolvedCliPathDependencies {
     isRejectedForForwarding: (cliPath: string) => boolean;
 }
 
@@ -57,12 +60,16 @@ export interface CliPathEnvironmentDependencies extends ForwardableCliPathDepend
     log?: (message: string) => void;
 }
 
-const defaultForwardableCliPathDeps: ForwardableCliPathDependencies = {
+const defaultResolvedCliPathDeps: ResolvedCliPathDependencies = {
     isAbsolute: cliPath => process.platform === 'win32'
         ? isFullyQualifiedWindowsPath(cliPath)
         : path.isAbsolute(cliPath),
     fileExists: fileExists,
     realpath: realpath,
+};
+
+const defaultForwardableCliPathDeps: ForwardableCliPathDependencies = {
+    ...defaultResolvedCliPathDeps,
     isRejectedForForwarding: isConfiguredCliPathRejectedForForwarding,
 };
 
@@ -73,18 +80,22 @@ const defaultDeps: CliPathEnvironmentDependencies = {
     log: (message) => extensionLogOutputChannel.info(message),
 };
 
+function isForwardableResolvedCliPath(cliPath: string, deps: ResolvedCliPathDependencies): boolean {
+    return cliPath.length > 0
+        && deps.isAbsolute(cliPath)
+        && deps.fileExists(cliPath)
+        && !isUnbundledFrameworkDependentCliPath(cliPath, deps)
+        && !isResolvedUnbundledFrameworkDependentCliPath(cliPath, deps);
+}
+
 export function isForwardableAspireCliPath(
     configuredPath: string,
     deps: ForwardableCliPathDependencies = defaultForwardableCliPathDeps,
 ): boolean {
-    return configuredPath.length > 0
-        && deps.isAbsolute(configuredPath)
-        && deps.fileExists(configuredPath)
-        // CLI resolution rejected this path and is running a different CLI, so forwarding it
-        // would make ResolveAspireCliBundle stamp bundle paths from a CLI that never ran.
-        && !deps.isRejectedForForwarding(configuredPath)
-        && !isUnbundledFrameworkDependentCliPath(configuredPath, deps)
-        && !isResolvedUnbundledFrameworkDependentCliPath(configuredPath, deps);
+    // CLI resolution rejected this path and is running a different CLI, so forwarding it
+    // would make ResolveAspireCliBundle stamp bundle paths from a CLI that never ran.
+    return isForwardableResolvedCliPath(configuredPath, deps)
+        && !deps.isRejectedForForwarding(configuredPath);
 }
 
 export function getForwardableAspireCliPath(deps: CliPathEnvironmentDependencies = defaultDeps): string | undefined {
@@ -96,6 +107,23 @@ export function getForwardableAspireCliPath(deps: CliPathEnvironmentDependencies
     const resolvedPath = deps.getResolvedPath(configuredPath);
     return resolvedPath !== undefined && isForwardableAspireCliPath(resolvedPath, deps)
         ? resolvedPath
+        : undefined;
+}
+
+/**
+ * Validates a concrete CLI path that has already been chosen and launched (for example, the
+ * exact executable `spawnCliProcess` invokes) so it can be forwarded to the child's environment.
+ * Unlike `getForwardableAspireCliPath`, this intentionally does not consult configured-path
+ * rejection state: that state describes a raw setting/target combination, but the caller here
+ * already selected and ran this exact executable, so rejection of a *different* configured value
+ * must not suppress it.
+ */
+export function getForwardableResolvedAspireCliPath(
+    cliPath: string | undefined,
+    deps: ResolvedCliPathDependencies = defaultResolvedCliPathDeps,
+): string | undefined {
+    return cliPath !== undefined && isForwardableResolvedCliPath(cliPath, deps)
+        ? cliPath
         : undefined;
 }
 
@@ -132,7 +160,7 @@ function realpath(filePath: string): string | undefined {
     }
 }
 
-function isUnbundledFrameworkDependentCliPath(configuredPath: string, deps: ForwardableCliPathDependencies): boolean {
+function isUnbundledFrameworkDependentCliPath(configuredPath: string, deps: ResolvedCliPathDependencies): boolean {
     const cliDirectory = path.dirname(configuredPath);
     const cliAssemblyPath = path.join(cliDirectory, 'aspire.dll');
 
@@ -149,7 +177,7 @@ function isUnbundledFrameworkDependentCliPath(configuredPath: string, deps: Forw
     return !hasInstallSidecar(cliDirectory, deps) && !hasAdjacentBundleLayout(cliDirectory, deps);
 }
 
-function isResolvedUnbundledFrameworkDependentCliPath(configuredPath: string, deps: ForwardableCliPathDependencies): boolean {
+function isResolvedUnbundledFrameworkDependentCliPath(configuredPath: string, deps: ResolvedCliPathDependencies): boolean {
     const resolvedPath = deps.realpath(configuredPath);
     if (resolvedPath === undefined || resolvedPath === configuredPath || !deps.isAbsolute(resolvedPath) || !deps.fileExists(resolvedPath)) {
         return false;
@@ -158,16 +186,16 @@ function isResolvedUnbundledFrameworkDependentCliPath(configuredPath: string, de
     return isUnbundledFrameworkDependentCliPath(resolvedPath, deps);
 }
 
-function hasInstallSidecar(cliDirectory: string, deps: ForwardableCliPathDependencies): boolean {
+function hasInstallSidecar(cliDirectory: string, deps: ResolvedCliPathDependencies): boolean {
     return deps.fileExists(path.join(cliDirectory, '.aspire-install.json'));
 }
 
-function hasAdjacentBundleLayout(cliDirectory: string, deps: ForwardableCliPathDependencies): boolean {
+function hasAdjacentBundleLayout(cliDirectory: string, deps: ResolvedCliPathDependencies): boolean {
     return hasBundleRoot(cliDirectory, deps)
         || hasBundleRoot(path.join(cliDirectory, 'bundle'), deps);
 }
 
-function hasBundleRoot(bundleRoot: string, deps: ForwardableCliPathDependencies): boolean {
+function hasBundleRoot(bundleRoot: string, deps: ResolvedCliPathDependencies): boolean {
     return (deps.fileExists(path.join(bundleRoot, 'dcp', 'dcp')) || deps.fileExists(path.join(bundleRoot, 'dcp', 'dcp.exe')))
         && (deps.fileExists(path.join(bundleRoot, 'managed', 'aspire-managed')) || deps.fileExists(path.join(bundleRoot, 'managed', 'aspire-managed.exe')));
 }

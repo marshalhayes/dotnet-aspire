@@ -7,7 +7,7 @@ import { DcpServerConnectionInfo } from '../dcp/types';
 import { getRunSessionInfo, getSupportedCapabilities } from '../capabilities';
 import { EnvironmentVariables, getEnvironmentWithoutE2EBridgeVariables } from './environment';
 import { resolveCliPath } from './cliPath';
-import { ASPIRE_CLI_PATH_ENV_VAR, getForwardableAspireCliPath } from './cliPathEnvironment';
+import { ASPIRE_CLI_PATH_ENV_VAR, getForwardableAspireCliPath, getForwardableResolvedAspireCliPath } from './cliPathEnvironment';
 import path from 'path';
 import { assertNoTerminalControlCharacters } from './cmdShim';
 
@@ -315,7 +315,7 @@ export class AspireTerminalProvider implements vscode.Disposable {
         return vscode.window.createTerminal(terminalOptions);
     }
 
-    createEnvironment(debugSessionId?: string, noDebug?: boolean, noExtensionVariables?: boolean): any {
+    createEnvironment(debugSessionId?: string, noDebug?: boolean, noExtensionVariables?: boolean, resolvedCliPath?: string): any {
         if (noExtensionVariables) {
             const env: any = {
                 ...getEnvironmentWithoutE2EBridgeVariables(),
@@ -326,7 +326,7 @@ export class AspireTerminalProvider implements vscode.Disposable {
                 ASPIRE_LOCALE_OVERRIDE: vscode.env.language,
             };
 
-            addForwardableAspireCliPath(env);
+            addForwardableAspireCliPath(env, resolvedCliPath);
             scrubNoExtensionVariablesEnvironment(env);
 
             return env;
@@ -336,7 +336,7 @@ export class AspireTerminalProvider implements vscode.Disposable {
             ...getEnvironmentWithoutE2EBridgeVariables(),
         };
 
-        addForwardableAspireCliPath(env);
+        addForwardableAspireCliPath(env, resolvedCliPath);
 
         Object.assign(env, {
             // Extension connection information
@@ -490,7 +490,7 @@ function isPowerShell7Available(): boolean {
     return result.status === 0 && result.error === undefined;
 }
 
-function addForwardableAspireCliPath(env: Record<string, string | undefined>): void {
+function addForwardableAspireCliPath(env: Record<string, string | undefined>, resolvedCliPath?: string): void {
     // Forward aspire.aspireCliExecutablePath as AspireCliPath so MSBuild's
     // ResolveAspireCliBundle task — which `dotnet build` evaluates whenever
     // the AppHost is built (including from this CLI process and from VS
@@ -502,6 +502,20 @@ function addForwardableAspireCliPath(env: Record<string, string | undefined>): v
     // Only forward values that pass the task's File.Exists guard; stale
     // absolute paths make the task produce no bundle outputs instead of
     // falling back, and the AppHost targets can then fail with ASPIRE009.
+    if (resolvedCliPath !== undefined) {
+        // A concrete resolved path (e.g. from spawnCliProcess) is the exact executable this
+        // process launches, so it is the only candidate considered; delete any inherited
+        // AspireCliPath first so an unforwardable resolvedCliPath can't fall back to stale
+        // ambient metadata from a different CLI.
+        deleteEnvironmentVariable(env, ASPIRE_CLI_PATH_ENV_VAR);
+        const forwardableResolvedPath = getForwardableResolvedAspireCliPath(resolvedCliPath);
+        if (forwardableResolvedPath) {
+            env[ASPIRE_CLI_PATH_ENV_VAR] = forwardableResolvedPath;
+        }
+
+        return;
+    }
+
     const configuredCliPath = getForwardableAspireCliPath();
     if (configuredCliPath) {
         env[ASPIRE_CLI_PATH_ENV_VAR] = configuredCliPath;
@@ -536,8 +550,12 @@ function scrubNoExtensionVariablesEnvironment(env: Record<string, string | undef
 
 function deleteEnvironmentVariable(env: Record<string, string | undefined>, name: string): void {
     if (process.platform === 'win32') {
+        // Windows environment variable names are case-insensitive; compare uppercased so callers
+        // can pass a mixed-case canonical name (e.g. `AspireCliPath`) as well as already-uppercase
+        // constants.
+        const upperName = name.toUpperCase();
         for (const key of Object.keys(env)) {
-            if (key.toUpperCase() === name) {
+            if (key.toUpperCase() === upperName) {
                 delete env[key];
             }
         }
