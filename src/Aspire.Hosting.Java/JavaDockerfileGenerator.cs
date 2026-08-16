@@ -1030,75 +1030,32 @@ internal static partial class JavaDockerfileGenerator
         /// <exception cref="DistributedApplicationException">No wrapper is present, or the configured wrapper is outside the build context.</exception>
         private static string ResolveWrapperForContext(JavaAppResource resource, string appDirectory, JavaBuildTool tool)
         {
-            var defaultWrapperName = tool switch
+            // Container builds execute on Linux even when publish runs on Windows. Passing that platform
+            // to the shared resolver keeps the naming rule identical to run mode without selecting a batch
+            // script that the build stage cannot execute.
+            var resolvedWrapperPath = JavaBuildToolResolver.ResolveWrapperPath(resource, tool, isWindows: false);
+            var isConfigured = resource.HasAnnotationOfType<WrapperAnnotation>();
+            var relative = Path.GetRelativePath(appDirectory, resolvedWrapperPath).Replace('\\', '/');
+
+            if (relative.StartsWith("../", StringComparison.Ordinal) || IsPathRootedOnAnyPlatform(relative))
             {
-                JavaBuildTool.Maven => "mvnw",
-                JavaBuildTool.Gradle => "gradlew",
-                _ => throw new UnreachableException()
-            };
+                throw new DistributedApplicationException(
+                    $"Java application '{resource.Name}' cannot be published because its wrapper " +
+                    $"'{resolvedWrapperPath}' is outside the build context '{appDirectory}'. " +
+                    "Move the wrapper into the application directory, or set the build context to a " +
+                    "directory that contains both.");
+            }
 
-            if (resource.TryGetLastAnnotation<WrapperAnnotation>(out var configured))
+            if (!File.Exists(resolvedWrapperPath))
             {
-                // WithWrapperPath stores an absolute path, so this is what decides whether the file is
-                // inside the context that was uploaded. A Windows-absolute path combined on Linux stays
-                // inside the working directory as a literal segment, so it needs the same cross-platform
-                // test as every other authored path.
-                var relative = Path.GetRelativePath(appDirectory, configured.WrapperPath).Replace('\\', '/');
-
-                if (relative.StartsWith("../", StringComparison.Ordinal) || IsPathRootedOnAnyPlatform(relative))
-                {
-                    throw new DistributedApplicationException(
-                        $"Java application '{resource.Name}' cannot be published because its wrapper " +
-                        $"'{configured.WrapperPath}' is outside the build context '{appDirectory}'. " +
-                        "Move the wrapper into the application directory, or set the build context to a " +
-                        "directory that contains both.");
-                }
-
-                if (!File.Exists(configured.WrapperPath))
+                if (isConfigured)
                 {
                     throw new DistributedApplicationException(
                         $"Java application '{resource.Name}' cannot be published because the wrapper " +
-                        $"configured with WithWrapperPath was not found at '{configured.WrapperPath}'.");
+                        $"configured with WithWrapperPath was not found at '{resolvedWrapperPath}'.");
                 }
 
-                // The build stage is Linux, so a Windows batch wrapper cannot run there even though it is
-                // the right choice on the developer's machine. Maven and Gradle ship the POSIX script
-                // alongside the batch one under the same base name, so prefer that sibling and only fail
-                // when it is genuinely absent.
-                // https://maven.apache.org/wrapper/ and https://docs.gradle.org/current/userguide/gradle_wrapper.html
-                if (Path.GetExtension(relative) is ".cmd" or ".bat")
-                {
-                    var posixSibling = relative[..^Path.GetExtension(relative).Length];
-
-                    if (!File.Exists(Path.Combine(appDirectory, posixSibling.Replace('/', Path.DirectorySeparatorChar))))
-                    {
-                        throw new DistributedApplicationException(
-                            $"Java application '{resource.Name}' cannot be published because its wrapper " +
-                            $"'{relative}' is a Windows batch script and the container build stage is Linux. " +
-                            $"No '{posixSibling}' was found next to it. Generate the wrapper with " +
-                            $"{JavaHostingExtensions.GenerateWrapperCommand(tool)} so both scripts are present.");
-                    }
-
-                    relative = posixSibling;
-                }
-
-                // A Dockerfile COPY takes its arguments separated by whitespace and has no quoted form
-                // here, so a wrapper path containing whitespace would copy two nonexistent paths instead of
-                // one real one. Rejecting it names the problem, rather than failing later inside the build
-                // with "no such file or directory" for a path the author never wrote.
-                if (relative.Any(char.IsWhiteSpace))
-                {
-                    throw new DistributedApplicationException(
-                        $"Java application '{resource.Name}' cannot be published because its wrapper path " +
-                        $"'{relative}' contains whitespace, which a Dockerfile COPY instruction cannot " +
-                        "express. Move the wrapper to a path without spaces.");
-                }
-
-                return relative;
-            }
-
-            if (!File.Exists(Path.Combine(appDirectory, defaultWrapperName)))
-            {
+                var defaultWrapperName = JavaBuildToolResolver.GetDefaultWrapperName(tool, isWindows: false);
                 throw new DistributedApplicationException(
                     $"Java application '{resource.Name}' cannot be published because there is no " +
                     $"{defaultWrapperName} in '{appDirectory}'. Aspire builds the image with the project's " +
@@ -1107,7 +1064,40 @@ internal static partial class JavaDockerfileGenerator
                     "wrapper with WithWrapperPath.");
             }
 
-            return defaultWrapperName;
+            // The build stage is Linux, so a Windows batch wrapper cannot run there even though it is
+            // the right choice on the developer's machine. Maven and Gradle ship the POSIX script
+            // alongside the batch one under the same base name, so prefer that sibling and only fail
+            // when it is genuinely absent.
+            // https://maven.apache.org/wrapper/ and https://docs.gradle.org/current/userguide/gradle_wrapper.html
+            if (Path.GetExtension(relative) is ".cmd" or ".bat")
+            {
+                var posixSibling = relative[..^Path.GetExtension(relative).Length];
+
+                if (!File.Exists(Path.Combine(appDirectory, posixSibling.Replace('/', Path.DirectorySeparatorChar))))
+                {
+                    throw new DistributedApplicationException(
+                        $"Java application '{resource.Name}' cannot be published because its wrapper " +
+                        $"'{relative}' is a Windows batch script and the container build stage is Linux. " +
+                        $"No '{posixSibling}' was found next to it. Generate the wrapper with " +
+                        $"{JavaHostingExtensions.GenerateWrapperCommand(tool)} so both scripts are present.");
+                }
+
+                relative = posixSibling;
+            }
+
+            // A Dockerfile COPY takes its arguments separated by whitespace and has no quoted form here,
+            // so a wrapper path containing whitespace would copy two nonexistent paths instead of one real
+            // one. Rejecting it names the problem, rather than failing later inside the build with "no such
+            // file or directory" for a path the author never wrote.
+            if (relative.Any(char.IsWhiteSpace))
+            {
+                throw new DistributedApplicationException(
+                    $"Java application '{resource.Name}' cannot be published because its wrapper path " +
+                    $"'{relative}' contains whitespace, which a Dockerfile COPY instruction cannot " +
+                    "express. Move the wrapper to a path without spaces.");
+            }
+
+            return relative;
         }
 
         internal static (JavaBuildTool Tool, string[] Args) ResolveToolAndArgs(JavaAppResource resource, string appDirectory)

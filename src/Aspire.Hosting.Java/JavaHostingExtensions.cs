@@ -39,8 +39,10 @@ public static partial class JavaHostingExtensions
     // CommunityToolkit.Aspire.Hosting.Java so migrating users see the same thing.
     private const string JavaIconName = "DrinkCoffee";
 
-    internal static readonly string s_defaultMavenWrapper = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "mvnw.cmd" : "mvnw";
-    internal static readonly string s_defaultGradleWrapper = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "gradlew.bat" : "gradlew";
+    internal static readonly string s_defaultMavenWrapper =
+        JavaBuildToolResolver.GetDefaultWrapperName(JavaBuildTool.Maven, RuntimeInformation.IsOSPlatform(OSPlatform.Windows));
+    internal static readonly string s_defaultGradleWrapper =
+        JavaBuildToolResolver.GetDefaultWrapperName(JavaBuildTool.Gradle, RuntimeInformation.IsOSPlatform(OSPlatform.Windows));
 
     /// <summary>The directory Quarkus's default packaging writes under the build tool's output directory.</summary>
     internal const string QuarkusFastJarDirectory = "quarkus-app";
@@ -797,9 +799,9 @@ public static partial class JavaHostingExtensions
 
         // Re-point anything that already captured the default wrapper. Without this, calling
         // WithWrapperPath after WithMavenGoal was silently ignored.
-        if (builder.Resource.HasAnnotationOfType<JavaBuildToolAnnotation>())
+        if (builder.Resource.TryGetLastAnnotation<JavaBuildToolAnnotation>(out var buildTool))
         {
-            builder.WithCommand(WrapperInvocationFor(resolvedWrapperPath, builder.Resource.WorkingDirectory).Command);
+            builder.WithCommand(ResolveWrapperInvocation(builder.Resource, buildTool.Tool).Command);
         }
 
         foreach (var buildStep in builder.Resource.Annotations.OfType<JavaBuildStepAnnotation>())
@@ -816,7 +818,8 @@ public static partial class JavaHostingExtensions
 
             if (buildResource is not null)
             {
-                builder.ApplicationBuilder.CreateResourceBuilder(buildResource).WithCommand(WrapperInvocationFor(resolvedWrapperPath, builder.Resource.WorkingDirectory).Command);
+                builder.ApplicationBuilder.CreateResourceBuilder(buildResource)
+                    .WithCommand(ResolveWrapperInvocation(builder.Resource, buildStep.Tool).Command);
             }
         }
 
@@ -1170,7 +1173,9 @@ public static partial class JavaHostingExtensions
     /// </para>
     /// </remarks>
     private static (string Command, string[] LeadingArgs) ResolveWrapperInvocation(JavaAppResource resource, JavaBuildTool tool)
-        => WrapperInvocationFor(ResolveWrapperPath(resource, tool), resource.WorkingDirectory);
+        => WrapperInvocationFor(
+            JavaBuildToolResolver.ResolveWrapperPath(resource, tool, OperatingSystem.IsWindows()),
+            resource.WorkingDirectory);
 
     /// <inheritdoc cref="ResolveWrapperInvocation" />
     private static (string Command, string[] LeadingArgs) WrapperInvocationFor(string wrapperPath, string workingDirectory)
@@ -1190,23 +1195,6 @@ public static partial class JavaHostingExtensions
         return (Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe", ["/c", relativeWrapperPath]);
     }
 
-    private static string ResolveWrapperPath(JavaAppResource resource, JavaBuildTool tool)
-    {
-        if (resource.TryGetLastAnnotation<WrapperAnnotation>(out var wrapper))
-        {
-            return wrapper.WrapperPath;
-        }
-
-        var wrapperName = tool switch
-        {
-            JavaBuildTool.Maven => s_defaultMavenWrapper,
-            JavaBuildTool.Gradle => s_defaultGradleWrapper,
-            _ => throw new ArgumentOutOfRangeException(nameof(tool), tool, null)
-        };
-
-        return PathNormalizer.NormalizePathForCurrentPlatform(Path.Combine(resource.WorkingDirectory, wrapperName));
-    }
-
     /// <summary>
     /// Throws when the wrapper the resource will launch is not on disk.
     /// </summary>
@@ -1217,7 +1205,7 @@ public static partial class JavaHostingExtensions
     /// </remarks>
     private static void ValidateWrapperExists(JavaAppResource resource, JavaBuildTool tool)
     {
-        var wrapperPath = ResolveWrapperPath(resource, tool);
+        var wrapperPath = JavaBuildToolResolver.ResolveWrapperPath(resource, tool, OperatingSystem.IsWindows());
 
         if (File.Exists(wrapperPath))
         {
@@ -1232,12 +1220,7 @@ public static partial class JavaHostingExtensions
                 $"directory '{resource.WorkingDirectory}'.");
         }
 
-        var wrapperName = tool switch
-        {
-            JavaBuildTool.Maven => s_defaultMavenWrapper,
-            JavaBuildTool.Gradle => s_defaultGradleWrapper,
-            _ => throw new ArgumentOutOfRangeException(nameof(tool), tool, null)
-        };
+        var wrapperName = JavaBuildToolResolver.GetDefaultWrapperName(tool, OperatingSystem.IsWindows());
 
         throw new DistributedApplicationException(
             $"Java application '{resource.Name}' has no {wrapperName} in '{resource.WorkingDirectory}'. " +

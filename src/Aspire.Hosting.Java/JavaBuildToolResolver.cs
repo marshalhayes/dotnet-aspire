@@ -1,6 +1,9 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
+using Aspire.Hosting.ApplicationModel;
+using Aspire.Hosting.Utils;
+
 namespace Aspire.Hosting.Java;
 
 /// <summary>
@@ -42,4 +45,30 @@ internal static class JavaBuildToolResolver
             _ => null
         };
     }
+
+    /// <summary>
+    /// Resolves the wrapper selected for a resource on the requested execution platform.
+    /// </summary>
+    internal static string ResolveWrapperPath(JavaAppResource resource, JavaBuildTool tool, bool isWindows)
+    {
+        if (resource.TryGetLastAnnotation<WrapperAnnotation>(out var wrapper))
+        {
+            return wrapper.WrapperPath;
+        }
+
+        return PathNormalizer.NormalizePathForCurrentPlatform(
+            Path.Combine(resource.WorkingDirectory, GetDefaultWrapperName(tool, isWindows)));
+    }
+
+    /// <summary>
+    /// Returns the conventional wrapper name for a build tool on the requested execution platform.
+    /// </summary>
+    internal static string GetDefaultWrapperName(JavaBuildTool tool, bool isWindows) => (tool, isWindows) switch
+    {
+        (JavaBuildTool.Maven, true) => "mvnw.cmd",
+        (JavaBuildTool.Maven, false) => "mvnw",
+        (JavaBuildTool.Gradle, true) => "gradlew.bat",
+        (JavaBuildTool.Gradle, false) => "gradlew",
+        _ => throw new ArgumentOutOfRangeException(nameof(tool), tool, null)
+    };
 }
