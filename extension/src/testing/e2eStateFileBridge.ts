@@ -915,6 +915,7 @@ async function proveAppHostAndResourceDebugging(command: AppHostAndResourceDebug
   const resourceName = getE2eRequiredString(command.resourceName, 'Aspire extension E2E debug proof requires resourceName.');
   const appHostBreakpointLine = getE2eBreakpointLine(command.appHostBreakpointLine);
   const resourceBreakpointLine = getE2eBreakpointLine(command.resourceBreakpointLine);
+  const resourceRequestPath = command.resourceRequestPath ?? '/';
   const timeoutMs = getE2ePositiveInteger(command.timeoutMs, 300000, 'timeoutMs');
 
   const debugSessions: DebugSessionSnapshot[] = [];
@@ -1040,7 +1041,17 @@ async function proveAppHostAndResourceDebugging(command: AppHostAndResourceDebug
     }
     await appHostHit.session.customRequest('continue', { threadId: appHostHit.stoppedEvent.threadId });
 
-    const resourceHit = await waitForBreakpoint(resourceSourcePath, resourceBreakpointLine);
+    // A breakpoint inside a request handler only runs when a request arrives, and nothing else in the
+    // run issues one: the health check probes /actuator/health rather than the controller. Without
+    // driving the traffic here the wait below can only ever time out, which is what it did - the
+    // resource launched under the debugger and sat idle for the full 15 minutes.
+    const resourceHit = await withResourceTraffic(
+      appHostTreeProvider,
+      appHostPath,
+      resourceName,
+      resourceRequestPath,
+      Math.min(timeoutMs, 300000),
+      () => waitForBreakpoint(resourceSourcePath, resourceBreakpointLine));
     if (resourceHit.matchingFrame.line !== resourceBreakpointLine + 1) {
       throw new Error(`Expected resource breakpoint line ${resourceBreakpointLine + 1}, got ${resourceHit.matchingFrame.line}.`);
     }
@@ -1398,8 +1409,63 @@ async function runAspireCliForE2E(terminalProvider: AspireTerminalProvider, args
   });
 }
 
-async function waitForE2eValue<T>(description: string, timeoutMs: number, getValue: () => T | undefined | Promise<T | undefined>): Promise<T> {
-  const started = Date.now();
+/**
+ * Sends requests to a resource's HTTP endpoint for as long as <paramref name="waitForHit"/> runs.
+ *
+ * A breakpoint in a request handler is only reachable while a request is in flight, so a proof that
+ * merely waits for one is waiting on a line that nothing will execute. Aspire's own health check is
+ * not enough: it probes /actuator/health, which is Spring's endpoint rather than the application's.
+ *
+ * Requests are issued rather than awaited. The first one that reaches the handler parks on the
+ * breakpoint and never gets a response, so awaiting it would deadlock against the wait it is meant
+ * to satisfy; each attempt is abandoned after a short timeout and another is sent behind it.
+ */
+async function withResourceTraffic<T>(
+  appHostTreeProvider: AspireAppHostTreeProvider,
+  appHostPath: string,
+  resourceName: string,
+  requestPath: string,
+  endpointTimeoutMs: number,
+  waitForHit: () => Promise<T>
+): Promise<T> {
+  const baseUrl = await waitForE2eValue(
+    `an HTTP endpoint for resource '${resourceName}'`,
+    endpointTimeoutMs,
+    () => {
+      const element = appHostTreeProvider.findEndpointElement({ appHostPath, resourceName });
+      return element && hasEndpointUrl(element) ? element.url : undefined;
+    });
+
+  // A relative path resolves against the endpoint only when the base ends in '/'; without it the
+  // last segment of the endpoint would be replaced instead.
+  const requestUrl = new URL(requestPath.replace(/^\//, ''), baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`).toString();
+
+  let driving = true;
+  const driver = (async () => {
+    while (driving) {
+      try {
+        await fetch(requestUrl, { signal: AbortSignal.timeout(2000) });
+      }
+      catch {
+        // Connection refused until the server is listening, and aborted once a request parks on the
+        // breakpoint. Neither says anything about whether the breakpoint bound, so both are ignored
+        // and the wait below is left to decide.
+      }
+
+      await delay(500);
+    }
+  })();
+
+  try {
+    return await waitForHit();
+  }
+  finally {
+    driving = false;
+    await driver;
+  }
+}
+
+async function waitForE2eValue<T>(description: string, timeoutMs: number, getValue: () => T | undefined | Promise<T | undefined>): Promise<T> {  const started = Date.now();
   let lastError: string | undefined;
   while (Date.now() - started < timeoutMs) {
     try {

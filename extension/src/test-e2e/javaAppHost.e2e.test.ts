@@ -120,6 +120,9 @@ suite('Aspire Java AppHost E2E', function () {
             appHostBreakpointLine: findBreakpointLine(appHostSourcePath, 'builder.addSpringBootApp("catalog"'),
             resourceSourcePath,
             resourceBreakpointLine: findBreakpointLine(resourceSourcePath, 'return Products;'),
+            // The breakpoint sits in the /products handler, so that is the request the proof has to
+            // send for the line to run at all.
+            resourceRequestPath: '/products',
             timeoutMs: 900000,
         }, {
             // The command runs the whole AppHost, so the harness has to wait longer than the default
