@@ -533,13 +533,18 @@ suite('cliPathEnvironment.registerCliPathEnvironmentSync tests', () => {
 });
 
 suite('CliPathEnvironmentSynchronizer tests', () => {
-    const folderA = createWorkspaceFolder('a', '/repo/a', 0);
-    const folderB = createWorkspaceFolder('b', '/repo/b', 1);
+    // Workspace folder roots have to be fully qualified for the host platform. A driveless
+    // '/repo/a' becomes '\repo\a' on Windows, which is drive-relative rather than absolute, and
+    // isAbsoluteCliPath rejects an expanded ${workspaceFolder} candidate built from it -- so the
+    // resolver would fall through to PATH instead of probing the configured path these tests are about.
+    const folderAPath = path.resolve('/repo/a');
+    const folderBPath = path.resolve('/repo/b');
+    const folderA = createWorkspaceFolder('a', folderAPath, 0);
+    const folderB = createWorkspaceFolder('b', folderBPath, 1);
 
-    // `expandConfiguredCliPath` normalizes an expanded `${workspaceFolder}` token with the
-    // platform's path library, so these become `\repo\a\aspire` / `\repo\b\aspire` on Windows.
-    const folderACliPath = path.normalize('/repo/a/aspire');
-    const folderBCliPath = path.normalize('/repo/b/aspire');
+    // expandConfiguredCliPath normalizes the expanded token with the platform's path library.
+    const folderACliPath = path.join(folderAPath, 'aspire');
+    const folderBCliPath = path.join(folderBPath, 'aspire');
 
     test('applies independent AspireCliPath mutations and clears a removed folder', async () => {
         const workspaceFoldersEmitter = new vscode.EventEmitter<vscode.WorkspaceFoldersChangeEvent>();
