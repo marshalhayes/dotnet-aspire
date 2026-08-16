@@ -52,6 +52,14 @@ sourceSets {
             // exclude it from that root; the excludes are relative to each source root, which is why this
             // does not also exclude the SDK from its own root.
             exclude 'src/**', 'build/**', 'bin/**', '.gradle/**', '.aspire/**'
+
+            // Clearing the resources source set below stops Gradle copying this directory into build
+            // output, but it does not stop Eclipse, and so the Java language server. Eclipse copies every
+            // non-excluded file in a source folder to that folder's output directory, so rooting the java
+            // source set at '.' also lands gradlew, the wrapper, build.gradle and aspire.config.json in
+            // bin/main. Restricting the source folder to .java files is what makes Eclipse's own copy a
+            // no-op; the pattern changes nothing for Gradle, which only ever compiles .java from here.
+            include '**/*.java'
         }
 
         // Rooting the java source set at '.' also points the resources source set at '.', because the
