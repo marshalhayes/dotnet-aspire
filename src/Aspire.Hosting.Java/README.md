@@ -266,11 +266,16 @@ a source checkout would publish a locally built and possibly stale artifact when
 have one, and fail the image build outright in a clean clone or on CI where it does not exist yet.
 
 The deployed JAR is selected in this order: an explicit `WithJarArtifact(...)`; for a Quarkus application
-the whole `target/quarkus-app` directory, whose fast-jar layout needs more than the runner; the JAR path
-given to `AddJavaApp`, when there was one; and otherwise whichever JAR the build produced, ignoring
-`-plain`, `-sources`, and `-javadoc` artifacts. Only that last case can be ambiguous — a shade plugin
-leaves `original-*.jar` beside the shaded JAR — and then the build fails naming the candidates, so select
-one with `WithJarArtifact(...)`.
+whichever artifact `quarkus-artifact.properties` names, together with the dependency directory it needs;
+the JAR path given to `AddJavaApp`, when there was one; and otherwise whichever JAR the build produced,
+ignoring `-plain`, `-sources`, and `-javadoc` artifacts. Only that last case can be ambiguous — a shade
+plugin leaves `original-*.jar` beside the shaded JAR — and then the build fails naming the candidates, so
+select one with `WithJarArtifact(...)`.
+
+All three Quarkus packaging types are handled without configuration: `fast-jar` (the default) stages the
+whole `target/quarkus-app` directory, `legacy-jar` stages the runner alongside its sibling `target/lib`,
+and `uber-jar` stages the single self-contained runner. The first two are useless without the
+dependencies beside them, because the runner's manifest `Class-Path` names them relatively.
 
 #### Base images
 

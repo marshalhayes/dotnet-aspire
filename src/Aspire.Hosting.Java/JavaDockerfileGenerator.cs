@@ -1208,10 +1208,20 @@ internal static partial class JavaDockerfileGenerator
         /// <remarks>
         /// Quarkus's default "fast JAR" packaging writes <c>quarkus-app/</c>, whose <c>quarkus-run.jar</c> is
         /// unusable without the <c>lib</c>, <c>app</c>, and <c>quarkus</c> directories beside it — its manifest
-        /// <c>Class-Path</c> names them relatively. An application configured for <c>uber-jar</c> instead leaves a
-        /// single self-contained <c>*-runner.jar</c> and no such directory. The packaging type is chosen in
-        /// application configuration, which is not something the AppHost can read, so the choice is made in the
-        /// build stage where the output already exists and both cases are normalised to the same shape.
+        /// <c>Class-Path</c> names them relatively. <c>legacy-jar</c> writes a <c>*-runner.jar</c> at the top of
+        /// the output directory whose <c>Class-Path</c> names a sibling <c>lib/</c>, and <c>uber-jar</c> writes a
+        /// single self-contained <c>*-runner.jar</c> with no dependency directory at all. The packaging type is
+        /// chosen in application configuration, which is not something the AppHost can read, so the choice is
+        /// made in the build stage where the output already exists and all three are normalised to the same
+        /// shape: a directory holding <c>quarkus-run.jar</c> and whatever it needs beside it.
+        /// <para>
+        /// Which file to run is read from <c>quarkus-artifact.properties</c>, which every packaging type writes
+        /// next to its output and which names the runnable artifact relative to the output directory
+        /// (<c>path=quarkus-app/quarkus-run.jar</c> or <c>path=app-runner.jar</c>). Globbing cannot substitute
+        /// for it: <c>legacy-jar</c> leaves the base plugin's thin JAR beside the runner, so two files match and
+        /// neither carries a suffix that distinguishes them. The glob fallback is kept only for a Quarkus old
+        /// enough not to write the file.
+        /// </para>
         /// See https://quarkus.io/guides/maven-tooling#quarkus-package-jar_quarkus.package.jar.type.
         /// </remarks>
         private static string SelectQuarkusArtifactCommand(string outputDirectory, string outputGlob, string resourceName)
@@ -1224,9 +1234,21 @@ internal static partial class JavaDockerfileGenerator
 
             // "cp -r <dir>/." rather than "cp -r <dir>" so the contents land directly in the destination
             // whether or not it already exists, which "cp -r" alone does not guarantee.
-            return $"mkdir -p {ContainerArtifactDirectory} && "
-                + $"if [ -d {fastJarDirectory} ]; then cp -r {fastJarDirectory}/. {ContainerArtifactDirectory}/; "
+            var withoutMetadata = $"if [ -d {fastJarDirectory} ]; then cp -r {fastJarDirectory}/. {ContainerArtifactDirectory}/; "
                 + $"else {uberJarFallback}; fi";
+
+            // A path with a directory component is a layout whose runner needs everything beside it, so the
+            // whole directory is staged. A bare file name is a runner at the top of the output directory,
+            // which is self-contained under uber-jar and needs the sibling lib/ under legacy-jar.
+            return string.Join(" && ",
+                $"mkdir -p {ContainerArtifactDirectory}",
+                $"quarkus_artifact=$(sed -n 's/^path=//p' {outputDirectory}/quarkus-artifact.properties 2>/dev/null | head -1)",
+                "case \"$quarkus_artifact\" in "
+                    + $"'') {withoutMetadata} ;; "
+                    + $"*/*) cp -r \"{outputDirectory}/${{quarkus_artifact%/*}}/.\" {ContainerArtifactDirectory}/ ;; "
+                    + $"*) cp \"{outputDirectory}/$quarkus_artifact\" {ContainerArtifactDirectory}/{JavaHostingExtensions.QuarkusRunJarName} && "
+                    + $"if [ -d {outputDirectory}/lib ]; then cp -r {outputDirectory}/lib {ContainerArtifactDirectory}/lib; fi ;; "
+                    + "esac");
         }
 
         /// <summary>

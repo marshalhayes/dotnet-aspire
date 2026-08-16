@@ -1389,6 +1389,120 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
     }
 
     [Fact]
+    public async Task VerifyPublish_Quarkus_StagesTheDependencyDirectoryForLegacyJarPackaging()
+    {
+        var content = await PublishQuarkusDockerfileAsync(source => WritePom(source, javaVersion: "21"));
+
+        // legacy-jar leaves the runner beside target/lib rather than inside quarkus-app, and the runner's
+        // manifest names those dependencies as "lib/..." relative to itself, so the directory has to travel
+        // with it. Staging the runner alone produces an image that dies on startup with
+        // "NoClassDefFoundError: io/quarkus/runtime/Quarkus".
+        Assert.Contains(
+            "if [ -d target/lib ]; then cp -r target/lib /build/app/lib; fi",
+            content,
+            StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("fast-jar")]
+    [InlineData("legacy-jar")]
+    [InlineData("uber-jar")]
+    [InlineData("fast-jar-without-metadata")]
+    public async Task VerifyPublish_Quarkus_StagesEveryPackagingTypeSoTheRunnerCanResolveItsDependencies(string packagingType)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Skip("The staging command is POSIX shell that only ever runs inside the Linux build stage.");
+        }
+
+        var content = await PublishQuarkusDockerfileAsync(source => WritePom(source, javaVersion: "21"));
+
+        // The staging command is appended last to the build stage's RUN, so it runs from the marker to the
+        // end of that line. Exercising the emitted shell verbatim is the only way to catch a packaging
+        // layout it mishandles; asserting on the string only proves the string.
+        var start = content.IndexOf($"mkdir -p {StagedArtifactDirectory} &&", StringComparison.Ordinal);
+        Assert.NotEqual(-1, start);
+        var end = content.IndexOf('\n', start);
+        var stagingCommand = content[start..(end < 0 ? content.Length : end)];
+
+        using var workspace = new TempJavaAppDirectory(withWrappers: false);
+        var stagingDirectory = Path.Combine(workspace.Path, "staged");
+
+        // These layouts are what the three packaging types actually write, taken from clean builds of the
+        // JavaQuarkus playground rather than from the documentation.
+        switch (packagingType)
+        {
+            case "fast-jar":
+                workspace.Write("target/quarkus-app/quarkus-run.jar", "runner");
+                workspace.Write("target/quarkus-app/lib/dependency.jar", "dependency");
+                // The thin JAR the base plugin wrote stays in the output directory in every packaging type,
+                // which is why the runner cannot be picked by globbing for a single JAR.
+                workspace.Write("target/inventory-1.0.0-SNAPSHOT.jar", "thin");
+                workspace.Write("target/quarkus-artifact.properties", "type=jar\npath=quarkus-app/quarkus-run.jar\n");
+                break;
+            case "legacy-jar":
+                workspace.Write("target/inventory-1.0.0-SNAPSHOT-runner.jar", "runner");
+                workspace.Write("target/lib/dependency.jar", "dependency");
+                workspace.Write("target/inventory-1.0.0-SNAPSHOT.jar", "thin");
+                workspace.Write("target/quarkus-artifact.properties", "type=jar\npath=inventory-1.0.0-SNAPSHOT-runner.jar\n");
+                break;
+            case "uber-jar":
+                workspace.Write("target/inventory-1.0.0-SNAPSHOT-runner.jar", "runner");
+                workspace.Write("target/quarkus-artifact.properties", "type=jar\npath=inventory-1.0.0-SNAPSHOT-runner.jar\n");
+                break;
+            case "fast-jar-without-metadata":
+                // A Quarkus old enough not to write the metadata file still has to publish, which is what
+                // the directory probe behind the empty case is for.
+                workspace.Write("target/quarkus-app/quarkus-run.jar", "runner");
+                workspace.Write("target/quarkus-app/lib/dependency.jar", "dependency");
+                workspace.Write("target/inventory-1.0.0-SNAPSHOT.jar", "thin");
+                break;
+        }
+
+        var (exitCode, _, stderr) = await RunShellAsync(
+            stagingCommand.Replace(StagedArtifactDirectory, stagingDirectory, StringComparison.Ordinal),
+            workspace.Path);
+
+        Assert.True(exitCode == 0, $"Staging {packagingType} failed with exit code {exitCode}: {stderr}");
+
+        // Every packaging type has to normalise to the same shape, because the runtime stage copies one
+        // directory and runs one well-known file name out of it.
+        Assert.Equal("runner", File.ReadAllText(Path.Combine(stagingDirectory, "quarkus-run.jar")));
+
+        var expectedDependency = Path.Combine(stagingDirectory, "lib", "dependency.jar");
+        if (packagingType is "uber-jar")
+        {
+            Assert.False(Directory.Exists(Path.Combine(stagingDirectory, "lib")));
+        }
+        else
+        {
+            Assert.Equal("dependency", File.ReadAllText(expectedDependency));
+        }
+    }
+
+    private const string StagedArtifactDirectory = "/build/app";
+
+    private static async Task<(int ExitCode, string StandardOutput, string StandardError)> RunShellAsync(string command, string workingDirectory)
+    {
+        using var process = Process.Start(new ProcessStartInfo("/bin/sh")
+        {
+            ArgumentList = { "-c", command },
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        });
+
+        Assert.NotNull(process);
+
+        // Both streams are read concurrently so a full pipe buffer cannot deadlock the staging output.
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+
+        return (process.ExitCode, await stdoutTask, await stderrTask);
+    }
+
+    [Fact]
     public async Task VerifyPublish_Quarkus_WithJarArtifact_StagesThatFileInstead()
     {
         // Naming a single artifact is how an application that does not use the fast JAR layout at all opts
