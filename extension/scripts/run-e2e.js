@@ -904,21 +904,48 @@ function installJavaExtensions() {  if (!enableJavaE2E) {
   // These are installed as already-unpacked directories rather than VSIXes. VS Code treats every
   // immediate subdirectory of --extensions-dir that has a package.json as an installed extension, so
   // copying is equivalent to `install-vsix` and avoids a marketplace download in a run that is
-  // otherwise offline. ASPIRE_EXTENSION_E2E_JAVA_EXTENSIONS_DIR points at the directory holding
-  // them; it defaults to the running user's VS Code extensions directory.
-  const sourceRoot = path.resolve(process.env.ASPIRE_EXTENSION_E2E_JAVA_EXTENSIONS_DIR
-    || path.join(os.homedir(), '.vscode', 'extensions'));
-  if (!fs.existsSync(sourceRoot)) {
-    throw new Error(`ASPIRE_EXTENSION_E2E_ENABLE_JAVA=true requires an extensions directory to copy from. Not found: ${sourceRoot}`);
-  }
+  // otherwise offline. ASPIRE_EXTENSION_E2E_JAVA_EXTENSIONS_DIR names the directory holding them.
+  //
+  // Without that variable both the stable and Insiders extension directories are searched, and the
+  // first one holding every required extension wins. A developer with the Extension Pack for Java in
+  // Insiders only would otherwise be told the extensions are missing while they are plainly
+  // installed, which is a confusing way to fail a run that has already spent minutes downloading.
+  const configuredRoot = process.env.ASPIRE_EXTENSION_E2E_JAVA_EXTENSIONS_DIR;
+  const candidateRoots = configuredRoot
+    ? [path.resolve(configuredRoot)]
+    : [path.join(os.homedir(), '.vscode', 'extensions'), path.join(os.homedir(), '.vscode-insiders', 'extensions')];
 
   // redhat.java supplies the language server, which is what produces workspace diagnostics.
   // vscjava.vscode-java-debug supplies the `java` debug adapter the Aspire debugger delegates to.
   // vscjava.vscode-java-dependency is a hard activation dependency of the debug extension.
   const requiredPublisherAndName = ['redhat.java', 'vscjava.vscode-java-debug', 'vscjava.vscode-java-dependency'];
-  const available = fs.readdirSync(sourceRoot, { withFileTypes: true })
-    .filter(entry => entry.isDirectory())
-    .map(entry => entry.name);
+
+  const searched = [];
+  let sourceRoot;
+  let available = [];
+  for (const candidateRoot of candidateRoots) {
+    if (!fs.existsSync(candidateRoot)) {
+      searched.push(`${candidateRoot} (not found)`);
+      continue;
+    }
+
+    const entries = fs.readdirSync(candidateRoot, { withFileTypes: true })
+      .filter(entry => entry.isDirectory())
+      .map(entry => entry.name);
+    // Directory names carry a version, and platform-specific builds add a target triple, so match
+    // on the `<publisher>.<name>-` prefix rather than an exact name.
+    if (requiredPublisherAndName.every(identifier => entries.some(name => name.startsWith(`${identifier}-`)))) {
+      sourceRoot = candidateRoot;
+      available = entries;
+      break;
+    }
+
+    searched.push(`${candidateRoot} (missing ${requiredPublisherAndName.filter(identifier => !entries.some(name => name.startsWith(`${identifier}-`))).join(', ')})`);
+  }
+
+  if (!sourceRoot) {
+    throw new Error(`ASPIRE_EXTENSION_E2E_ENABLE_JAVA=true requires ${requiredPublisherAndName.join(', ')} to be installed. Searched: ${searched.join('; ')}. Install the Extension Pack for Java, or set ASPIRE_EXTENSION_E2E_JAVA_EXTENSIONS_DIR to a directory that has them.`);
+  }
 
   for (const identifier of requiredPublisherAndName) {
     // Directory names carry a version, and platform-specific builds add a target triple, so match
@@ -1982,7 +2009,7 @@ function cleanupTemporaryRunRoot() {
   // The Java workspace lives inside the repository and is deliberately not gitignored, so leaving it
   // behind would show up as untracked changes and could be committed by accident.
   if (enableJavaE2E && workspaceRoot === javaScratchWorkspaceRoot) {
-    fs.rmSync(javaScratchWorkspaceRoot, { recursive: true, force: true });
+    removePathWithoutFollowingLinks(javaScratchWorkspaceRoot, { recursive: true, force: true });
   }
 
   // The storage directory under this root holds the projected VS Code and ChromeDriver artifacts,
