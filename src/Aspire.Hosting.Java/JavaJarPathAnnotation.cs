@@ -13,7 +13,7 @@ namespace Aspire.Hosting.Java;
 /// debug all read one source of truth, and so the launch mode cannot be changed after the resource has
 /// been configured.
 /// </remarks>
-/// <param name="JarPath">The path to the JAR file to execute, either absolute or relative to the application's working directory. Separators are normalized for the current platform.</param>
+/// <param name="JarPath">The authored path to the JAR file to execute, either absolute or relative to the application's working directory.</param>
 internal sealed record JavaJarPathAnnotation(string JarPath) : IResourceAnnotation;
 
 /// <summary>

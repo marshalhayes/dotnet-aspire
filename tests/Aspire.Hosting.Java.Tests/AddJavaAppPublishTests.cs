@@ -275,6 +275,7 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
     [Theory]
     [InlineData("../shared/app.jar")]
     [InlineData("target/../../app.jar")]
+    [InlineData(@"..\..\app.jar")]
     [InlineData("/opt/build/app.jar")]
     public void PublishingAJarPathThatEscapesTheBuildDirectoryIsRejectedRatherThanGlobbed(string jarPath)
     {
@@ -1380,20 +1381,22 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
         Assert.Contains("FROM docker.io/library/eclipse-temurin:8-jre", content, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void VerifyPublish_RejectsAJarPathContainingWhitespace()
+    [Theory]
+    [InlineData("target/my app.jar")]
+    [InlineData(@"target\my app.jar")]
+    public void VerifyPublish_RejectsAJarPathContainingWhitespace(string jarPath)
     {
         using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish);
         using var tempDir = new TempJavaAppDirectory();
 
-        var app = builder.AddJavaApp("api", tempDir.Path, "target/my app.jar");
+        var app = builder.AddJavaApp("api", tempDir.Path, jarPath);
 
         // The Dockerfile builder emits the shell form of COPY, which splits on whitespace, so this would
         // become three arguments and copy two paths that do not exist.
         var exception = Assert.Throws<DistributedApplicationException>(
             () => JavaDockerfileGenerator.TryGetPrebuiltJarPath(app.Resource, tempDir.Path, out _));
 
-        Assert.Contains("target/my app.jar", exception.Message, StringComparison.Ordinal);
+        Assert.Contains(jarPath, exception.Message, StringComparison.Ordinal);
         Assert.Contains("contains whitespace", exception.Message, StringComparison.Ordinal);
     }
 
@@ -1698,10 +1701,9 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
         var exception = Assert.Throws<DistributedApplicationException>(
             () => JavaDockerfileGenerator.TryGetBuildOutputJarPath(app.Resource, out _));
 
-        // The stored path is normalized for the host, so the message carries the separators the author
-        // will recognize rather than the exact literal they typed.
+        // Keep the authored spelling in diagnostics even when the path uses separators from another host.
+        Assert.Contains(jarPath, exception.Message, StringComparison.Ordinal);
         Assert.Contains("outside the directory the build runs in", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("app.jar", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]

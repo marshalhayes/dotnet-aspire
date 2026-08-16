@@ -1098,7 +1098,7 @@ public static partial class JavaHostingExtensions
         if (resource.TryGetLastAnnotation<JavaJarPathAnnotation>(out var jar))
         {
             ctx.Args.Add("-jar");
-            ctx.Args.Add(NormalizePathForJava(jar.JarPath));
+            ctx.Args.Add(NormalizeJarPathForJava(jar.JarPath));
 
             return;
         }
@@ -1112,7 +1112,7 @@ public static partial class JavaHostingExtensions
             "overload that takes a jarPath to run a prebuilt JAR.");
     }
 
-    private static string NormalizePathForJava(string path)
+    private static string NormalizeJarPathForJava(string path)
     {
         // Java accepts '/' on Windows, so one target-neutral form preserves authored forward slashes
         // while also making a Windows-authored relative path usable on Linux and macOS.
@@ -1499,7 +1499,7 @@ public static partial class JavaHostingExtensions
         // Resolved to an absolute path because the adapter reads the archive before the debuggee's
         // working directory exists. Normalize first because a Windows-authored relative path otherwise
         // names a literal backslash-containing file when the AppHost runs on Linux or macOS.
-        var jarPath = Path.GetFullPath(Path.Combine(resource.WorkingDirectory, NormalizePathForJava(jar.JarPath)));
+        var jarPath = Path.GetFullPath(Path.Combine(resource.WorkingDirectory, NormalizeJarPathForJava(jar.JarPath)));
 
         return (explicitMainClass ?? TryReadJarManifestMainClass(jarPath), [jarPath]);
     }

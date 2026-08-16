@@ -1027,12 +1027,14 @@ public class AddJavaAppTests
 
     // ---- JAR path -----------------------------------------------------------
 
-    [Fact]
-    public async Task AddJavaApp_WithJarPath_LaunchesTheJar()
+    [Theory]
+    [InlineData("target/app.jar")]
+    [InlineData(@"target\app.jar")]
+    public async Task AddJavaApp_WithJarPath_LaunchesTheJar(string jarPath)
     {
         using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
 
-        var app = builder.AddJavaApp("api", AppContext.BaseDirectory, "target/app.jar");
+        var app = builder.AddJavaApp("api", AppContext.BaseDirectory, jarPath);
 
         var args = await ArgumentEvaluator.GetArgumentListAsync(app.Resource);
 
@@ -1262,6 +1264,21 @@ public class AddJavaAppTests
         Assert.Equal("com.example.catalog.CatalogApplication", launchConfiguration.MainClass);
         Assert.Equal(jarPath, Assert.Single(launchConfiguration.ClassPaths!));
         Assert.Null(launchConfiguration.BuildTool);
+    }
+
+    [Fact]
+    public async Task AddJavaApp_WithWindowsStyleJarPath_DebugsTheArchiveOnEveryPlatform()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Run);
+        using var tempDir = new TempJavaAppDirectory();
+        var jarPath = WriteJarWithManifest(tempDir.Path, "target/api.jar", "com.example.catalog.CatalogApplication");
+
+        var app = builder.AddJavaApp("api", tempDir.Path, @"target\api.jar");
+
+        var launchConfiguration = await GetLaunchConfigurationAsync(app);
+
+        Assert.Equal("com.example.catalog.CatalogApplication", launchConfiguration.MainClass);
+        Assert.Equal(jarPath, Assert.Single(launchConfiguration.ClassPaths!));
     }
 
     [Fact]
