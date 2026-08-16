@@ -102,6 +102,7 @@ function extensionToLanguageId(ext: string): string | undefined {
         case '.cjs':
         case '.js': return 'javascript';
         case '.rs': return 'rust';
+        case '.java': return 'java';
         default: return undefined;
     }
 }

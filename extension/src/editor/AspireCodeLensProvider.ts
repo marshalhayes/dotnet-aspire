@@ -3,6 +3,7 @@ import { AppHostResourceParser, getParserForDocument } from './parsers/AppHostRe
 import { filterActiveOffsetsInPlainText } from './parsers/plainTextInactiveOffsets';
 // Import parsers to trigger self-registration
 import './parsers/csharpAppHostParser';
+import './parsers/javaAppHostParser';
 import './parsers/jsTsAppHostParser';
 import './parsers/rustAppHostParser';
 import { AspireAppHostTreeProvider } from '../views/AspireAppHostTreeProvider';
