@@ -10,6 +10,9 @@ import * as io from '../utils/io';
 import { createDebugSessionConfiguration, ResourceDebuggerExtension } from '../debugger/debuggerExtensions';
 import { AppHostParentOutputFilter, AspireDebugSession } from '../debugger/AspireDebugSession';
 import * as hotReload from '../debugger/hotReload';
+import * as cliPathModule from '../utils/cliPath';
+import * as cliPathEnvironmentModule from '../utils/cliPathEnvironment';
+import { workspaceFolderCliPathTarget } from '../utils/cliPathVariables';
 
 class TestDotNetService {
     private _getDotNetTargetPathStub: sinon.SinonStub;
@@ -426,6 +429,55 @@ suite('Dotnet Debugger Extension Tests', () => {
 
         assert.strictEqual(execFileStub.firstCall.args[2]?.cwd, projectDirectory);
         assert.strictEqual(spawnStub.firstCall.args[2]?.cwd, projectDirectory);
+    });
+
+    test('project-scoped dotnet commands resolve the CLI using the target derived from the project path and forward only that resolved CLI', async () => {
+        const projectPath = nodePath.join(process.cwd(), '.test-temp', `dotnet-cli-target-${process.pid}-${Date.now()}`, 'TestProject.csproj');
+        const outputPath = nodePath.join(nodePath.dirname(projectPath), 'bin', 'Debug', 'net10.0', 'TestProject.dll');
+        const projectDirectory = nodePath.dirname(projectPath);
+        const buildProcess = Object.assign(new EventEmitter(), {
+            stdout: new EventEmitter(),
+            stderr: new EventEmitter()
+        });
+
+        const execFileStub = sinon.stub(childProcess, 'execFile').yields(null, { stdout: outputPath, stderr: '' });
+        const spawnStub = sinon.stub(childProcess, 'spawn').callsFake(() => {
+            setImmediate(() => buildProcess.emit('close', 0));
+            return buildProcess as unknown as childProcess.ChildProcessWithoutNullStreams;
+        });
+        const folder = { name: 'workspace', index: 0, uri: vscode.Uri.file(projectDirectory) } as vscode.WorkspaceFolder;
+        sinon.stub(vscode.workspace, 'getWorkspaceFolder').callsFake((uri: vscode.Uri) =>
+            uri.fsPath === projectDirectory ? folder : undefined);
+        const resolveCliPathStub = sinon.stub(cliPathModule, 'resolveCliPath').resolves({ cliPath: '/resolved/aspire', available: true, source: 'configured' });
+        const resolvedEnv = { MARKER: 'resolved-env' } as unknown as NodeJS.ProcessEnv;
+        const createResolvedEnvStub = sinon.stub(cliPathEnvironmentModule, 'createResolvedAspireCliPathProcessEnvironment').returns(resolvedEnv);
+
+        const launchConfig: ProjectLaunchConfiguration = {
+            type: 'project',
+            project_path: projectPath
+        };
+
+        const debugConfig: AspireResourceExtendedDebugConfiguration = {
+            runId: '1',
+            debugSessionId: '1',
+            type: 'coreclr',
+            name: 'Test Debug Config',
+            request: 'launch'
+        };
+
+        const fakeAspireDebugSession = sinon.createStubInstance(AspireDebugSession);
+
+        await projectDebuggerExtension.createDebugSessionConfigurationCallback!(
+            launchConfig,
+            [],
+            [],
+            { debug: true, runId: '1', debugSessionId: '1', isApphost: false, debugSession: fakeAspireDebugSession },
+            debugConfig);
+
+        assert.ok(resolveCliPathStub.calledWith(workspaceFolderCliPathTarget(folder)));
+        assert.ok(createResolvedEnvStub.calledWith('/resolved/aspire'));
+        assert.strictEqual(execFileStub.firstCall.args[2]?.env, resolvedEnv);
+        assert.strictEqual(spawnStub.firstCall.args[2]?.env, resolvedEnv);
     });
 
     test('project is not built when C# dev kit is installed and executable found', async () => {

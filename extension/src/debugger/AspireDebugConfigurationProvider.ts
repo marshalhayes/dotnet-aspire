@@ -5,6 +5,7 @@ import { AppHostDiscoveryService, getDebugTargetForCandidate, isSamePath } from 
 import type { CandidateAppHostDisplayInfo } from '../utils/appHostDiscovery';
 import { compareAppHostIdentity } from '../utils/appHostIdentity';
 import { checkCliAvailableOrRedirect } from '../utils/workspace';
+import { windowCliPathTarget, workspaceFolderCliPathTarget } from '../utils/cliPathVariables';
 import { extensionLogOutputChannel } from '../utils/logging';
 import { appHostLaunchReservationIdConfigKey, appHostSelectionOriginConfigKey, appHostTelemetryTargetPathConfigKey } from './AspireDebugConfigurationMetadata';
 import { getAspireDebugConfigurationCommand } from '../services/AppHostLaunchService';
@@ -62,7 +63,8 @@ export class AspireDebugConfigurationProvider implements vscode.DebugConfigurati
         const aspireConfig = config as AspireExtendedDebugConfiguration;
         this.ensureAppHostSelectionOrigin(aspireConfig);
         if (!aspireConfig.skipCliAvailabilityCheck) {
-            const result = await checkCliAvailableOrRedirect('debug_gate');
+            const target = folder ? workspaceFolderCliPathTarget(folder) : windowCliPathTarget;
+            const result = await checkCliAvailableOrRedirect('debug_gate', target);
             if (!result.available) {
                 return undefined; // Cancel the debug session
             }

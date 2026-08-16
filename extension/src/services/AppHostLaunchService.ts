@@ -5,6 +5,7 @@ import { compareAppHostIdentity, getAppHostIdentityKeyInfo, isAppHostPathWithinD
 import { classifyError, isCommandCancellation, sendTelemetryEvent, type EventProperties } from '../utils/telemetry';
 import { extensionLogOutputChannel } from '../utils/logging';
 import { checkCliAvailableOrRedirect } from '../utils/workspace';
+import { getCliPathTargetForUri } from '../utils/cliPathVariables';
 import { appHostLaunchReservationIdConfigKey, appHostLaunchTokenConfigKey, appHostRestartSourceSessionIdConfigKey, appHostSelectionOriginConfigKey, appHostTelemetryTargetPathConfigKey, type AppHostSelectionOrigin } from '../debugger/AspireDebugConfigurationMetadata';
 import { markAspireDebugConfigurationAsExtensionOwned } from '../debugger/AspireDebugConfigurationProviderInternal';
 import { AppHostLifecycleLockTimeoutError, AppHostStopCancellationError, AppHostStopError, appHostLifecycleLockMaxHoldMs, appHostLifecycleLockWaitTimeoutMs, type AppHostDebugSessionTerminatedEvent, type AppHostEditorSessions, type AppHostLaunchRequestedEvent, type AppHostLaunchSession, type AppHostStopResult, type RunningAppHost } from './appHostLaunchContracts';
@@ -670,7 +671,7 @@ export class AppHostLaunchService implements vscode.Disposable {
         }
 
         try {
-            const cliAvailability = await checkCliAvailableOrRedirect('debug_gate');
+            const cliAvailability = await checkCliAvailableOrRedirect('debug_gate', getCliPathTargetForUri(vscode.Uri.file(appHostPath)));
             if (!cliAvailability.available) {
                 throw new vscode.CancellationError();
             }

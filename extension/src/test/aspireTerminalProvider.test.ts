@@ -6,6 +6,8 @@ import * as os from 'os';
 import * as path from 'path';
 import { AspireTerminalProvider, quoteShellArg, shellArg } from '../utils/AspireTerminalProvider';
 import * as cliPathModule from '../utils/cliPath';
+import { windowCliPathTarget, workspaceFolderCliPathTarget } from '../utils/cliPathVariables';
+import { createWorkspaceFolder } from './testHelpers';
 import { EnvironmentVariables } from '../utils/environment';
 import { extensionLogOutputChannel } from '../utils/logging';
 import { terminalCommandArgumentControlCharacters, terminalCommandUnsafeLiteral } from '../loc/strings';
@@ -60,6 +62,23 @@ suite('AspireTerminalProvider tests', () => {
 
             const result = await terminalProvider.getAspireCliExecutablePath();
             assert.strictEqual(result, 'C:\\Program Files\\Aspire\\aspire.exe');
+        });
+
+        test('forwards the workspace folder target to resolveCliPath', async () => {
+            const folder = createWorkspaceFolder('a', '/repo/a');
+            resolveCliPathStub.resolves({ cliPath: '/repo/a/bin/aspire', available: true, source: 'configured' });
+
+            await terminalProvider.getAspireCliExecutablePath(workspaceFolderCliPathTarget(folder));
+
+            assert.ok(resolveCliPathStub.calledOnceWith(workspaceFolderCliPathTarget(folder)));
+        });
+
+        test('defaults to the window target when no target is supplied', async () => {
+            resolveCliPathStub.resolves({ cliPath: 'aspire', available: true, source: 'path' });
+
+            await terminalProvider.getAspireCliExecutablePath();
+
+            assert.ok(resolveCliPathStub.calledOnceWith(windowCliPathTarget));
         });
     });
 

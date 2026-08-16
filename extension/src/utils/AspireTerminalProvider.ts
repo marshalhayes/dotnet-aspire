@@ -8,6 +8,7 @@ import { getRunSessionInfo, getSupportedCapabilities } from '../capabilities';
 import { EnvironmentVariables, getEnvironmentWithoutE2EBridgeVariables } from './environment';
 import { resolveCliPath } from './cliPath';
 import { ASPIRE_CLI_PATH_ENV_VAR, getForwardableAspireCliPath, getForwardableResolvedAspireCliPath } from './cliPathEnvironment';
+import { CliPathResolutionTarget, windowCliPathTarget } from './cliPathVariables';
 import path from 'path';
 import { assertNoTerminalControlCharacters } from './cmdShim';
 
@@ -455,8 +456,8 @@ export class AspireTerminalProvider implements vscode.Disposable {
     }
 
 
-    async getAspireCliExecutablePath(): Promise<string> {
-        const result = await resolveCliPath();
+    async getAspireCliExecutablePath(target: CliPathResolutionTarget = windowCliPathTarget): Promise<string> {
+        const result = await resolveCliPath(target);
         return result.cliPath;
     }
 

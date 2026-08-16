@@ -11,6 +11,7 @@ import { appHostLifecycleBusy } from '../loc/strings';
 import { AppHostLaunchService, AppHostLifecycleLockTimeoutError, AppHostStopCancellationError, appHostLifecycleLockMaxHoldMs, appHostLifecycleLockWaitTimeoutMs, externalLaunchReservationTimeoutMs, type AppHostLaunchSession } from '../services/AppHostLaunchService';
 import { getAppHostIdentityKey } from '../utils/appHostIdentity';
 import * as cliPathModule from '../utils/cliPath';
+import { windowCliPathTarget, workspaceFolderCliPathTarget } from '../utils/cliPathVariables';
 import { __resetCommonPropertiesForTests, __setReporterForTests } from '../utils/telemetry';
 
 interface RecordedEvent {
@@ -161,6 +162,33 @@ suite('AppHostLaunchService', () => {
         }
         finally {
             showErrorMessageStub.restore();
+        }
+    });
+
+    test('CLI availability probe resolves the target from the AppHost path workspace folder', async () => {
+        const folder = { name: 'a', index: 0, uri: vscode.Uri.file('/repo') } as vscode.WorkspaceFolder;
+        const getWorkspaceFolderStub = sinon.stub(vscode.workspace, 'getWorkspaceFolder').returns(folder);
+
+        try {
+            await service.launch('/repo/AppHost.csproj', 'run', true);
+
+            assert.ok(resolveCliPathStub.calledOnceWith(workspaceFolderCliPathTarget(folder)));
+        }
+        finally {
+            getWorkspaceFolderStub.restore();
+        }
+    });
+
+    test('CLI availability probe falls back to the window target when no folder owns the AppHost path', async () => {
+        const getWorkspaceFolderStub = sinon.stub(vscode.workspace, 'getWorkspaceFolder').returns(undefined);
+
+        try {
+            await service.launch('/outside/AppHost.csproj', 'run', true);
+
+            assert.ok(resolveCliPathStub.calledOnceWith(windowCliPathTarget));
+        }
+        finally {
+            getWorkspaceFolderStub.restore();
         }
     });
 

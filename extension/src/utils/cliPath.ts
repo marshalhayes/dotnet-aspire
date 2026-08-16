@@ -692,13 +692,23 @@ export const onDidChangeConfiguredCliPathRejection = legacyConfiguredCliPathReje
 export const onDidChangeResolvedCliPathForForwarding = legacyResolvedCliPathForForwardingEmitter.event;
 
 /**
- * Resolves the Aspire CLI path for the window scope using the shared `cliPathResolver`.
+ * Resolves the Aspire CLI path for the given resolution target using the shared
+ * `cliPathResolver`.
  *
  * The single-argument `deps` overload is a temporary test seam preserved for existing
- * callers; it resolves against `windowCliPathTarget` with the supplied dependencies.
+ * callers; it resolves against `windowCliPathTarget` with the supplied dependencies. The two
+ * shapes are discriminated by the `kind` property, which only a `CliPathResolutionTarget` has.
  */
-export function resolveCliPath(deps?: CliPathDependencies): Promise<CliPathResolutionResult> {
-    return cliPathResolver.resolve(windowCliPathTarget, deps);
+export function resolveCliPath(target?: CliPathResolutionTarget): Promise<CliPathResolutionResult>;
+export function resolveCliPath(deps?: CliPathDependencies): Promise<CliPathResolutionResult>;
+export function resolveCliPath(
+    targetOrDeps?: CliPathResolutionTarget | CliPathDependencies,
+): Promise<CliPathResolutionResult> {
+    if (targetOrDeps !== undefined && 'kind' in targetOrDeps) {
+        return cliPathResolver.resolve(targetOrDeps);
+    }
+
+    return cliPathResolver.resolve(windowCliPathTarget, targetOrDeps);
 }
 
 /**

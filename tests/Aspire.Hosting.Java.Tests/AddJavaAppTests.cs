@@ -1264,6 +1264,31 @@ public class AddJavaAppTests
         Assert.Equal(expectedBuildTool, launchConfiguration.BuildTool);
     }
 
+    [Theory]
+    [InlineData("pom.xml", "target")]
+    [InlineData("build.gradle", "build")]
+    public async Task AddQuarkusApp_DebugConfigurationStartsTheFastJarTheBuildProduced(string buildFile, string outputDirectory)
+    {
+        // Quarkus' entry point lives in the fast JAR's boot classpath rather than in the project, so the
+        // language server's classpath cannot start it. The archive goes on the classpath and its manifest
+        // names io.quarkus.bootstrap.runner.QuarkusEntryPoint, exactly as `java -jar` would resolve it.
+        // Breakpoints still bind, because the debugger maps loaded classes back to sources by name.
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.Write(buildFile, "");
+        var runJar = WriteJarWithManifest(
+            tempDir.Path,
+            Path.Combine(outputDirectory, "quarkus-app", "quarkus-run.jar"),
+            "io.quarkus.bootstrap.runner.QuarkusEntryPoint");
+
+        var app = builder.AddQuarkusApp("inventory", tempDir.Path);
+
+        var launchConfiguration = await GetLaunchConfigurationAsync(app);
+
+        Assert.Equal("io.quarkus.bootstrap.runner.QuarkusEntryPoint", launchConfiguration.MainClass);
+        Assert.Equal([runJar], launchConfiguration.ClassPaths!);
+    }
+
     /// <summary>
     /// Writes a JAR whose manifest declares <paramref name="mainClass"/>. A JAR is a ZIP archive, so
     /// the entry only has to exist at META-INF/MANIFEST.MF with the documented Name: value shape.

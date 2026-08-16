@@ -360,8 +360,9 @@ public static partial class JavaHostingExtensions
     /// <c>QUARKUS_HTTP_PORT</c>, the environment variable Quarkus reads for its listening port. Everything else
     /// behaves like <see cref="AddJavaApp(IDistributedApplicationBuilder, string, string)"/>.
     /// The dev-mode goal compiles the application itself, so Aspire does not add a separate build resource before it.
-    /// The one exception is <see cref="WithOtelAgent{T}(IResourceBuilder{T})"/> with a build-produced agent,
-    /// which cannot be loaded until a build has written it.
+    /// There are two exceptions. <see cref="WithOtelAgent{T}(IResourceBuilder{T})"/> with a build-produced agent
+    /// cannot be loaded until a build has written it, and a debug session launches the packaged fast JAR rather
+    /// than the dev-mode wrapper, which no build has written on a clean checkout.
     /// <para>
     /// Quarkus Dev Services are left enabled but do not activate for anything Aspire supplies: Dev Services only
     /// start a container when the corresponding configuration is missing, and a <c>WithReference</c> to a database
@@ -416,6 +417,10 @@ public static partial class JavaHostingExtensions
                 mavenLaunchArgs: ["quarkus:dev"],
                 gradleBuildArgs: ["build", "-x", "test"],
                 gradleLaunchArgs: ["quarkusDev"]);
+
+        // Called after the Quarkus and build-tool annotations are in place, because both decide whether a
+        // build has to run before the IDE launches the fast JAR it will attach to.
+        EnsureBuildRunsBeforeLaunch(resourceBuilder);
 
         // Declared before the run-mode block so the Host validation configuration below can name this
         // endpoint's host. QUARKUS_HTTP_PORT is the variable Quarkus reads for its listening port.
@@ -707,11 +712,11 @@ public static partial class JavaHostingExtensions
             new JavaBuildToolAnnotation(tool, args.Length > 0 ? [goalOrTask, .. args] : [goalOrTask]),
             ResourceAnnotationMutationBehavior.Replace);
 
-        // The launch goal now compiles the application, so the build resource is redundant — unless a
-        // build-produced agent is configured, which the application cannot start without.
+        // The launch goal now compiles the application, so the build resource is redundant — unless
+        // something outside the launch goal needs the build's output before the application starts.
         if (buildStep is not null
             && builder.ApplicationBuilder.ExecutionContext.IsRunMode
-            && !HasBuildProducedOtelAgent(builder.Resource))
+            && !RequiresBuildBeforeLaunch(builder))
         {
             RemoveRunBuildResource(builder, buildStep);
         }
@@ -814,10 +819,10 @@ public static partial class JavaHostingExtensions
         }
 
         // A launch goal such as spring-boot:run or bootRun compiles the application on its way to running
-        // it, so a build resource in front of it would only repeat work. A build-produced agent overrides
-        // that: the agent has to exist before the resource starts, and only a build writes it.
+        // it, so a build resource in front of it would only repeat work. That holds only while the launch
+        // goal is what actually starts the application and nothing else needs the build's output first.
         var createRunResource = builder.ApplicationBuilder.ExecutionContext.IsRunMode
-            && (HasBuildProducedOtelAgent(builder.Resource)
+            && (RequiresBuildBeforeLaunch(builder)
                 || launchTool is null && !builder.Resource.HasAnnotationOfType<JavaDetectedBuildToolAnnotation>());
 
         // Recorded in every execution context: in publish mode there is no build-step resource, but the
@@ -1204,7 +1209,7 @@ public static partial class JavaHostingExtensions
         var isFirstCall = !builder.Resource.HasAnnotationOfType<JavaOtelAgentAnnotation>();
         builder.WithAnnotation(new JavaOtelAgentAnnotation(agentPath), ResourceAnnotationMutationBehavior.Replace);
 
-        EnsureBuildProducesOtelAgent(builder);
+        EnsureBuildRunsBeforeLaunch(builder);
 
         // Callbacks accumulate even though the annotation replaces, so registering one per call would
         // put a -javaagent: entry per call into JAVA_TOOL_OPTIONS and start the JVM with several agents.
@@ -1243,22 +1248,32 @@ public static partial class JavaHostingExtensions
     }
 
     /// <summary>
-    /// Adds the build that writes the agent, when the configured agent is one the build produces.
+    /// Adds the build whose output the application needs before it starts, when there is one.
     /// </summary>
     /// <remarks>
-    /// <c>JAVA_TOOL_OPTIONS</c> is read by every JVM started beneath the resource, and for a Maven or
-    /// Gradle launch the first of those is the wrapper's own. A <c>-javaagent:</c> naming a file the build
-    /// has not written yet therefore kills that JVM during VM initialization with "Error opening zip file
-    /// or JAR manifest missing", before the launch goal that would have produced the agent ever runs. The
-    /// build has to be a resource of its own so it runs in a JVM that is not carrying the agent.
+    /// <para>
+    /// Two things need a build in front of a launch goal that would otherwise compile as it runs.
+    /// </para>
+    /// <para>
+    /// A build-produced OpenTelemetry agent is the first. <c>JAVA_TOOL_OPTIONS</c> is read by every JVM
+    /// started beneath the resource, and for a Maven or Gradle launch the first of those is the wrapper's
+    /// own. A <c>-javaagent:</c> naming a file the build has not written yet therefore kills that JVM
+    /// during VM initialization with "Error opening zip file or JAR manifest missing", before the launch
+    /// goal that would have produced the agent ever runs. The build has to be a resource of its own so it
+    /// runs in a JVM that is not carrying the agent.
+    /// </para>
+    /// <para>
+    /// A Quarkus resource handed to an IDE is the second: the IDE starts it from the fast JAR the build
+    /// packages rather than from the dev-mode goal. See <see cref="IdeLaunchesAPackagedArtifact"/>.
+    /// </para>
     /// </remarks>
-    private static void EnsureBuildProducesOtelAgent<T>(IResourceBuilder<T> builder)
+    private static void EnsureBuildRunsBeforeLaunch<T>(IResourceBuilder<T> builder)
         where T : JavaAppResource
     {
-        // Publish resolves the agent to the path the generated Dockerfile copies it to, and the image
-        // build runs the packaging command itself, so there is no resource to add.
+        // Publish resolves the agent to the path the generated Dockerfile copies it to, the image build
+        // runs the packaging command itself, and no IDE launches anything, so there is no resource to add.
         if (!builder.ApplicationBuilder.ExecutionContext.IsRunMode
-            || !HasBuildProducedOtelAgent(builder.Resource))
+            || !RequiresBuildBeforeLaunch(builder))
         {
             return;
         }
@@ -1266,7 +1281,7 @@ public static partial class JavaHostingExtensions
         // Naming the resource and resolving its wrapper both need the tool, which is unknown when the
         // agent is configured before the build tool is. That ordering stays supported: the later
         // WithMavenBuild, WithGradleBuild, WithMavenGoal, or WithGradleTask call reaches
-        // WithJavaBuildStep, which adds the resource once HasBuildProducedOtelAgent is true.
+        // WithJavaBuildStep, which adds the resource once RequiresBuildBeforeLaunch is true.
         if (!TryResolveConfiguredBuildTool(builder.Resource, out var tool))
         {
             return;
@@ -1290,6 +1305,35 @@ public static partial class JavaHostingExtensions
     /// </summary>
     private static string[] DefaultBuildArgs(JavaBuildTool tool) =>
         tool is JavaBuildTool.Gradle ? ["clean", "build"] : ["clean", "package"];
+
+    /// <summary>
+    /// Whether something other than the launch goal needs the build's output before the application
+    /// starts, which makes a build resource mandatory even for a goal that compiles as it runs.
+    /// </summary>
+    private static bool RequiresBuildBeforeLaunch<T>(IResourceBuilder<T> builder)
+        where T : JavaAppResource
+        => HasBuildProducedOtelAgent(builder.Resource)
+            || IdeLaunchesAPackagedArtifact(builder);
+
+    /// <summary>
+    /// Whether this run hands the resource to an IDE that starts it from an artifact the build produces
+    /// rather than from the launch goal.
+    /// </summary>
+    /// <remarks>
+    /// Only Quarkus is in this position. Its entry point lives in the fast JAR's boot classpath rather
+    /// than in the project, so <see cref="ResolveEntryPointForIde"/> has to hand the debug adapter
+    /// <c>quarkus-app/quarkus-run.jar</c> — and on a clean checkout no build has written it. The adapter's
+    /// response to being given no entry point is to ask which of the workspace's main classes to start,
+    /// a prompt nobody who has not read the AppHost can answer, so the build has to run first.
+    /// <para>
+    /// Spring Boot needs nothing here: the adapter starts it from the classpath the Java language server
+    /// already compiled, so a build would only delay the session.
+    /// </para>
+    /// </remarks>
+    private static bool IdeLaunchesAPackagedArtifact<T>(IResourceBuilder<T> builder)
+        where T : JavaAppResource
+        => builder.Resource.HasAnnotationOfType<JavaQuarkusAnnotation>()
+            && builder.Resource.SupportsDebugging(builder.ApplicationBuilder.Configuration, out _);
 
     /// <summary>
     /// Whether the resource's OpenTelemetry agent is one its own build writes, rather than one the machine

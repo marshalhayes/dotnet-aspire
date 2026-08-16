@@ -1,10 +1,12 @@
 import * as assert from 'assert';
+import * as sinon from 'sinon';
 import * as vscode from 'vscode';
 import { createWorkspaceFolder } from './testHelpers';
 import {
     ExpandedConfiguredCliPath,
     expandConfiguredCliPath,
     getCliExecutableCandidates,
+    getCliPathTargetForUri,
     getCliPathTargetKey,
     windowCliPathTarget,
     workspaceFolderCliPathTarget,
@@ -189,6 +191,39 @@ suite('cliPathVariables tests', () => {
             const target = workspaceFolderCliPathTarget(folder);
 
             assert.strictEqual(getCliPathTargetKey(target), `workspaceFolder:${folder.uri.toString()}`);
+        });
+
+    });
+
+    suite('getCliPathTargetForUri', () => {
+        let sandbox: sinon.SinonSandbox;
+
+        setup(() => {
+            sandbox = sinon.createSandbox();
+        });
+
+        teardown(() => {
+            sandbox.restore();
+        });
+
+        test('returns the owning workspace folder target when a folder owns the uri', () => {
+            const folder = makeFolder('java', '/repo/playground/JavaSpringBoot');
+            sandbox.stub(vscode.workspace, 'getWorkspaceFolder').withArgs(sinon.match.any).returns(folder);
+
+            const target = getCliPathTargetForUri(vscode.Uri.file('/repo/playground/JavaSpringBoot/AppHost.csproj'));
+
+            assert.strictEqual(target.kind, 'workspaceFolder');
+            if (target.kind === 'workspaceFolder') {
+                assert.strictEqual(target.workspaceFolder, folder);
+            }
+        });
+
+        test('returns the window target when no open folder owns the uri', () => {
+            sandbox.stub(vscode.workspace, 'getWorkspaceFolder').returns(undefined);
+
+            const target = getCliPathTargetForUri(vscode.Uri.file('/outside/AppHost.csproj'));
+
+            assert.deepStrictEqual(target, windowCliPathTarget);
         });
 
     });

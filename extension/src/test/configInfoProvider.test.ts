@@ -10,6 +10,7 @@ import * as cliModule from '../utils/process/cliProcess';
 import { AppHostDiscoveryService } from '../utils/appHostDiscovery';
 import { AppHostDataRepository } from '../data/AppHostDataRepository';
 import { describeIncludeDisabledCommandsCapability, lsJsonStreamCapability } from '../types/configInfo';
+import { workspaceFolderCliPathTarget } from '../utils/cliPathVariables';
 
 suite('configInfoProvider tests', () => {
     teardown(() => sinon.restore());
@@ -127,6 +128,37 @@ suite('configInfoProvider tests', () => {
         assert.strictEqual(workingDirectory, workspaceFolder.uri.fsPath);
         assert.deepStrictEqual(spawnStub.firstCall.args[2], ['config', 'info', '--json', '--nologo']);
         assert.strictEqual(spawnStub.firstCall.args[3]?.noExtensionVariables, true);
+    });
+
+    test('getConfigInfo forwards options.target to terminalProvider.getAspireCliExecutablePath', async () => {
+        const workspaceFolder: vscode.WorkspaceFolder = {
+            uri: vscode.Uri.file('/repo/a'),
+            name: 'a',
+            index: 0,
+        };
+        const target = workspaceFolderCliPathTarget(workspaceFolder);
+        const getAspireCliExecutablePathStub = sinon.stub().resolves('/repo/a/bin/aspire');
+        const terminalProvider = {
+            getAspireCliExecutablePath: getAspireCliExecutablePathStub,
+            createEnvironment: () => ({}),
+        } as unknown as AspireTerminalProvider;
+        sinon.stub(cliModule, 'spawnCliProcess').callsFake((_terminalProvider, _command, _args, options) => {
+            options?.stdoutCallback?.(JSON.stringify({
+                localSettingsPath: '/repo/a/aspire.config.json',
+                globalSettingsPath: '/home/user/.aspire/aspire.config.json',
+                availableFeatures: [],
+                localSettingsSchema: { properties: [] },
+                globalSettingsSchema: { properties: [] },
+            }));
+            options?.exitCallback?.(0);
+            return {} as ChildProcessWithoutNullStreams;
+        });
+        const provider = new ConfigInfoProvider(terminalProvider);
+
+        const configInfo = await provider.getConfigInfo({ target });
+
+        assert.ok(configInfo);
+        assert.ok(getAspireCliExecutablePathStub.calledOnceWith(target));
     });
 
     test('getConfigInfo retries without nologo when an older CLI rejects it', async () => {

@@ -11,6 +11,7 @@ import { appHostLaunchReservationIdConfigKey, appHostLaunchTokenConfigKey, appHo
 import { isAspireDebugConfigurationExtensionOwned, markAspireDebugConfigurationAsExtensionOwned, stripAspireDebugConfigurationProviderInternalProperties } from '../debugger/AspireDebugConfigurationProviderInternal';
 import type { AspireExtendedDebugConfiguration } from '../dcp/types';
 import * as cliPathModule from '../utils/cliPath';
+import { windowCliPathTarget, workspaceFolderCliPathTarget } from '../utils/cliPathVariables';
 import { AppHostDiscoveryService } from '../utils/appHostDiscovery';
 
 /** Captures the AppHost paths the provider claims for `launch.json`/F5 launches. */
@@ -679,6 +680,37 @@ suite('AspireDebugConfigurationProvider', () => {
         assert.strictEqual(config.skipCliAvailabilityCheck, true);
         assert.strictEqual(resolveCliPathStub.called, false);
         assert.strictEqual(showErrorMessageStub.called, false);
+    });
+
+    test('resolveDebugConfiguration resolves CLI availability with the supplied workspace folder target', async () => {
+        const provider = new AspireDebugConfigurationProvider(createAppHostDiscoveryService('/repo/AppHost.csproj'), launchReservation);
+        const folder = createWorkspaceFolder('/repo');
+        const resolveCliPathStub = sandbox.stub(cliPathModule, 'resolveCliPath').resolves({ cliPath: '/repo/bin/aspire', available: true, source: 'configured' });
+
+        const config = await provider.resolveDebugConfiguration(folder, {
+            name: 'Debug AppHost',
+            type: 'aspire',
+            request: 'launch',
+            program: '/repo/AppHost.csproj',
+        } as AspireExtendedDebugConfiguration) as AspireExtendedDebugConfiguration | undefined;
+
+        assert.ok(config);
+        assert.ok(resolveCliPathStub.calledOnceWith(workspaceFolderCliPathTarget(folder)));
+    });
+
+    test('resolveDebugConfiguration resolves CLI availability with the window target when no folder is supplied', async () => {
+        const provider = new AspireDebugConfigurationProvider(createAppHostDiscoveryService('/repo/AppHost.csproj'), launchReservation);
+        const resolveCliPathStub = sandbox.stub(cliPathModule, 'resolveCliPath').resolves({ cliPath: 'aspire', available: true, source: 'path' });
+
+        const config = await provider.resolveDebugConfiguration(undefined, {
+            name: 'Debug AppHost',
+            type: 'aspire',
+            request: 'launch',
+            program: '/repo/AppHost.csproj',
+        } as AspireExtendedDebugConfiguration) as AspireExtendedDebugConfiguration | undefined;
+
+        assert.ok(config);
+        assert.ok(resolveCliPathStub.calledOnceWith(windowCliPathTarget));
     });
 
     test('resolveDebugConfigurationWithSubstitutedVariables removes internal skip flag before launch', async () => {

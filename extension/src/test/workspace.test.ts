@@ -5,9 +5,12 @@ import * as path from 'path';
 import * as sinon from 'sinon';
 import * as vscode from 'vscode';
 import { yesLabel } from '../loc/strings';
-import { checkForExistingAppHostPathInWorkspace, getCommonExcludeGlob, findAspireSettingsFiles } from '../utils/workspace';
+import { checkCliAvailableOrRedirect, checkForExistingAppHostPathInWorkspace, getCommonExcludeGlob, findAspireSettingsFiles } from '../utils/workspace';
 import { AppHostDiscoveryService, getWorkspaceAppHostProjectSearchResult } from '../utils/appHostDiscovery';
 import { getAppHostDiscoveryExcludeGlob } from '../utils/workspaceFileSearch';
+import * as cliPathModule from '../utils/cliPath';
+import { windowCliPathTarget, workspaceFolderCliPathTarget } from '../utils/cliPathVariables';
+import { createWorkspaceFolder } from './testHelpers';
 
 suite('utils/workspace tests', () => {
     let sandbox: sinon.SinonSandbox;
@@ -18,6 +21,27 @@ suite('utils/workspace tests', () => {
 
     teardown(() => {
         sandbox.restore();
+    });
+
+    suite('checkCliAvailableOrRedirect', () => {
+        test('forwards the supplied window target to resolveCliPath', async () => {
+            const resolveCliPathStub = sandbox.stub(cliPathModule, 'resolveCliPath').resolves({ cliPath: 'aspire', available: true, source: 'path' });
+
+            const result = await checkCliAvailableOrRedirect('command_gate', windowCliPathTarget);
+
+            assert.strictEqual(result.available, true);
+            assert.ok(resolveCliPathStub.calledOnceWith(windowCliPathTarget));
+        });
+
+        test('forwards the supplied workspace folder target to resolveCliPath', async () => {
+            const folder = createWorkspaceFolder('a', '/repo/a');
+            const resolveCliPathStub = sandbox.stub(cliPathModule, 'resolveCliPath').resolves({ cliPath: '/repo/a/bin/aspire', available: true, source: 'configured' });
+
+            const result = await checkCliAvailableOrRedirect('debug_gate', workspaceFolderCliPathTarget(folder));
+
+            assert.strictEqual(result.cliPath, '/repo/a/bin/aspire');
+            assert.ok(resolveCliPathStub.calledOnceWith(workspaceFolderCliPathTarget(folder)));
+        });
     });
 
     test('getCommonExcludeGlob returns valid glob pattern', () => {

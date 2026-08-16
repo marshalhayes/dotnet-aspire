@@ -15,6 +15,7 @@ import { installCliCommand, verifyCliInstalledCommand } from '../commands/walkth
 import { cliNotAvailable, dismissLabel, errorMessage, openCliInstallInstructions } from '../loc/strings';
 import { isCommandCancellation, withCommandTelemetry } from '../utils/telemetry';
 import { checkCliAvailableOrRedirect } from '../utils/workspace';
+import { windowCliPathTarget } from '../utils/cliPathVariables';
 import { AspireTerminalProvider } from '../utils/AspireTerminalProvider';
 import { AspireEditorCommandProvider } from '../editor/AspireEditorCommandProvider';
 import { isE2eBridgeEnabled } from '../testing/e2eStateFileBridge';
@@ -79,7 +80,7 @@ async function tryExecuteCommand(commandName: string, terminalProvider: AspireTe
           throw new vscode.CancellationError();
         }
 
-        const result = await checkCliAvailableOrRedirect('command_gate');
+        const result = await checkCliAvailableOrRedirect('command_gate', windowCliPathTarget);
         if (!result.available) {
           // The command body never ran — the user was redirected to install the
           // CLI. Throwing a cancellation makes withCommandTelemetry record this

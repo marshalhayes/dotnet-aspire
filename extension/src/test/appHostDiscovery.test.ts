@@ -14,6 +14,7 @@ import * as configInfoProvider from '../utils/configInfoProvider';
 import { lsJsonStreamCapability } from '../types/configInfo';
 import { __resetCommonPropertiesForTests, __setReporterForTests } from '../utils/telemetry';
 import { appHostDiscoveryFindFilesMaxResults } from '../utils/workspaceFileSearch';
+import { workspaceFolderCliPathTarget } from '../utils/cliPathVariables';
 
 interface RecordedEvent {
     name: string;
@@ -2672,6 +2673,49 @@ suite('AppHost discovery', () => {
                 buildPath('workspace', 'First', 'AppHost.csproj'),
                 buildPath('workspace', 'Second', 'AppHost.csproj'),
             ]);
+        });
+    });
+
+    suite('workspace-folder CLI resolution target', () => {
+        let sandbox: sinon.SinonSandbox;
+
+        setup(() => {
+            sandbox = sinon.createSandbox();
+            stubFileSystemWatchers(sandbox);
+        });
+
+        teardown(() => {
+            sandbox.restore();
+        });
+
+        test('resolves the CLI path and capability probe with the workspace folder target', async () => {
+            const workspaceFolder = makeWorkspaceFolder(buildPath('workspace'));
+            const getAspireCliExecutablePathStub = sandbox.stub().resolves('/repo/a/bin/aspire');
+            const terminalProvider = {
+                getAspireCliExecutablePath: getAspireCliExecutablePathStub,
+                createEnvironment: () => ({}),
+            } as unknown as AspireTerminalProvider;
+            const getConfigInfoStub = sandbox.stub().resolves({ capabilities: [] });
+            const fakeConfigInfoProvider = { getConfigInfo: getConfigInfoStub } as unknown as configInfoProvider.ConfigInfoProvider;
+            sandbox.stub(cliModule, 'spawnCliProcess').callsFake((_terminalProvider, _command, _args, options) => {
+                options?.stdoutCallback?.(JSON.stringify([]));
+                options?.exitCallback?.(0);
+                return { kill: () => true } as any;
+            });
+            const service = new AppHostDiscoveryService(terminalProvider, fakeConfigInfoProvider);
+
+            try {
+                await service.discover(workspaceFolder);
+
+                assert.ok(getAspireCliExecutablePathStub.calledOnceWith(workspaceFolderCliPathTarget(workspaceFolder)));
+                assert.strictEqual(getConfigInfoStub.calledOnce, true);
+                const configInfoOptions = getConfigInfoStub.firstCall.args[0];
+                assert.strictEqual(configInfoOptions.cliPath, '/repo/a/bin/aspire');
+                assert.deepStrictEqual(configInfoOptions.target, workspaceFolderCliPathTarget(workspaceFolder));
+            }
+            finally {
+                service.dispose();
+            }
         });
     });
 });

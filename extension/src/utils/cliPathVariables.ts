@@ -126,6 +126,19 @@ export function expandConfiguredCliPath(
 }
 
 /**
+ * Returns the resolution target that owns `uri`: the workspace folder containing it, or the
+ * window scope when no open folder owns it (for example, a path outside every open folder).
+ *
+ * AppHost/project/config URIs must always resolve their scope this way rather than from
+ * process cwd, so a hidden CLI operation always resolves and forwards the same CLI its
+ * owning folder configured.
+ */
+export function getCliPathTargetForUri(uri: vscode.Uri): CliPathResolutionTarget {
+    const folder = vscode.workspace.getWorkspaceFolder(uri);
+    return folder ? workspaceFolderCliPathTarget(folder) : windowCliPathTarget;
+}
+
+/**
  * Returns the set of filesystem paths to probe when looking for the CLI
  * executable at `cliPath`.
  *

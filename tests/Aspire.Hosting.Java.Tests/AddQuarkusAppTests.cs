@@ -1,6 +1,7 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
+using System.Text.Json;
 using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Tests.Utils;
 using Aspire.Hosting.Utils;
@@ -9,6 +10,78 @@ namespace Aspire.Hosting.Java.Tests;
 
 public class AddQuarkusAppTests
 {
+    [Theory]
+    [InlineData("pom.xml", "maven")]
+    [InlineData("build.gradle", "gradle")]
+    public void AddQuarkusApp_InADebugSession_AddsABuildTheApplicationWaitsFor(string buildFile, string toolName)
+    {
+        // Dev mode compiles the application on its way to running it, so a Quarkus resource normally has
+        // no build resource. A debug session is the exception: the IDE launches the packaged fast JAR
+        // rather than the dev-mode wrapper, and on a clean checkout nothing has written that JAR yet.
+        // Without a build in front of the application the debug adapter is handed no entry point and
+        // falls back to asking which of the workspace's main classes to start.
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.Write(buildFile, "");
+        EnterDebugSession(builder);
+
+        var app = builder.AddQuarkusApp("inventory", tempDir.Path);
+
+        var buildResource = Assert.Single(
+            builder.Resources.OfType<JavaBuildResource>(),
+            resource => resource.Name == $"inventory-{toolName}-build");
+
+        Assert.Contains(
+            app.Resource.Annotations.OfType<WaitAnnotation>(),
+            wait => ReferenceEquals(wait.Resource, buildResource));
+    }
+
+    [Fact]
+    public void AddQuarkusApp_OutsideADebugSession_AddsNoBuild()
+    {
+        // `aspire run` launches dev mode itself, which compiles the application, so a build resource in
+        // front of it would only repeat that work and delay every start.
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.Write("pom.xml", "");
+
+        var app = builder.AddQuarkusApp("inventory", tempDir.Path);
+
+        Assert.Empty(builder.Resources.OfType<JavaBuildResource>());
+        Assert.Empty(app.Resource.Annotations.OfType<WaitAnnotation>());
+    }
+
+    [Fact]
+    public void AddSpringBootApp_InADebugSession_AddsNoBuild()
+    {
+        // Spring Boot is deliberately not given the same treatment. The debug adapter starts it from the
+        // classpath the Java language server already compiled, so there is no packaged artifact to wait
+        // for and adding a build would only delay every debug session.
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.Write("pom.xml", "");
+        EnterDebugSession(builder);
+
+        var app = builder.AddSpringBootApp("catalog", tempDir.Path);
+
+        Assert.Empty(builder.Resources.OfType<JavaBuildResource>());
+        Assert.Empty(app.Resource.Annotations.OfType<WaitAnnotation>());
+    }
+
+    /// <summary>
+    /// Configures the builder the way an IDE that can launch Java resources does, which is what
+    /// <c>SupportsDebugging</c> reads to decide whether this run hands its resources to the IDE.
+    /// </summary>
+    private static void EnterDebugSession(IDistributedApplicationBuilder builder)
+    {
+        builder.Configuration["DEBUG_SESSION_PORT"] = "5678";
+        builder.Configuration["DEBUG_SESSION_INFO"] = JsonSerializer.Serialize(new
+        {
+            protocols_supported = new[] { "2024-03-03" },
+            supported_launch_configurations = new[] { "java" }
+        });
+    }
+
     [Fact]
     public async Task AddQuarkusApp_MavenProject_LaunchesInDevMode()
     {
