@@ -1,9 +1,6 @@
 import * as vscode from 'vscode';
-import {
-    onDidChangeConfiguredCliPathRejection,
-    onDidChangeResolvedCliPathForForwarding,
-    resolveCliPath,
-} from '../utils/cliPath';
+import { CliPathResolver, cliPathResolver } from '../utils/cliPath';
+import { workspaceFolderCliPathTarget } from '../utils/cliPathVariables';
 import { extensionLogOutputChannel } from '../utils/logging';
 import { getCmdShimSpawnCommandWithoutVerbatimArguments, shouldWrapWithCmd } from '../utils/cmdShim';
 import { getRegisterMcpServerInWorkspace, registerMcpServerInWorkspaceSetting } from '../utils/settings';
@@ -20,13 +17,21 @@ const aspireCliExecutablePathSetting = 'aspire.aspireCliExecutablePath';
  * literal. See:
  * https://github.com/microsoft/vscode/blob/1.102.3/src/vs/workbench/api/node/extHostMcpNode.ts#L141-L167
  */
-export function createAspireMcpServerDefinition(cliPath: string): vscode.McpStdioServerDefinition {
+export function createAspireMcpServerDefinition(
+    cliPath: string,
+    label = mcpServerLabel,
+    cwd?: vscode.Uri,
+): vscode.McpStdioServerDefinition {
+    let definition: vscode.McpStdioServerDefinition;
     if (!shouldWrapWithCmd(cliPath)) {
-        return new vscode.McpStdioServerDefinition(mcpServerLabel, cliPath, [...mcpServerArgs]);
+        definition = new vscode.McpStdioServerDefinition(label, cliPath, [...mcpServerArgs]);
     }
-
-    const { command, args } = getCmdShimSpawnCommandWithoutVerbatimArguments(cliPath, mcpServerArgs);
-    return new vscode.McpStdioServerDefinition(mcpServerLabel, command, args);
+    else {
+        const { command, args } = getCmdShimSpawnCommandWithoutVerbatimArguments(cliPath, mcpServerArgs);
+        definition = new vscode.McpStdioServerDefinition(label, command, args);
+    }
+    definition.cwd = cwd;
+    return definition;
 }
 
 /**
@@ -38,15 +43,14 @@ export class AspireMcpServerDefinitionProvider implements vscode.McpServerDefini
     private readonly _onDidChange = new vscode.EventEmitter<void>();
     readonly onDidChangeMcpServerDefinitions = this._onDidChange.event;
 
-    private _cliPath: string | undefined;
-    private _cliAvailable: boolean = false;
-    private _shouldProvide: boolean = false;
+    private _definitions: vscode.McpStdioServerDefinition[] = [];
     private _refreshGeneration = 0;
     private _configChangeDisposable: vscode.Disposable | undefined;
     private _workspaceFolderChangeDisposable: vscode.Disposable | undefined;
+    private _workspaceTrustGrantDisposable: vscode.Disposable | undefined;
     private _cliPathForwardingChangeDisposable: vscode.Disposable | undefined;
 
-    constructor() {
+    constructor(private readonly _resolver: CliPathResolver = cliPathResolver) {
         // Re-evaluate when the setting changes
         this._configChangeDisposable = vscode.workspace.onDidChangeConfiguration(e => {
             if (e.affectsConfiguration(registerMcpServerInWorkspaceSetting)
@@ -60,56 +64,83 @@ export class AspireMcpServerDefinitionProvider implements vscode.McpServerDefini
             this.refresh();
         });
 
+        this._workspaceTrustGrantDisposable = vscode.workspace.onDidGrantWorkspaceTrust(() => {
+            this.refresh();
+        });
+
         // Another CLI consumer can discover that the configured path stopped
         // working or that an unpersisted fallback changed. Re-resolve the MCP
         // command so it cannot keep serving the stale path.
-        this._cliPathForwardingChangeDisposable = vscode.Disposable.from(
-            onDidChangeConfiguredCliPathRejection(() => this.refresh()),
-            onDidChangeResolvedCliPathForForwarding(() => this.refresh()),
-        );
+        this._cliPathForwardingChangeDisposable = this._resolver.onDidChangeForwarding(() => this.refresh());
     }
 
     async refresh(): Promise<void> {
         const refreshGeneration = ++this._refreshGeneration;
-        const [cliResult, shouldProvide] = await Promise.all([
-            resolveCliPath(),
-            checkShouldProvideMcpServer(),
-        ]);
+        const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
+        const shouldProvide = await checkShouldProvideMcpServer();
+        const cliResults = shouldProvide
+            ? await Promise.all(workspaceFolders.map(folder => this._resolver.resolve(workspaceFolderCliPathTarget(folder))))
+            : [];
 
         if (refreshGeneration !== this._refreshGeneration) {
             return;
         }
 
-        const changed =
-            this._cliAvailable !== cliResult.available ||
-            this._cliPath !== cliResult.cliPath ||
-            this._shouldProvide !== shouldProvide;
+        const folderNameCounts = new Map<string, number>();
+        for (const folder of workspaceFolders) {
+            folderNameCounts.set(folder.name, (folderNameCounts.get(folder.name) ?? 0) + 1);
+        }
+        const folderNameOrdinals = new Map<string, number>();
+        const definitions = cliResults.flatMap((result, index) => {
+            if (!result.available) {
+                return [];
+            }
 
-        this._cliAvailable = cliResult.available;
-        this._cliPath = cliResult.cliPath;
-        this._shouldProvide = shouldProvide;
+            const folder = workspaceFolders[index];
+            let folderLabel = folder.name;
+            if ((folderNameCounts.get(folder.name) ?? 0) > 1) {
+                const ordinal = (folderNameOrdinals.get(folder.name) ?? 0) + 1;
+                folderNameOrdinals.set(folder.name, ordinal);
+                folderLabel = `${folder.name} ${ordinal}`;
+            }
+            const label = workspaceFolders.length === 1 ? mcpServerLabel : `${mcpServerLabel} (${folderLabel})`;
+            return [createAspireMcpServerDefinition(result.cliPath, label, folder.uri)];
+        });
+        const changed = !areMcpDefinitionsEqual(this._definitions, definitions);
+        this._definitions = definitions;
 
         if (changed) {
-            extensionLogOutputChannel.info(`Aspire MCP server definition changed: cliAvailable=${cliResult.available}, shouldProvide=${shouldProvide}`);
+            extensionLogOutputChannel.info(`Aspire MCP server definitions changed: count=${definitions.length}, shouldProvide=${shouldProvide}`);
             this._onDidChange.fire();
         }
     }
 
     provideMcpServerDefinitions(_token: vscode.CancellationToken): vscode.ProviderResult<vscode.McpStdioServerDefinition[]> {
-        if (!this._cliAvailable || !this._shouldProvide || !this._cliPath) {
-            return [];
-        }
-
-        return [createAspireMcpServerDefinition(this._cliPath)];
+        return [...this._definitions];
     }
 
     dispose(): void {
         this._refreshGeneration++;
         this._configChangeDisposable?.dispose();
         this._workspaceFolderChangeDisposable?.dispose();
+        this._workspaceTrustGrantDisposable?.dispose();
         this._cliPathForwardingChangeDisposable?.dispose();
         this._onDidChange.dispose();
     }
+}
+
+function areMcpDefinitionsEqual(
+    left: readonly vscode.McpStdioServerDefinition[],
+    right: readonly vscode.McpStdioServerDefinition[],
+): boolean {
+    return left.length === right.length && left.every((definition, index) => {
+        const other = right[index];
+        return definition.label === other.label
+            && definition.command === other.command
+            && definition.cwd?.toString() === other.cwd?.toString()
+            && definition.args.length === other.args.length
+            && definition.args.every((argument, argumentIndex) => argument === other.args[argumentIndex]);
+    });
 }
 
 /**

@@ -1261,6 +1261,45 @@ suite('CliPathResolver scoped tests', () => {
         }
     });
 
+    test('ignores a tokenized global CLI path in Restricted Mode', () => {
+        const trustDescriptor = Object.getOwnPropertyDescriptor(vscode.workspace, 'isTrusted');
+        Object.defineProperty(vscode.workspace, 'isTrusted', { value: false, configurable: true });
+        const workspaceConfiguration = {
+            get: sinon.stub().returns('${workspaceFolder}/tools/aspire'),
+            inspect: sinon.stub().returns({
+                key: 'aspire.aspireCliExecutablePath',
+                globalValue: '${workspaceFolder}/tools/aspire',
+            }),
+        } as unknown as vscode.WorkspaceConfiguration;
+        const getConfigurationStub = sinon.stub(vscode.workspace, 'getConfiguration').returns(workspaceConfiguration);
+
+        try {
+            assert.strictEqual(getConfiguredCliPath(targetA), '');
+            assert.strictEqual(getConfiguredCliPath(windowCliPathTarget), '');
+        }
+        finally {
+            getConfigurationStub.restore();
+            if (trustDescriptor) {
+                Object.defineProperty(vscode.workspace, 'isTrusted', trustDescriptor);
+            }
+        }
+    });
+
+    test('treats a non-string configured CLI path as unset', () => {
+        const workspaceConfiguration = {
+            get: sinon.stub().returns({ path: '/repo/a/bin/aspire' }),
+            inspect: sinon.stub().returns(undefined),
+        } as unknown as vscode.WorkspaceConfiguration;
+        const getConfigurationStub = sinon.stub(vscode.workspace, 'getConfiguration').returns(workspaceConfiguration);
+
+        try {
+            assert.strictEqual(getConfiguredCliPath(targetA), '');
+        }
+        finally {
+            getConfigurationStub.restore();
+        }
+    });
+
     test('keeps plain absolute configured path behavior unchanged', async () => {
         const configured = '/repo/a/bin/aspire';
         const resolver = new CliPathResolver(createMockDeps({

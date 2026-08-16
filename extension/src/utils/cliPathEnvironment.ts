@@ -2,6 +2,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as vscode from 'vscode';
 import {
+    CliPathResolver,
     getConfiguredCliPath,
     getResolvedCliPathForForwarding,
     isConfiguredCliPathRejectedForForwarding,
@@ -10,6 +11,12 @@ import {
     onDidChangeResolvedCliPathForForwarding,
     resolveCliPath,
 } from './cliPath';
+import {
+    CliPathResolutionTarget,
+    getCliPathTargetKey,
+    windowCliPathTarget,
+    workspaceFolderCliPathTarget,
+} from './cliPathVariables';
 import { extensionLogOutputChannel } from './logging';
 import { aspireCliPathEnvironmentDescription } from '../loc/strings';
 
@@ -244,6 +251,193 @@ function hasAdjacentBundleLayout(cliDirectory: string, deps: ResolvedCliPathDepe
 function hasBundleRoot(bundleRoot: string, deps: ResolvedCliPathDependencies): boolean {
     return (deps.fileExists(path.join(bundleRoot, 'dcp', 'dcp')) || deps.fileExists(path.join(bundleRoot, 'dcp', 'dcp.exe')))
         && (deps.fileExists(path.join(bundleRoot, 'managed', 'aspire-managed')) || deps.fileExists(path.join(bundleRoot, 'managed', 'aspire-managed.exe')));
+}
+
+export interface CliPathEnvironmentSynchronizerDependencies {
+    getWorkspaceFolders: () => readonly vscode.WorkspaceFolder[];
+    getForwardablePath: (cliPath: string | undefined) => string | undefined;
+    onDidChangeConfiguration: vscode.Event<vscode.ConfigurationChangeEvent>;
+    onDidChangeWorkspaceFolders: vscode.Event<vscode.WorkspaceFoldersChangeEvent>;
+    onDidGrantWorkspaceTrust: vscode.Event<void>;
+}
+
+const defaultSynchronizerDependencies: CliPathEnvironmentSynchronizerDependencies = {
+    getWorkspaceFolders: () => vscode.workspace.workspaceFolders ?? [],
+    getForwardablePath: getForwardableResolvedAspireCliPath,
+    onDidChangeConfiguration: vscode.workspace.onDidChangeConfiguration,
+    onDidChangeWorkspaceFolders: vscode.workspace.onDidChangeWorkspaceFolders,
+    onDidGrantWorkspaceTrust: vscode.workspace.onDidGrantWorkspaceTrust,
+};
+
+/**
+ * Keeps VS Code's window and workspace-folder environment collections aligned with the
+ * exact CLI each target resolves. Folder collections are retained until their folder is
+ * removed so stale persisted mutations can be explicitly cleared.
+ */
+export class CliPathEnvironmentSynchronizer implements vscode.Disposable {
+    private readonly _scopedCollections = new Map<string, vscode.EnvironmentVariableCollection>();
+    private readonly _forwardedPaths = new Map<string, string | undefined>();
+    private readonly _activeFolderTargets = new Map<string, CliPathResolutionTarget>();
+    private readonly _syncGenerations = new Map<string, number>();
+    private readonly _disposable: vscode.Disposable;
+    private _disposed = false;
+
+    constructor(
+        private readonly _globalCollection: vscode.GlobalEnvironmentVariableCollection,
+        private readonly _resolver: CliPathResolver,
+        subscriptions: vscode.Disposable[],
+        private readonly _onForwardedPathChanged?: (
+            target: CliPathResolutionTarget,
+            previousPath: string | undefined,
+            currentPath: string | undefined,
+        ) => void,
+        private readonly _deps: CliPathEnvironmentSynchronizerDependencies = defaultSynchronizerDependencies,
+    ) {
+        this._disposable = vscode.Disposable.from(
+            this._deps.onDidChangeConfiguration(event => this.handleConfigurationChange(event)),
+            this._resolver.onDidChangeForwarding(target => this.syncTargetInBackground(target)),
+            this._deps.onDidChangeWorkspaceFolders(event => this.handleWorkspaceFoldersChange(event)),
+            this._deps.onDidGrantWorkspaceTrust(() => this.initializeInBackground()));
+        subscriptions.push(this._disposable);
+    }
+
+    async initialize(workspaceFolders: readonly vscode.WorkspaceFolder[] = this._deps.getWorkspaceFolders()): Promise<void> {
+        const nextFolderKeys = new Set(workspaceFolders.map(folder => getCliPathTargetKey(workspaceFolderCliPathTarget(folder))));
+        for (const [key, target] of this._activeFolderTargets) {
+            if (!nextFolderKeys.has(key)) {
+                this.removeFolderTarget(target);
+            }
+        }
+
+        const folderTargets = workspaceFolders.map(folder => workspaceFolderCliPathTarget(folder));
+        for (const target of folderTargets) {
+            this._activeFolderTargets.set(getCliPathTargetKey(target), target);
+        }
+
+        await Promise.all([
+            this.syncTarget(windowCliPathTarget),
+            ...folderTargets.map(target => this.syncTarget(target)),
+        ]);
+    }
+
+    async syncTarget(target: CliPathResolutionTarget): Promise<void> {
+        const key = getCliPathTargetKey(target);
+        if (this._disposed || (target.kind === 'workspaceFolder' && !this._activeFolderTargets.has(key))) {
+            return;
+        }
+
+        const generation = (this._syncGenerations.get(key) ?? 0) + 1;
+        this._syncGenerations.set(key, generation);
+        const result = await this._resolver.resolve(target);
+        if (this._disposed
+            || this._syncGenerations.get(key) !== generation
+            || (target.kind === 'workspaceFolder' && !this._activeFolderTargets.has(key))) {
+            return;
+        }
+
+        const collection = target.kind === 'window'
+            ? this._globalCollection
+            : this._globalCollection.getScoped({ workspaceFolder: target.workspaceFolder });
+        if (target.kind === 'workspaceFolder') {
+            this._scopedCollections.set(key, collection);
+        }
+
+        const resolvedPath = this._deps.getForwardablePath(result.available ? result.cliPath : undefined);
+        // An unscoped mutation is inherited by every workspace folder and cannot be masked by
+        // deleting a folder-scoped mutator. Use it only when no folder scopes exist.
+        const nextPath = target.kind === 'window' && this._activeFolderTargets.size > 0
+            ? undefined
+            : resolvedPath;
+        const hadPreviousPath = this._forwardedPaths.has(key);
+        const previousPath = this._forwardedPaths.get(key);
+        if (nextPath === undefined) {
+            collection.description = undefined;
+            collection.delete(ASPIRE_CLI_PATH_ENV_VAR);
+        }
+        else {
+            collection.description = aspireCliPathEnvironmentDescription;
+            collection.replace(ASPIRE_CLI_PATH_ENV_VAR, nextPath);
+        }
+        this._forwardedPaths.set(key, nextPath);
+
+        if (hadPreviousPath && previousPath !== nextPath) {
+            this._onForwardedPathChanged?.(target, previousPath, nextPath);
+        }
+    }
+
+    dispose(): void {
+        this._disposed = true;
+        this._disposable.dispose();
+        this._scopedCollections.clear();
+        this._forwardedPaths.clear();
+        this._activeFolderTargets.clear();
+        this._syncGenerations.clear();
+    }
+
+    private handleConfigurationChange(event: vscode.ConfigurationChangeEvent): void {
+        const section = `aspire.${ASPIRE_CLI_EXECUTABLE_PATH_SETTING}`;
+        if (!event.affectsConfiguration(section)) {
+            return;
+        }
+
+        this.syncTargetInBackground(windowCliPathTarget);
+        for (const target of this._activeFolderTargets.values()) {
+            if (target.kind === 'workspaceFolder' && event.affectsConfiguration(section, target.workspaceFolder.uri)) {
+                this.syncTargetInBackground(target);
+            }
+        }
+    }
+
+    private handleWorkspaceFoldersChange(event: vscode.WorkspaceFoldersChangeEvent): void {
+        for (const folder of event.removed) {
+            this.removeFolderTarget(workspaceFolderCliPathTarget(folder));
+        }
+        for (const folder of event.added) {
+            const target = workspaceFolderCliPathTarget(folder);
+            this._activeFolderTargets.set(getCliPathTargetKey(target), target);
+            this.syncTargetInBackground(target);
+        }
+
+        // An unqualified ${workspaceFolder} window setting changes meaning as folders are
+        // added or removed, even when no configuration value itself changed.
+        this.syncTargetInBackground(windowCliPathTarget);
+    }
+
+    private removeFolderTarget(target: CliPathResolutionTarget): void {
+        if (target.kind !== 'workspaceFolder') {
+            return;
+        }
+
+        const key = getCliPathTargetKey(target);
+        this._activeFolderTargets.delete(key);
+        this._syncGenerations.set(key, (this._syncGenerations.get(key) ?? 0) + 1);
+
+        // getScoped is stable for a folder scope and also reaches a mutation restored by VS Code
+        // before this activation's first asynchronous resolution completed.
+        const collection = this._globalCollection.getScoped({ workspaceFolder: target.workspaceFolder });
+        collection.description = undefined;
+        collection.delete(ASPIRE_CLI_PATH_ENV_VAR);
+        this._scopedCollections.delete(key);
+
+        const hadPreviousPath = this._forwardedPaths.has(key);
+        const previousPath = this._forwardedPaths.get(key);
+        this._forwardedPaths.delete(key);
+        if (hadPreviousPath && previousPath !== undefined) {
+            this._onForwardedPathChanged?.(target, previousPath, undefined);
+        }
+    }
+
+    private syncTargetInBackground(target: CliPathResolutionTarget): void {
+        void this.syncTarget(target).catch(error => {
+            extensionLogOutputChannel.warn(`Aspire CLI path environment synchronization failed: ${String(error)}`);
+        });
+    }
+
+    private initializeInBackground(): void {
+        void this.initialize().catch(error => {
+            extensionLogOutputChannel.warn(`Aspire CLI path environment initialization failed: ${String(error)}`);
+        });
+    }
 }
 
 /**

@@ -815,7 +815,7 @@
       <source xml:lang="en">The default launch profile &apos;{0}&apos; is an Executable profile, so dotnet run-api does not return the file-based app {1}; launching it with dotnet run without debugger attach. Breakpoints will not be hit for this resource.</source>
     </trans-unit>
     <trans-unit id="configuration.aspire.aspireCliExecutablePath">
-      <source xml:lang="en">The path to the Aspire CLI executable. If not set, the extension will attempt to use &apos;aspire&apos; from the system PATH.</source>
+      <source xml:lang="en">The path to the Aspire CLI executable. Use &apos;${workspaceFolder}&apos; for the operation&apos;s workspace folder or &apos;${workspaceFolder:name}&apos; for a named folder. If not set, the extension will attempt to use &apos;aspire&apos; from the system PATH.</source>
     </trans-unit>
     <trans-unit id="extension.debug.step">
       <source xml:lang="en">The pipeline step name to execute when command is &apos;do&apos;</source>

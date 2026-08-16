@@ -223,11 +223,22 @@ export function getConfiguredCliPath(target: CliPathResolutionTarget = windowCli
     const configuration = vscode.workspace.getConfiguration('aspire', resource);
     if (!vscode.workspace.isTrusted) {
         // Repository settings are untrusted input. Never execute a workspace-provided path
-        // until the user trusts the workspace, but preserve an explicit user-level pin.
-        return configuration.inspect<string>('aspireCliExecutablePath')?.globalValue?.trim() ?? '';
+        // until the user trusts the workspace. A user-level value containing a workspace
+        // token is also repository-directed after expansion, so only preserve a concrete pin.
+        const globalValue = asConfiguredPath(configuration.inspect<unknown>('aspireCliExecutablePath')?.globalValue);
+        return /\$\{workspaceFolder(?::[^}]*)?\}/.test(globalValue) ? '' : globalValue;
     }
 
-    return configuration.get<string>('aspireCliExecutablePath', '').trim();
+    return asConfiguredPath(configuration.get<unknown>('aspireCliExecutablePath'));
+}
+
+/**
+ * Settings files are hand-edited, so the value is whatever JSON the user typed. Anything
+ * that is not a string is treated as unset rather than allowed to throw from inside CLI
+ * resolution, which every command depends on.
+ */
+function asConfiguredPath(value: unknown): string {
+    return typeof value === 'string' ? value.trim() : '';
 }
 
 /**

@@ -5,6 +5,7 @@ import type { AspireExtendedDebugConfiguration } from '../dcp/types';
 const extensionOwnedConfigurationMarker = `__aspireAppHostLaunchServiceConfiguration_${randomUUID()}`;
 const extensionOwnedConfigurationValue = randomUUID();
 const externalLaunchReservationMarker = `__aspireExternalLaunchReservation_${randomUUID()}`;
+const resolvedCliPathMarker = `__aspireResolvedCliPath_${randomUUID()}`;
 
 interface ExternalLaunchReservationMarker {
     reservationId: string;
@@ -46,9 +47,19 @@ export function getAspireDebugConfigurationExternalLaunchReservation(configurati
         : undefined;
 }
 
+export function markAspireDebugConfigurationWithResolvedCliPath(configuration: vscode.DebugConfiguration, cliPath: string): void {
+    (configuration as Record<string, unknown>)[resolvedCliPathMarker] = cliPath;
+}
+
+export function getAspireDebugConfigurationResolvedCliPath(configuration: vscode.DebugConfiguration): string | undefined {
+    const cliPath = (configuration as Record<string, unknown>)[resolvedCliPathMarker];
+    return typeof cliPath === 'string' ? cliPath : undefined;
+}
+
 export function stripAspireDebugConfigurationProviderInternalProperties(configuration: vscode.DebugConfiguration): void {
     const configRecord = configuration as Record<string, unknown>;
     delete configRecord[extensionOwnedConfigurationMarker];
     delete configRecord[externalLaunchReservationMarker];
+    delete configRecord[resolvedCliPathMarker];
     delete configRecord.launchedByExtension;
 }

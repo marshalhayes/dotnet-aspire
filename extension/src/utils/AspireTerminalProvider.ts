@@ -6,7 +6,7 @@ import { RpcServerConnectionInfo } from '../server/AspireRpcServer';
 import { DcpServerConnectionInfo } from '../dcp/types';
 import { getRunSessionInfo, getSupportedCapabilities } from '../capabilities';
 import { EnvironmentVariables, getEnvironmentWithoutE2EBridgeVariables } from './environment';
-import { resolveCliPath } from './cliPath';
+import { CliPathResolver, resolveCliPath } from './cliPath';
 import { ASPIRE_CLI_PATH_ENV_VAR, getForwardableAspireCliPath, getForwardableResolvedAspireCliPath } from './cliPathEnvironment';
 import { CliPathResolutionTarget, getCliPathTargetKey, windowCliPathTarget } from './cliPathVariables';
 import path from 'path';
@@ -128,6 +128,7 @@ export class AspireTerminalProvider implements vscode.Disposable {
     constructor(
         subscriptions: vscode.Disposable[],
         private readonly _isPowerShell7Available = isPowerShell7Available,
+        private readonly _cliPathResolver?: CliPathResolver,
     ) {
         subscriptions.push(vscode.window.onDidCloseTerminal(closedTerminal => {
             this._invalidatedSharedTerminals.delete(closedTerminal);
@@ -489,7 +490,9 @@ export class AspireTerminalProvider implements vscode.Disposable {
 
 
     async getAspireCliExecutablePath(target: CliPathResolutionTarget = windowCliPathTarget): Promise<string> {
-        const result = await resolveCliPath(target);
+        const result = this._cliPathResolver
+            ? await this._cliPathResolver.resolve(target)
+            : await resolveCliPath(target);
         return result.cliPath;
     }
 

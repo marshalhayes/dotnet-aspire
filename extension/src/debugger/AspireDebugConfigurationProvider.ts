@@ -10,7 +10,7 @@ import { windowCliPathTarget, workspaceFolderCliPathTarget } from '../utils/cliP
 import { extensionLogOutputChannel } from '../utils/logging';
 import { appHostLaunchReservationIdConfigKey, appHostSelectionOriginConfigKey, appHostTelemetryTargetPathConfigKey } from './AspireDebugConfigurationMetadata';
 import { getAspireDebugConfigurationCommand } from '../services/AppHostLaunchService';
-import { getAspireDebugConfigurationExternalLaunchReservation, isAspireDebugConfigurationExtensionOwned, markAspireDebugConfigurationAsExtensionOwned, markAspireDebugConfigurationWithExternalLaunchReservation } from './AspireDebugConfigurationProviderInternal';
+import { getAspireDebugConfigurationExternalLaunchReservation, getAspireDebugConfigurationResolvedCliPath, isAspireDebugConfigurationExtensionOwned, markAspireDebugConfigurationAsExtensionOwned, markAspireDebugConfigurationWithExternalLaunchReservation, markAspireDebugConfigurationWithResolvedCliPath } from './AspireDebugConfigurationProviderInternal';
 
 export { stripAspireDebugConfigurationProviderInternalProperties } from './AspireDebugConfigurationProviderInternal';
 
@@ -75,6 +75,7 @@ export class AspireDebugConfigurationProvider implements vscode.DebugConfigurati
             if (!result.available) {
                 return undefined; // Cancel the debug session
             }
+            markAspireDebugConfigurationWithResolvedCliPath(config, result.cliPath);
         }
 
         if (!config.type) {
@@ -111,7 +112,11 @@ export class AspireDebugConfigurationProvider implements vscode.DebugConfigurati
         // property. A launch.json can spell `launchedByExtension`, but it cannot know the
         // per-activation value that makes the property authoritative.
         const launchedByExtension = isAspireDebugConfigurationExtensionOwned(config);
-        if (!launchedByExtension) {
+        const resolvedCliPath = getAspireDebugConfigurationResolvedCliPath(config);
+        if (resolvedCliPath !== undefined) {
+            aspireConfig.resolvedCliPath = resolvedCliPath;
+        }
+        else if (!launchedByExtension) {
             delete aspireConfig.resolvedCliPath;
         }
         const existingExternalReservation = getAspireDebugConfigurationExternalLaunchReservation(config);

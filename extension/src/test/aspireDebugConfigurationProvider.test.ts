@@ -758,6 +758,29 @@ suite('AspireDebugConfigurationProvider', () => {
         assert.ok(resolveCliPathStub.calledOnceWith(windowCliPathTarget));
     });
 
+    test('preserves the CLI path selected by a normal launch availability gate', async () => {
+        const provider = new AspireDebugConfigurationProvider(createAppHostDiscoveryService('/repo/AppHost.csproj'), launchReservation);
+        sandbox.stub(cliPathModule, 'resolveCliPath').resolves({
+            cliPath: '/verified/aspire',
+            available: true,
+            source: 'configured',
+        });
+
+        const gatedConfig = await provider.resolveDebugConfiguration(undefined, {
+            name: 'Debug AppHost',
+            type: 'aspire',
+            request: 'launch',
+            program: '/repo/AppHost.csproj',
+            resolvedCliPath: '/injected/aspire',
+        } as AspireExtendedDebugConfiguration);
+        const config = gatedConfig
+            ? await provider.resolveDebugConfigurationWithSubstitutedVariables(undefined, gatedConfig) as AspireExtendedDebugConfiguration | undefined
+            : undefined;
+
+        assert.ok(config);
+        assert.strictEqual(config.resolvedCliPath, '/verified/aspire');
+    });
+
     test('resolveDebugConfigurationWithSubstitutedVariables removes internal skip flag before launch', async () => {
         const provider = new AspireDebugConfigurationProvider(createAppHostDiscoveryService('/repo/AppHost.csproj'), launchReservation);
 
