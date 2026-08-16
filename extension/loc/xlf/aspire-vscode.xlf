@@ -397,6 +397,9 @@
     <trans-unit id="aspire-vscode.strings.javaDebuggerExtensionNotInstalled">
       <source xml:lang="en">Java AppHosts are launched through the Java debugger extension. Install {0} from the Extensions view, then start the AppHost again.</source>
     </trans-unit>
+    <trans-unit id="aspire-vscode.strings.javaAttachNotSupported">
+      <source xml:lang="en">Java resources are started by the IDE rather than attached to, and the app host requested an attach session. Aspire cannot start one because no debug address is available.</source>
+    </trans-unit>
     <trans-unit id="aspire-vscode.strings.javaDisplayName">
       <source xml:lang="en">Java: {0}</source>
     </trans-unit>

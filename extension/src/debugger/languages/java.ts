@@ -2,9 +2,10 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { javaDebugExtensionId, javaLanguageExtensionId } from '../../capabilities';
 import { AspireResourceExtendedDebugConfiguration, ExecutableLaunchConfiguration, isJavaLaunchConfiguration, JavaLaunchConfiguration } from "../../dcp/types";
-import { invalidLaunchConfiguration, javaDisplayName, javaLabel } from "../../loc/strings";
+import { invalidLaunchConfiguration, javaAttachNotSupported, javaDisplayName, javaLabel } from "../../loc/strings";
 import { extensionLogOutputChannel } from "../../utils/logging";
 import { ResourceDebuggerExtension } from "../debuggerExtensions";
+import { AspireDebugSession } from "../AspireDebugSession";
 
 // Commands contributed by redhat.java. They only exist once the language server has activated, so
 // every call site has to tolerate them being missing.
@@ -15,6 +16,10 @@ const JAVA_PROJECT_CONFIGURATION_UPDATE_COMMAND = 'java.projectConfiguration.upd
 // Long enough for a cold language server import on a large multi-module project, short enough that a
 // mode transition that never comes does not look like a hang.
 const javaLanguageServerReadyTimeoutMs = 30_000;
+
+// Sampling interval for the stop check that aborts the readiness wait. Only needs to be short relative
+// to the readiness timeout above, since it exists to keep a stop responsive rather than to be precise.
+const javaLanguageServerStopPollIntervalMs = 250;
 
 // Subset of the redhat.java extension API surface we use.
 // https://github.com/redhat-developer/vscode-java#extension-api
@@ -39,7 +44,7 @@ async function getJavaExtensionApi(): Promise<JavaExtensionApi | null> {
     return extension.exports ?? null;
 }
 
-async function waitForJavaLanguageServerReady(): Promise<boolean> {
+async function waitForJavaLanguageServerReady(debugSession: AspireDebugSession | undefined): Promise<boolean> {
     try {
         const api = await getJavaExtensionApi();
 
@@ -50,22 +55,55 @@ async function waitForJavaLanguageServerReady(): Promise<boolean> {
 
         extensionLogOutputChannel.info(`Java language server is in ${api.serverMode} mode, waiting for readiness...`);
 
-        // serverReady() resolves when the *standard* language server is ready. In LightWeight mode that
-        // transition is triggered by opening a project file, which may never happen, so an unbounded await
-        // would hold the resource launch open indefinitely. The refresh this gates is only a convenience,
-        // so a timeout degrades to launching without it rather than blocking the user's F5.
-        // serverReady() resolves false when the server settled into a mode that will never serve
-        // classpath queries, so the resolved value is honoured rather than treated as a bare signal.
-        const ready = await Promise.race([
-            api.serverReady().then(result => result !== false),
-            new Promise<false>(resolve => setTimeout(() => resolve(false), javaLanguageServerReadyTimeoutMs))
-        ]);
+        let readyTimer: NodeJS.Timeout | undefined;
+        let stopPoll: NodeJS.Timeout | undefined;
 
-        if (!ready) {
-            extensionLogOutputChannel.warn(`The Java language server did not become ready within ${javaLanguageServerReadyTimeoutMs}ms (mode: ${api.serverMode}).`);
+        try {
+            // serverReady() resolves when the *standard* language server is ready. In LightWeight mode that
+            // transition is triggered by opening a project file, which may never happen, so an unbounded await
+            // would hold the resource launch open indefinitely. The refresh this gates is only a convenience,
+            // so a timeout degrades to launching without it rather than blocking the user's F5.
+            // serverReady() resolves false when the server settled into a mode that will never serve
+            // classpath queries, so the resolved value is honoured rather than treated as a bare signal.
+            const ready = await Promise.race([
+                api.serverReady().then(result => result !== false),
+                new Promise<false>(resolve => { readyTimer = setTimeout(() => resolve(false), javaLanguageServerReadyTimeoutMs); }),
+                // This wait is the only slow step between the app host asking for a resource and the
+                // adapter starting it, so a stop arriving mid-wait would otherwise be held up for the
+                // full timeout above. AspireDebugSession publishes stop and disposal as state rather
+                // than events, so this samples it; the interval only needs to be short relative to the
+                // readiness timeout, not precise.
+                new Promise<false>(resolve => {
+                    if (!debugSession) {
+                        return;
+                    }
+
+                    stopPoll = setInterval(() => {
+                        if (debugSession.isStopAttemptInProgress || debugSession.isDisposed) {
+                            resolve(false);
+                        }
+                    }, javaLanguageServerStopPollIntervalMs);
+                })
+            ]);
+
+            if (!ready) {
+                extensionLogOutputChannel.warn(`The Java language server did not become ready within ${javaLanguageServerReadyTimeoutMs}ms (mode: ${api.serverMode}).`);
+            }
+
+            return ready;
         }
+        finally {
+            // Promise.race abandons the losers but does not cancel them, so without this a launch that
+            // wins the race still leaves a 30 second timer armed, holding the event loop open and firing
+            // long after the session it belonged to has gone.
+            if (readyTimer) {
+                clearTimeout(readyTimer);
+            }
 
-        return ready;
+            if (stopPoll) {
+                clearInterval(stopPoll);
+            }
+        }
     } catch (e) {
         extensionLogOutputChannel.warn(`Error waiting for Java language server readiness: ${e}`);
     }
@@ -96,7 +134,7 @@ async function updateJavaProjectConfiguration(buildTool: string): Promise<void> 
 // redhat.java is therefore treated as optional at runtime: when it is missing or still starting, its
 // commands are not registered and executeCommand rejects with "command not found", which would
 // otherwise surface as an opaque failure that aborts the whole resource launch.
-async function tryRefreshJavaProjectConfiguration(launchConfig: JavaLaunchConfiguration): Promise<void> {
+async function tryRefreshJavaProjectConfiguration(launchConfig: JavaLaunchConfiguration, debugSession: AspireDebugSession | undefined): Promise<void> {
     // A null build_tool means the resource runs a prebuilt JAR, so there are no build files to
     // reimport and no reason to pay for language server startup.
     if (!launchConfig.build_tool) {
@@ -104,7 +142,7 @@ async function tryRefreshJavaProjectConfiguration(launchConfig: JavaLaunchConfig
         return;
     }
 
-    if (!await waitForJavaLanguageServerReady()) {
+    if (!await waitForJavaLanguageServerReady(debugSession)) {
         extensionLogOutputChannel.warn(`Skipping the ${launchConfig.build_tool} project configuration refresh because the Java language server is unavailable. Launching anyway.`);
         return;
     }
@@ -182,12 +220,20 @@ export const javaDebuggerExtension: ResourceDebuggerExtension = {
             throw new Error(invalidLaunchConfiguration(JSON.stringify(launchConfig)));
         }
 
-        await tryRefreshJavaProjectConfiguration(launchConfig);
+        await tryRefreshJavaProjectConfiguration(launchConfig, launchOptions.debugSession);
 
         debugConfiguration.type = 'java';
-        // The app host always sends "launch" today, but the wire schema allows "attach", so honour
-        // whatever it sends rather than hard-coding the current behaviour.
-        debugConfiguration.request = launchConfig.request ?? 'launch';
+
+        // An attach session needs hostName and port, and the wire schema carries neither, so an attach
+        // configuration assembled here is always rejected by the adapter — with a message about the
+        // adapter's own schema rather than about the app host that asked for it. The app host only ever
+        // sends "launch" (JavaLaunchConfiguration.Request is fixed at "launch"), so this rejects a shape
+        // that has never been able to work rather than removing behaviour anyone relies on.
+        if (launchConfig.request === 'attach') {
+            throw new Error(javaAttachNotSupported);
+        }
+
+        debugConfiguration.request = 'launch';
         debugConfiguration.noDebug = !launchOptions.debug;
 
         if (launchConfig.working_directory) {
@@ -274,6 +320,23 @@ export function parseJavaAppHostCommand(args: string[]): { mainClass: string; cl
     }
 
     const classPathOptions = new Set(['-cp', '-classpath', '--class-path']);
+
+    // JVM options whose value is a *separate* following argument. They have to be recognised by name,
+    // because otherwise the value is just a bare token: the loop below would stop at it and report it
+    // as the main class, and the adapter would launch something the user never asked for without
+    // anything looking wrong. The "--name=value" spelling is a single token and needs no entry here.
+    // https://docs.oracle.com/en/java/javase/25/docs/specs/man/java.html
+    const valueTakingOptions = new Set([
+        '-p', '--module-path',
+        '--upgrade-module-path',
+        '--add-modules', '--limit-modules',
+        '--add-exports', '--add-opens', '--add-reads',
+        '--patch-module',
+        '--enable-native-access',
+        '--source',
+        '-splash'
+    ]);
+
     let classPaths: string[] = [];
     const vmArgs: string[] = [];
 
@@ -288,6 +351,26 @@ export function parseJavaAppHostCommand(args: string[]): { mainClass: string; cl
             }
 
             classPaths = value.split(path.delimiter).filter(entry => entry.length > 0);
+            i++;
+            continue;
+        }
+
+        // "-jar" takes the entry point from the archive's Main-Class manifest attribute, and
+        // "-m"/"--module" takes it from a module descriptor. Neither puts a class name on the command
+        // line, and the adapter documents mainClass as a class name or .java path and never opens an
+        // archive, so there is nothing valid to send. Report the command as unrecognised so the
+        // AppHost starts without a debugger instead of with the wrong entry point.
+        if (arg === '-jar' || arg === '-m' || arg === '--module') {
+            return null;
+        }
+
+        if (valueTakingOptions.has(arg)) {
+            const value = args[i + 1];
+            if (value === undefined) {
+                return null;
+            }
+
+            vmArgs.push(arg, value);
             i++;
             continue;
         }

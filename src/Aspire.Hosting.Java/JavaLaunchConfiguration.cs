@@ -84,6 +84,17 @@ internal sealed class JavaLaunchConfiguration() : ExecutableLaunchConfiguration(
     public string[]? ClassPaths { get; set; }
 
     /// <summary>
+    /// JVM arguments the IDE should pass to the launched application JVM.
+    /// </summary>
+    /// <remarks>
+    /// These are kept separate from application arguments because the debug adapter maps them to
+    /// <c>vmArgs</c>. JavaFX module-path arguments belong here; passing them to <c>main(String[])</c>
+    /// would leave the JavaFX runtime undiscoverable when the debugger bypasses Maven or Gradle.
+    /// </remarks>
+    [JsonPropertyName("vm_args")]
+    public string[]? VmArgs { get; set; }
+
+    /// <summary>
     /// The build tool that owns the project, used by the IDE to refresh the project's classpath
     /// before starting a session. One of <c>maven</c>, <c>gradle</c>, or <see langword="null"/> when the
     /// application runs from a prebuilt JAR.

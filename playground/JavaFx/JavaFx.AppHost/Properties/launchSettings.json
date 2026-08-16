@@ -1,0 +1,7 @@
+{
+  "profiles": {
+    "JavaFx.AppHost": {
+      "commandName": "Project"
+    }
+  }
+}

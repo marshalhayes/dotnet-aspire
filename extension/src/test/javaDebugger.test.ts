@@ -80,17 +80,21 @@ suite('Java Debugger Extension Tests', () => {
         assert.strictEqual(debugConfig.noDebug, true);
     });
 
-    test('honours an attach request from the launch configuration', async () => {
+    test('rejects an attach request instead of sending the adapter a configuration it cannot use', async () => {
+        // An attach session needs a host and a port, and nothing in the wire schema carries them, so
+        // an attach configuration built here would always be rejected by vscjava.vscode-java-debug
+        // with a message that points at the adapter rather than at the app host. Failing here instead
+        // names the real problem.
         const debugConfig = createDebugConfig();
 
-        await javaDebuggerExtension.createDebugSessionConfigurationCallback!(
-            createJavaLaunchConfig({ request: 'attach' }),
-            [],
-            [],
-            { debug: true, runId: '1', debugSessionId: '1', isApphost: false, debugSession: fakeAspireDebugSession },
-            debugConfig);
-
-        assert.strictEqual(debugConfig.request, 'attach');
+        await assert.rejects(
+            () => javaDebuggerExtension.createDebugSessionConfigurationCallback!(
+                createJavaLaunchConfig({ request: 'attach' }),
+                [],
+                [],
+                { debug: true, runId: '1', debugSessionId: '1', isApphost: false, debugSession: fakeAspireDebugSession },
+                debugConfig),
+            /attach/i);
     });
 
     test('defaults to a launch request when the launch configuration omits one', async () => {
@@ -278,6 +282,39 @@ suite('Java Debugger Extension Tests', () => {
             { debug: true, runId: '1', debugSessionId: '1', isApphost: false, debugSession: fakeAspireDebugSession },
             debugConfig);
 
+        assert.strictEqual(executeCommand.called, false);
+        assert.strictEqual(debugConfig.type, 'java');
+    });
+
+    test('stops waiting for the language server when the debug session is already stopping', async () => {
+        // The readiness wait is the only slow step on the launch path. Without an abort it runs for the
+        // full timeout, so a stop issued while a Java resource is starting is held up for ~30 seconds.
+        sinon.stub(vscode.extensions, 'getExtension').callsFake((extensionId: string) => {
+            if (extensionId !== 'redhat.java') {
+                return undefined;
+            }
+
+            return {
+                id: extensionId,
+                isActive: true,
+                exports: { serverMode: 'Standard', serverReady: () => new Promise<boolean>(() => { }) }
+            } as unknown as vscode.Extension<unknown>;
+        });
+
+        const executeCommand = sinon.stub(vscode.commands, 'executeCommand').resolves(undefined);
+        const debugConfig = createDebugConfig();
+        const stoppingSession = { isStopAttemptInProgress: true } as AspireDebugSession;
+
+        const startedAt = Date.now();
+        await javaDebuggerExtension.createDebugSessionConfigurationCallback!(
+            createJavaLaunchConfig({ build_tool: 'maven' }),
+            [],
+            [],
+            { debug: true, runId: '1', debugSessionId: '1', isApphost: false, debugSession: stoppingSession },
+            debugConfig);
+
+        const elapsed = Date.now() - startedAt;
+        assert.ok(elapsed < 5000, `expected the readiness wait to be abandoned promptly, but it took ${elapsed}ms`);
         assert.strictEqual(executeCommand.called, false);
         assert.strictEqual(debugConfig.type, 'java');
     });
@@ -480,6 +517,43 @@ suite('Java AppHost Command Parsing Tests', () => {
 
         assert.deepStrictEqual(parsed?.vmArgs, ['-Xmx512m']);
         assert.deepStrictEqual(parsed?.appHostArgs, ['-Dnot.a.vm.arg']);
+    });
+
+    test('does not mistake a separated option value for the main class', () => {
+        // These options take their value as the *next* argument. Treating the value as a bare token
+        // makes it the main class, and the adapter then launches something the user never asked for
+        // without reporting anything wrong.
+        const cases: [string[], string][] = [
+            [['java', '--module-path', '/libs', '-cp', 'out', 'AppHost'], '--module-path'],
+            [['java', '-p', '/libs', '-cp', 'out', 'AppHost'], '-p'],
+            [['java', '--add-opens', 'java.base/java.lang=ALL-UNNAMED', '-cp', 'out', 'AppHost'], '--add-opens'],
+            [['java', '--add-modules', 'java.sql', '-cp', 'out', 'AppHost'], '--add-modules'],
+            [['java', '--upgrade-module-path', '/libs', '-cp', 'out', 'AppHost'], '--upgrade-module-path']
+        ];
+
+        for (const [args, option] of cases) {
+            assert.strictEqual(parseJavaAppHostCommand(args)?.mainClass, 'AppHost', option);
+        }
+    });
+
+    test('keeps a separated option and its value together in the JVM arguments', () => {
+        const parsed = parseJavaAppHostCommand(['java', '--module-path', '/libs', '-cp', 'out', 'AppHost']);
+
+        assert.deepStrictEqual(parsed?.vmArgs, ['--module-path', '/libs']);
+    });
+
+    test('returns null for a JAR launch, whose entry point lives in the archive manifest', () => {
+        // `java -jar app.jar` resolves Main-Class from the manifest, so no class appears on the
+        // command line. The adapter documents mainClass as a class name or .java path and never opens
+        // an archive, so handing it "app.jar" fails the launch with ClassNotFoundException.
+        assert.strictEqual(parseJavaAppHostCommand(['java', '-jar', 'app.jar', '--operation', 'run']), null);
+        assert.strictEqual(parseJavaAppHostCommand(['java', '-cp', 'out', '-jar', 'app.jar']), null);
+    });
+
+    test('returns null when a separated option is missing its value', () => {
+        // The option consumes the token that would otherwise be the main class, leaving nothing to
+        // launch rather than a class named "--module-path".
+        assert.strictEqual(parseJavaAppHostCommand(['java', '--module-path']), null);
     });
 
     test('returns null when the command is not a recognizable JVM launch', () => {

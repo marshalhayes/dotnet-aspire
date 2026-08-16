@@ -209,6 +209,7 @@ export const executableLaunchProfileMissingExecutablePath = (profileName: string
 export const lookingForDevkitBuildTask = vscode.l10n.t('C# Dev Kit is installed, looking for C# Dev Kit build task...');
 export const javaDebuggerExtensionNotInstalled = (extensionId: string) => vscode.l10n.t('Java AppHosts are launched through the Java debugger extension. Install {0} from the Extensions view, then start the AppHost again.', extensionId);
 export const javaAppHostCommandNotRecognized = (command: string) => vscode.l10n.t('The Java AppHost launch command was not recognized and cannot be debugged: {0}', command);
+export const javaAttachNotSupported = vscode.l10n.t('Java resources are started by the IDE rather than attached to, and the app host requested an attach session. Aspire cannot start one because no debug address is available.');
 export const csharpDevKitNotInstalled = vscode.l10n.t('C# Dev Kit is not installed, building using dotnet CLI...');
 export const hotReloadDisabledNotice = vscode.l10n.t('C# Dev Kit Hot Reload is disabled. When enabled, it can apply .NET code edits while debugging where supported.');
 export const openSettingsLabel = vscode.l10n.t('Open Settings');
