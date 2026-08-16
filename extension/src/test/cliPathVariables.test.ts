@@ -1,5 +1,6 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
+import { createWorkspaceFolder } from './testHelpers';
 import {
     ExpandedConfiguredCliPath,
     expandConfiguredCliPath,
@@ -10,7 +11,7 @@ import {
 } from '../utils/cliPathVariables';
 
 function makeFolder(name: string, fsPath: string, index: number = 0): vscode.WorkspaceFolder {
-    return { uri: vscode.Uri.file(fsPath), name, index };
+    return createWorkspaceFolder(name, fsPath, index);
 }
 
 suite('cliPathVariables tests', () => {
@@ -29,6 +30,31 @@ suite('cliPathVariables tests', () => {
             if (target.kind === 'workspaceFolder') {
                 assert.strictEqual(target.workspaceFolder, folder);
             }
+        });
+
+    });
+
+    suite('createWorkspaceFolder', () => {
+
+        test('reports fsPath exactly as written, whatever the host would render', () => {
+            // vscode.Uri.file rewrites this on every platform: POSIX hosts prefix a separator, Windows
+            // hosts flip them. The fixtures below describe POSIX paths and pass an explicit platform to
+            // the code under test, so the folder has to keep the path it was given or those cases stop
+            // exercising the platform argument at all.
+            const written = 'C:\\repo\\a';
+            const folder = createWorkspaceFolder('a', written);
+
+            assert.notStrictEqual(vscode.Uri.file(written).fsPath, written);
+            assert.strictEqual(folder.uri.fsPath, written);
+            assert.strictEqual(folder.name, 'a');
+            assert.strictEqual(folder.index, 0);
+        });
+
+        test('leaves the rest of the Uri intact', () => {
+            const folder = createWorkspaceFolder('a', '/repo/a');
+
+            assert.strictEqual(folder.uri.scheme, 'file');
+            assert.strictEqual(folder.uri.path, '/repo/a');
         });
 
     });

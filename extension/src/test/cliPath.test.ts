@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { createWorkspaceFolder } from './testHelpers';
 import {
     findCliOnPath,
     getConfiguredCliPath,
@@ -1055,8 +1056,8 @@ suite('utils/cliPath tests', () => {
 });
 
 suite('CliPathResolver scoped tests', () => {
-    const folderA: vscode.WorkspaceFolder = { name: 'a', index: 0, uri: vscode.Uri.file('/repo/a') };
-    const folderB: vscode.WorkspaceFolder = { name: 'b', index: 1, uri: vscode.Uri.file('/repo/b') };
+    const folderA = createWorkspaceFolder('a', '/repo/a', 0);
+    const folderB = createWorkspaceFolder('b', '/repo/b', 1);
     const targetA = workspaceFolderCliPathTarget(folderA);
     const targetB = workspaceFolderCliPathTarget(folderB);
 

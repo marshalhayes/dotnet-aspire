@@ -67,3 +67,21 @@ export function createMockDocument(content: string, filePath: string): vscode.Te
         notebook: undefined as any,
     } as vscode.TextDocument;
 }
+
+/**
+ * Builds a workspace folder whose `fsPath` is exactly `fsPath`, whatever host the tests run on.
+ *
+ * `vscode.Uri.file('/repo/a').fsPath` renders with the host's separators, so on Windows it comes back
+ * as `\\repo\\a`. Any test that hands the result to code taking an explicit platform argument then
+ * stops testing that argument: the path is already Windows-shaped before the POSIX branch sees it.
+ */
+export function createWorkspaceFolder(name: string, fsPath: string, index: number = 0): vscode.WorkspaceFolder {
+    const uri = vscode.Uri.file(fsPath);
+
+    return {
+        // Shadows the Uri prototype's fsPath getter and leaves every other member intact.
+        uri: Object.create(uri, { fsPath: { value: fsPath, enumerable: true } }) as vscode.Uri,
+        name,
+        index,
+    };
+}
