@@ -196,10 +196,10 @@ public static partial class JavaHostingExtensions
         var rb = builder.AddJavaApp(name, appDirectory);
 
         rb.WithAnnotation(
-            // Only the separators are normalized. The path is deliberately not made absolute: the process
-            // runs with the working directory as its cwd, so a relative path resolves correctly at
-            // runtime, and keeping it relative keeps the published manifest free of machine-specific paths.
-            new JavaJarPathAnnotation(jarPath.Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar)),
+            // Keep the authored text in the model so diagnostics can quote the path the user recognizes.
+            // Run and publish normalize only when crossing into their execution environment instead of
+            // baking the AppHost's path semantics into a value that also targets a Linux container.
+            new JavaJarPathAnnotation(jarPath),
             ResourceAnnotationMutationBehavior.Replace);
 
         if (args.Length > 0)
@@ -1098,7 +1098,7 @@ public static partial class JavaHostingExtensions
         if (resource.TryGetLastAnnotation<JavaJarPathAnnotation>(out var jar))
         {
             ctx.Args.Add("-jar");
-            ctx.Args.Add(jar.JarPath);
+            ctx.Args.Add(NormalizePathForJava(jar.JarPath));
 
             return;
         }
@@ -1110,6 +1110,13 @@ public static partial class JavaHostingExtensions
             $"Java application '{resource.Name}' has no launch mode configured. Call {nameof(WithMavenGoal)} " +
             $"or {nameof(WithGradleTask)} to run it through a build tool, or use the {nameof(AddJavaApp)} " +
             "overload that takes a jarPath to run a prebuilt JAR.");
+    }
+
+    private static string NormalizePathForJava(string path)
+    {
+        // Java accepts '/' on Windows, so one target-neutral form preserves authored forward slashes
+        // while also making a Windows-authored relative path usable on Linux and macOS.
+        return path.Replace('\\', '/');
     }
 
     /// <summary>
@@ -1300,6 +1307,13 @@ public static partial class JavaHostingExtensions
     /// <c>-Djavax.net.ssl.trustStore=C:\Users\First Last\AppData\...\bundle.p12</c> arrives as two
     /// unrelated options and TLS fails with no useful diagnostic. Only the value after the first
     /// <c>=</c> is quoted, because the JVM does not accept a quoted <c>-Dkey=value</c> as a whole.
+    /// <para>
+    /// An option that already contains a quote is passed through untouched. Quoting it again would turn
+    /// an author's own <c>-Dmsg="hi there"</c> into <c>-Dmsg=""hi there""</c>, and deciding whether the
+    /// existing quotes already cover the whitespace needs a real shell-style parser. Handing the option
+    /// back unchanged leaves quoting to the author who introduced it, which is the only reading that
+    /// cannot corrupt an already-correct value.
+    /// </para>
     /// </remarks>
     private static string QuoteIfNeeded(string option)
     {
@@ -1483,8 +1497,9 @@ public static partial class JavaHostingExtensions
         }
 
         // Resolved to an absolute path because the adapter reads the archive before the debuggee's
-        // working directory exists. Path.Combine returns jar.JarPath unchanged when already absolute.
-        var jarPath = Path.GetFullPath(Path.Combine(resource.WorkingDirectory, jar.JarPath));
+        // working directory exists. Normalize first because a Windows-authored relative path otherwise
+        // names a literal backslash-containing file when the AppHost runs on Linux or macOS.
+        var jarPath = Path.GetFullPath(Path.Combine(resource.WorkingDirectory, NormalizePathForJava(jar.JarPath)));
 
         return (explicitMainClass ?? TryReadJarManifestMainClass(jarPath), [jarPath]);
     }
