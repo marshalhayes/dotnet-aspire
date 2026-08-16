@@ -1,6 +1,8 @@
 import * as assert from 'assert';
 import * as sinon from 'sinon';
 import * as vscode from 'vscode';
+import * as path from 'path';
+import { createWorkspaceFolder } from './testHelpers';
 import {
     ASPIRE_CLI_PATH_ENV_VAR,
     CliPathEnvironmentCollection,
@@ -531,8 +533,13 @@ suite('cliPathEnvironment.registerCliPathEnvironmentSync tests', () => {
 });
 
 suite('CliPathEnvironmentSynchronizer tests', () => {
-    const folderA = createWorkspaceFolder('/repo/a', 'a', 0);
-    const folderB = createWorkspaceFolder('/repo/b', 'b', 1);
+    const folderA = createWorkspaceFolder('a', '/repo/a', 0);
+    const folderB = createWorkspaceFolder('b', '/repo/b', 1);
+
+    // `expandConfiguredCliPath` normalizes an expanded `${workspaceFolder}` token with the
+    // platform's path library, so these become `\repo\a\aspire` / `\repo\b\aspire` on Windows.
+    const folderACliPath = path.normalize('/repo/a/aspire');
+    const folderBCliPath = path.normalize('/repo/b/aspire');
 
     test('applies independent AspireCliPath mutations and clears a removed folder', async () => {
         const workspaceFoldersEmitter = new vscode.EventEmitter<vscode.WorkspaceFoldersChangeEvent>();
@@ -769,7 +776,7 @@ suite('CliPathEnvironmentSynchronizer tests', () => {
             isConfiguredPathAutoConfigured: () => false,
             findOnPath: async () => '/fallback/aspire',
             findAtDefaultPath: async () => undefined,
-            tryExecute: async candidate => candidate === '/repo/a/aspire',
+            tryExecute: async candidate => candidate === folderACliPath,
             getExecutableCandidates: candidate => [candidate],
             setConfiguredPath: async () => { },
         };
@@ -784,8 +791,8 @@ suite('CliPathEnvironmentSynchronizer tests', () => {
         await synchronizer.initialize();
         await new Promise<void>(resolve => setImmediate(resolve));
 
-        assert.strictEqual(scopedCollection.entries.get(ASPIRE_CLI_PATH_ENV_VAR), '/repo/a/aspire');
-        assert.ok(replaceSpy.calledOnceWithExactly(ASPIRE_CLI_PATH_ENV_VAR, '/repo/a/aspire'));
+        assert.strictEqual(scopedCollection.entries.get(ASPIRE_CLI_PATH_ENV_VAR), folderACliPath);
+        assert.ok(replaceSpy.calledOnceWithExactly(ASPIRE_CLI_PATH_ENV_VAR, folderACliPath));
 
         synchronizer.dispose();
         resolver.dispose();
@@ -810,7 +817,7 @@ suite('CliPathEnvironmentSynchronizer tests', () => {
             findOnPath: async () => '/fallback/aspire',
             findAtDefaultPath: async () => undefined,
             tryExecute: candidate => {
-                if (candidate === '/repo/a/aspire') {
+                if (candidate === folderACliPath) {
                     oldProbeStarted!();
                     return oldProbe;
                 }
@@ -860,7 +867,7 @@ suite('CliPathEnvironmentSynchronizer tests', () => {
             isConfiguredPathAutoConfigured: () => false,
             findOnPath: async () => 'aspire',
             findAtDefaultPath: async () => undefined,
-            tryExecute: async candidate => candidate === '/repo/b/aspire',
+            tryExecute: async candidate => candidate === folderBCliPath,
             getExecutableCandidates: candidate => [candidate],
             setConfiguredPath: async () => { },
         };
@@ -879,7 +886,7 @@ suite('CliPathEnvironmentSynchronizer tests', () => {
         await synchronizer.initialize();
         assert.strictEqual(
             scopedCollections.get(folderA.uri.toString())?.entries.get(ASPIRE_CLI_PATH_ENV_VAR),
-            '/repo/b/aspire');
+            folderBCliPath);
 
         workspaceFolders = [folderA];
         workspaceFoldersEmitter.fire({ added: [], removed: [folderB] });
@@ -894,10 +901,6 @@ suite('CliPathEnvironmentSynchronizer tests', () => {
         workspaceFoldersEmitter.dispose();
     });
 });
-
-function createWorkspaceFolder(folderPath: string, name: string, index: number): vscode.WorkspaceFolder {
-    return { uri: vscode.Uri.file(folderPath), name, index };
-}
 
 function createFakeGlobalCollection(
     scopedCollections: Map<string, ReturnType<typeof createFakeCollection>>,
