@@ -587,7 +587,11 @@ public class AddJavaAppTests
         var envVars = await EnvironmentVariableEvaluator.GetEnvironmentVariablesAsync(
             app.Resource, DistributedApplicationOperation.Run, TestServiceProvider.Instance);
 
-        Assert.True(envVars.ContainsKey("OTEL_EXPORTER_OTLP_ENDPOINT"));
+        Assert.False(string.IsNullOrEmpty(envVars["OTEL_EXPORTER_OTLP_ENDPOINT"]));
+
+        // The other half of what this test claims: no agent was requested, so nothing should have put
+        // -javaagent on the JVM. Without this the test passes just as happily when an agent is wired.
+        Assert.False(envVars.ContainsKey("JAVA_TOOL_OPTIONS"));
     }
 
     [Fact]
