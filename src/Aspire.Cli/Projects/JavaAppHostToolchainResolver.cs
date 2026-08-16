@@ -270,7 +270,7 @@ internal static class JavaAppHostToolchainResolver
             DetectionPatterns = baseRuntimeSpec.DetectionPatterns,
             Initialize = baseRuntimeSpec.Initialize,
             InstallDependencies = CreateInstallCommand(toolchain, invocation, projectPath),
-            PreExecute = [CreateCompileCommand(baseRuntimeSpec, classesDirectory, dependencyDirectory)],
+            PreExecute = [CreateCompileCommand(baseRuntimeSpec, projectPath, classesDirectory, dependencyDirectory)],
             Execute = CreateExecuteCommand(classesDirectory, dependencyDirectory),
             WatchExecute = baseRuntimeSpec.WatchExecute,
             PublishExecute = baseRuntimeSpec.PublishExecute,
@@ -498,7 +498,7 @@ internal static class JavaAppHostToolchainResolver
     /// compiler — does not apply to <c>AppHost.java</c>.
     /// </para>
     /// </remarks>
-    private static CommandSpec CreateCompileCommand(RuntimeSpec baseRuntimeSpec, string classesDirectory, string dependencyDirectory)
+    private static CommandSpec CreateCompileCommand(RuntimeSpec baseRuntimeSpec, string? projectPath, string classesDirectory, string dependencyDirectory)
     {
         var baseCompile = baseRuntimeSpec.PreExecute?.FirstOrDefault()
             ?? throw new InvalidOperationException("The Java runtime spec has no compile step to adapt for a build tool.");
@@ -540,7 +540,25 @@ internal static class JavaAppHostToolchainResolver
         return new CommandSpec
         {
             Command = baseCompile.Command,
-            Args = args
+            Args = args,
+            // The stamp has to move with the output directory. Left in .java-build it would survive a
+            // `mvn clean`, and the next launch would skip a compile whose classes had just been deleted.
+            UpToDateCheck = baseCompile.UpToDateCheck is null
+                ? null
+                : new CommandUpToDateCheck
+                {
+                    // The base spec guesses at "src/main/java" relative to the AppHost directory, which
+                    // is only right for the flat layout. Here the project's real source root is known,
+                    // so it replaces the guess: under the conventional layout that root *is* the AppHost
+                    // directory, and it has to be scanned recursively for the packages beneath it.
+                    Inputs =
+                    [
+                        .. baseCompile.UpToDateCheck.Inputs.Where(static input => !input.StartsWith("src/main/java", StringComparison.Ordinal)),
+                        $"{CombineProjectPath(projectPath, Path.Combine("src", "main", "java"))}/**"
+                    ],
+                    FileExtensions = baseCompile.UpToDateCheck.FileExtensions,
+                    StampFile = Path.Combine(classesDirectory, Path.GetFileName(baseCompile.UpToDateCheck.StampFile))
+                }
         };
     }
 

@@ -164,7 +164,12 @@ internal sealed class JavaLanguageSupport : ILanguageSupport
     /// works without a shell and stays well under the command-line length limit even though the
     /// generated SDK is hundreds of files.
     /// </remarks>
-    private const string GeneratedSourcesListPath = ".aspire/modules/sources.txt";
+    private const string GeneratedSourcesListPath = $"{GeneratedSourcesDirectory}/sources.txt";
+
+    /// <summary>
+    /// Directory the generated SDK sources are written to.
+    /// </summary>
+    private const string GeneratedSourcesDirectory = ".aspire/modules";
 
     /// <summary>
     /// Class that the scaffolded AppHost compiles to.
@@ -173,6 +178,48 @@ internal sealed class JavaLanguageSupport : ILanguageSupport
     /// The AppHost is declared in the default package, so this is also its fully qualified name.
     /// </remarks>
     private const string AppHostClassName = "AppHost";
+
+    /// <summary>
+    /// Name of the file written after a successful compile, used to skip the next one.
+    /// </summary>
+    internal const string CompileStampFileName = ".aspire-compile-stamp";
+
+    /// <summary>
+    /// Builds the up-to-date check that lets an unchanged AppHost skip <c>javac</c> entirely.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// javac given an explicit list of sources recompiles every one of them, so without this the
+    /// generated SDK — several hundred files — is recompiled on every launch even when nothing
+    /// changed. Every other supported language either has an incremental compiler of its own or no
+    /// compile step at all, so this is what brings Java to the same startup cost.
+    /// </para>
+    /// <para>
+    /// The inputs are exactly javac's source roots: the AppHost file, the sources beside it, the
+    /// generated SDK, and <c>src/main/java</c> for the layout where the AppHost sits at the project
+    /// root. The AppHost directory is deliberately not recursive — the sibling trees in a typical
+    /// solution (a JavaScript front end, another service) are not javac inputs, and walking them on
+    /// every launch would give back the time this saves.
+    /// </para>
+    /// </remarks>
+    /// <param name="classOutputDirectory">Directory javac writes classes to, which is where the stamp lives.</param>
+    internal static CommandUpToDateCheck CreateCompileUpToDateCheck(string classOutputDirectory)
+    {
+        return new CommandUpToDateCheck
+        {
+            Inputs =
+            [
+                "{appHostFile}",
+                ".",
+                $"{GeneratedSourcesDirectory}/**",
+                "src/main/java/**"
+            ],
+            // Only sources are inputs. Without this the .class files javac writes beside the sources in
+            // the flat layout would invalidate the very check they were produced under.
+            FileExtensions = [".java"],
+            StampFile = Path.Combine(classOutputDirectory, CompileStampFileName)
+        };
+    }
 
     /// <inheritdoc />
     public RuntimeSpec GetRuntimeSpec()
@@ -197,7 +244,8 @@ internal sealed class JavaLanguageSupport : ILanguageSupport
                     // re-split: a project under a path such as "C:\My Projects" works unchanged, on
                     // Windows and Unix alike, from a single spec.
                     Command = "javac",
-                    Args = [.. s_javacOptions, "-d", BuildOutputDirectory, $"@{GeneratedSourcesListPath}", "{appHostFile}"]
+                    Args = [.. s_javacOptions, "-d", BuildOutputDirectory, $"@{GeneratedSourcesListPath}", "{appHostFile}"],
+                    UpToDateCheck = CreateCompileUpToDateCheck(BuildOutputDirectory)
                 }
             ],
             // Debugging the AppHost itself goes through the same Java debug adapter the resources use.

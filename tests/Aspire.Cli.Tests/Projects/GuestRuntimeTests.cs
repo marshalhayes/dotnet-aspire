@@ -1044,6 +1044,165 @@ public class GuestRuntimeTests(ITestOutputHelper outputHelper)
         Assert.Equal("test-cmd", launcher.LastCommand);
     }
 
+    [Fact]
+    public async Task RunAsync_WhenPreExecuteHasNoStamp_RunsCommandAndWritesStamp()
+    {
+        using var workspace = TemporaryWorkspace.CreateForCli(outputHelper);
+        var appHostFile = CreateUpToDateWorkspace(workspace.WorkspaceRoot);
+
+        var runtime = CreateRuntime(CreateUpToDateSpec());
+        var launcher = new RecordingLauncher();
+
+        await runtime.RunAsync(appHostFile, workspace.WorkspaceRoot, new Dictionary<string, string>(), watchMode: false, launcher, CancellationToken.None);
+
+        Assert.Contains(launcher.Calls, call => call.Command == "javac");
+        Assert.True(File.Exists(Path.Combine(workspace.WorkspaceRoot.FullName, "classes", ".aspire-compile-stamp")));
+    }
+
+    [Fact]
+    public async Task RunAsync_WhenStampIsNewerThanInputs_SkipsPreExecute()
+    {
+        using var workspace = TemporaryWorkspace.CreateForCli(outputHelper);
+        var appHostFile = CreateUpToDateWorkspace(workspace.WorkspaceRoot);
+        WriteStamp(workspace.WorkspaceRoot, DateTime.UtcNow.AddMinutes(1));
+
+        var runtime = CreateRuntime(CreateUpToDateSpec());
+        var launcher = new RecordingLauncher();
+
+        await runtime.RunAsync(appHostFile, workspace.WorkspaceRoot, new Dictionary<string, string>(), watchMode: false, launcher, CancellationToken.None);
+
+        Assert.DoesNotContain(launcher.Calls, call => call.Command == "javac");
+        Assert.Contains(launcher.Calls, call => call.Command == "java");
+    }
+
+    [Theory]
+    [InlineData("AppHost.java")]
+    [InlineData("Helper.java")]
+    [InlineData(".aspire/modules/com/example/Generated.java")]
+    [InlineData("src/main/java/com/example/Service.java")]
+    public async Task RunAsync_WhenAnyJavaInputIsNewerThanStamp_RunsPreExecute(string relativeInput)
+    {
+        using var workspace = TemporaryWorkspace.CreateForCli(outputHelper);
+        var appHostFile = CreateUpToDateWorkspace(workspace.WorkspaceRoot);
+        WriteStamp(workspace.WorkspaceRoot, DateTime.UtcNow);
+
+        var input = Path.Combine(workspace.WorkspaceRoot.FullName, relativeInput.Replace('/', Path.DirectorySeparatorChar));
+        File.SetLastWriteTimeUtc(input, DateTime.UtcNow.AddMinutes(1));
+
+        var runtime = CreateRuntime(CreateUpToDateSpec());
+        var launcher = new RecordingLauncher();
+
+        await runtime.RunAsync(appHostFile, workspace.WorkspaceRoot, new Dictionary<string, string>(), watchMode: false, launcher, CancellationToken.None);
+
+        Assert.Contains(launcher.Calls, call => call.Command == "javac");
+    }
+
+    [Fact]
+    public async Task RunAsync_UpToDateCheckIgnoresFilesOutsideTheDeclaredExtensions()
+    {
+        using var workspace = TemporaryWorkspace.CreateForCli(outputHelper);
+        var appHostFile = CreateUpToDateWorkspace(workspace.WorkspaceRoot);
+        WriteStamp(workspace.WorkspaceRoot, DateTime.UtcNow);
+
+        // A class file is an output of the compile, not an input to it. Treating it as an input would
+        // make the check permanently stale: every compile rewrites these and would invalidate itself.
+        var classFile = Path.Combine(workspace.WorkspaceRoot.FullName, "AppHost.class");
+        File.WriteAllText(classFile, "");
+        File.SetLastWriteTimeUtc(classFile, DateTime.UtcNow.AddMinutes(1));
+
+        var runtime = CreateRuntime(CreateUpToDateSpec());
+        var launcher = new RecordingLauncher();
+
+        await runtime.RunAsync(appHostFile, workspace.WorkspaceRoot, new Dictionary<string, string>(), watchMode: false, launcher, CancellationToken.None);
+
+        Assert.DoesNotContain(launcher.Calls, call => call.Command == "javac");
+    }
+
+    [Fact]
+    public async Task RunAsync_UpToDateCheckDoesNotRecurseIntoNonRecursiveInputs()
+    {
+        using var workspace = TemporaryWorkspace.CreateForCli(outputHelper);
+        var appHostFile = CreateUpToDateWorkspace(workspace.WorkspaceRoot);
+        WriteStamp(workspace.WorkspaceRoot, DateTime.UtcNow);
+
+        // "." is declared without the recursive marker specifically so that unrelated sibling trees --
+        // a node_modules directory, another service's sources -- neither invalidate the compile nor
+        // have to be walked on every launch.
+        var unrelated = Path.Combine(workspace.WorkspaceRoot.FullName, "frontend", "node_modules", "Vendored.java");
+        Directory.CreateDirectory(Path.GetDirectoryName(unrelated)!);
+        File.WriteAllText(unrelated, "");
+        File.SetLastWriteTimeUtc(unrelated, DateTime.UtcNow.AddMinutes(1));
+
+        var runtime = CreateRuntime(CreateUpToDateSpec());
+        var launcher = new RecordingLauncher();
+
+        await runtime.RunAsync(appHostFile, workspace.WorkspaceRoot, new Dictionary<string, string>(), watchMode: false, launcher, CancellationToken.None);
+
+        Assert.DoesNotContain(launcher.Calls, call => call.Command == "javac");
+    }
+
+    [Fact]
+    public async Task RunAsync_WhenPreExecuteFails_DoesNotWriteStamp()
+    {
+        using var workspace = TemporaryWorkspace.CreateForCli(outputHelper);
+        var appHostFile = CreateUpToDateWorkspace(workspace.WorkspaceRoot);
+
+        var runtime = CreateRuntime(CreateUpToDateSpec());
+        var launcher = new RecordingLauncher();
+        launcher.ExitCodes.Enqueue(1);
+
+        await runtime.RunAsync(appHostFile, workspace.WorkspaceRoot, new Dictionary<string, string>(), watchMode: false, launcher, CancellationToken.None);
+
+        Assert.False(File.Exists(Path.Combine(workspace.WorkspaceRoot.FullName, "classes", ".aspire-compile-stamp")));
+    }
+
+    private static RuntimeSpec CreateUpToDateSpec()
+    {
+        return CreateTestSpec(
+            execute: new CommandSpec { Command = "java", Args = ["AppHost"] },
+            preExecute:
+            [
+                new CommandSpec
+                {
+                    Command = "javac",
+                    Args = ["-d", "classes", "{appHostFile}"],
+                    UpToDateCheck = new CommandUpToDateCheck
+                    {
+                        Inputs = ["{appHostFile}", ".", ".aspire/modules/**", "src/main/java/**"],
+                        FileExtensions = [".java"],
+                        StampFile = Path.Combine("classes", ".aspire-compile-stamp")
+                    }
+                }
+            ]);
+    }
+
+    private static FileInfo CreateUpToDateWorkspace(DirectoryInfo root)
+    {
+        var appHostFile = new FileInfo(Path.Combine(root.FullName, "AppHost.java"));
+        File.WriteAllText(appHostFile.FullName, "class AppHost { }");
+        File.WriteAllText(Path.Combine(root.FullName, "Helper.java"), "class Helper { }");
+
+        var generated = Path.Combine(root.FullName, ".aspire", "modules", "com", "example");
+        Directory.CreateDirectory(generated);
+        File.WriteAllText(Path.Combine(generated, "Generated.java"), "class Generated { }");
+
+        var sources = Path.Combine(root.FullName, "src", "main", "java", "com", "example");
+        Directory.CreateDirectory(sources);
+        File.WriteAllText(Path.Combine(sources, "Service.java"), "class Service { }");
+
+        Directory.CreateDirectory(Path.Combine(root.FullName, "classes"));
+
+        return appHostFile;
+    }
+
+    private static void WriteStamp(DirectoryInfo root, DateTime timestampUtc)
+    {
+        var stamp = Path.Combine(root.FullName, "classes", ".aspire-compile-stamp");
+        Directory.CreateDirectory(Path.GetDirectoryName(stamp)!);
+        File.WriteAllText(stamp, "");
+        File.SetLastWriteTimeUtc(stamp, timestampUtc);
+    }
+
     private sealed class RecordingLauncher : IGuestProcessLauncher
     {
         public List<(string Command, string[] Args)> Calls { get; } = [];

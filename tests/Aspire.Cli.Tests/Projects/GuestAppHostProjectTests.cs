@@ -46,6 +46,47 @@ public class GuestAppHostProjectTests : IDisposable
     }
 
     [Fact]
+    public async Task WriteGeneratedFileIfChangedAsync_WhenContentIsUnchanged_LeavesTimestampAlone()
+    {
+        var filePath = Path.Combine(_workspace.WorkspaceRoot.FullName, "Generated.java");
+        await File.WriteAllTextAsync(filePath, "class Generated { }");
+        var originalWriteTime = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(filePath, originalWriteTime);
+
+        var written = await GuestAppHostProject.WriteGeneratedFileIfChangedAsync(filePath, "class Generated { }", CancellationToken.None);
+
+        Assert.False(written);
+        // The timestamp is the contract: every downstream incremental build decides what to recompile
+        // from it, so regenerating identical content must not look like a change.
+        Assert.Equal(originalWriteTime, File.GetLastWriteTimeUtc(filePath));
+    }
+
+    [Fact]
+    public async Task WriteGeneratedFileIfChangedAsync_WhenContentDiffers_WritesFile()
+    {
+        var filePath = Path.Combine(_workspace.WorkspaceRoot.FullName, "Generated.java");
+        await File.WriteAllTextAsync(filePath, "class Generated { }");
+        File.SetLastWriteTimeUtc(filePath, new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+
+        var written = await GuestAppHostProject.WriteGeneratedFileIfChangedAsync(filePath, "class Generated { int x; }", CancellationToken.None);
+
+        Assert.True(written);
+        Assert.Equal("class Generated { int x; }", await File.ReadAllTextAsync(filePath));
+        Assert.True(File.GetLastWriteTimeUtc(filePath) > new DateTime(2020, 1, 2, 0, 0, 0, DateTimeKind.Utc));
+    }
+
+    [Fact]
+    public async Task WriteGeneratedFileIfChangedAsync_WhenFileIsMissing_WritesFile()
+    {
+        var filePath = Path.Combine(_workspace.WorkspaceRoot.FullName, "New.java");
+
+        var written = await GuestAppHostProject.WriteGeneratedFileIfChangedAsync(filePath, "class New { }", CancellationToken.None);
+
+        Assert.True(written);
+        Assert.Equal("class New { }", await File.ReadAllTextAsync(filePath));
+    }
+
+    [Fact]
     public void AspireJsonConfiguration_LoadOrCreate_SetsDefaultSdkVersion()
     {
         // Arrange

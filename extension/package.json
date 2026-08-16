@@ -977,7 +977,8 @@
           "type": "boolean",
           "default": false,
           "description": "%configuration.aspire.registerMcpServerInWorkspace%",
-          "scope": "window"
+          "scope": "window",
+          "restricted": true
         },
         "aspire.appHostsPollingInterval": {
           "type": "number",

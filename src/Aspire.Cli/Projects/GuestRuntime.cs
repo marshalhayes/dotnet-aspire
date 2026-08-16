@@ -256,6 +256,13 @@ internal sealed class GuestRuntime
             var args = ReplacePlaceholders(commandSpec.Args, appHostFile, directory, null);
             var mergedEnvironment = MergeEnvironmentVariables(environmentVariables, commandSpec);
 
+            var stampFile = ResolveStampFile(commandSpec.UpToDateCheck, appHostFile, directory);
+            if (stampFile is not null && IsUpToDate(commandSpec.UpToDateCheck!, stampFile, appHostFile, directory))
+            {
+                _logger.LogDebug("Skipping up-to-date pre-execution command: {Command}", commandSpec.Command);
+                continue;
+            }
+
             _logger.LogDebug("Launching pre-execution command: {Command} {Args}", commandSpec.Command, string.Join(" ", args));
             using var activity = _profilingTelemetry.StartGuestExecuteCommand(_spec.Language, _spec.DisplayName, commandSpec.Command, args, directory, ProfilingTelemetry.Values.GuestCommandPhasePreExecute);
             var (exitCode, output) = await preExecuteLauncher.LaunchAsync(commandSpec.Command, args, directory, mergedEnvironment, afterLaunchAsync: null, options: null, cancellationToken);
@@ -265,9 +272,136 @@ internal sealed class GuestRuntime
                 activity.SetError($"{_spec.DisplayName} pre-execution exited with code {exitCode}.");
                 return (exitCode, output ?? new OutputCollector());
             }
+
+            if (stampFile is not null)
+            {
+                WriteStamp(stampFile);
+            }
         }
 
         return (0, new OutputCollector());
+    }
+
+    /// <summary>
+    /// Resolves the stamp file for a command's up-to-date check, or null when the command has none.
+    /// </summary>
+    private static FileInfo? ResolveStampFile(CommandUpToDateCheck? check, FileInfo appHostFile, DirectoryInfo directory)
+    {
+        if (check is null)
+        {
+            return null;
+        }
+
+        var resolved = ReplacePlaceholders([check.StampFile], appHostFile, directory, null)[0];
+        return new FileInfo(Path.Combine(directory.FullName, resolved));
+    }
+
+    /// <summary>
+    /// Determines whether every declared input is older than the stamp file.
+    /// </summary>
+    /// <remarks>
+    /// Comparison is strictly "no input newer than the stamp". An input written in the same second as
+    /// the stamp therefore counts as up to date, which matches how make-style checks behave and is
+    /// safe here because the stamp is written after the compile reads its inputs.
+    /// </remarks>
+    private bool IsUpToDate(CommandUpToDateCheck check, FileInfo stampFile, FileInfo appHostFile, DirectoryInfo directory)
+    {
+        stampFile.Refresh();
+        if (!stampFile.Exists)
+        {
+            return false;
+        }
+
+        var stampWriteTime = stampFile.LastWriteTimeUtc;
+        var inputs = ReplacePlaceholders(check.Inputs, appHostFile, directory, null);
+
+        foreach (var input in inputs)
+        {
+            // A spec may name a path only some project layouts have (src/main/java, for instance), so a
+            // missing input is not a change. A missing *output* is handled by the stamp check above.
+            var recursive = input.EndsWith("/**", StringComparison.Ordinal) || input.EndsWith(@"\**", StringComparison.Ordinal);
+            var trimmed = recursive ? input[..^3] : input;
+            var path = Path.IsPathRooted(trimmed) ? trimmed : Path.Combine(directory.FullName, trimmed);
+
+            if (File.Exists(path))
+            {
+                if (MatchesExtension(check, path) && File.GetLastWriteTimeUtc(path) > stampWriteTime)
+                {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (!Directory.Exists(path))
+            {
+                continue;
+            }
+
+            var searchOption = recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
+            IEnumerable<string> files;
+            try
+            {
+                files = Directory.EnumerateFiles(path, "*", searchOption);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // An unreadable input tree cannot be proven unchanged, so fall back to running the command.
+                _logger.LogDebug(ex, "Unable to scan up-to-date check input {Input}; treating the command as out of date.", path);
+                return false;
+            }
+
+            foreach (var file in files)
+            {
+                if (!MatchesExtension(check, file))
+                {
+                    continue;
+                }
+
+                if (File.GetLastWriteTimeUtc(file) > stampWriteTime)
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private static bool MatchesExtension(CommandUpToDateCheck check, string path)
+    {
+        if (check.FileExtensions is null or { Length: 0 })
+        {
+            return true;
+        }
+
+        var extension = Path.GetExtension(path);
+        foreach (var candidate in check.FileExtensions)
+        {
+            if (string.Equals(extension, candidate, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void WriteStamp(FileInfo stampFile)
+    {
+        try
+        {
+            stampFile.Directory?.Create();
+            // The content is never read; only the write time matters. Rewriting rather than touching
+            // keeps this working on file systems where setting a time on a missing file would throw.
+            File.WriteAllBytes(stampFile.FullName, []);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // A stamp that cannot be written only costs the next launch a rebuild, so this must never
+            // be the reason a run fails.
+            _logger.LogDebug(ex, "Unable to write up-to-date stamp {Stamp}.", stampFile.FullName);
+        }
     }
 
     private async Task<(int ExitCode, OutputCollector? Output)> ExecuteCommandAsync(

@@ -1622,6 +1622,7 @@ internal sealed class GuestAppHostProject : IAppHostProject, IGuestAppHostSdkGen
         // Write generated files to the output directory
         Directory.CreateDirectory(outputPath);
 
+        var writtenCount = 0;
         foreach (var (fileName, content) in files)
         {
             var filePath = Path.Combine(outputPath, fileName);
@@ -1630,14 +1631,52 @@ internal sealed class GuestAppHostProject : IAppHostProject, IGuestAppHostSdkGen
             {
                 Directory.CreateDirectory(directory);
             }
-            await File.WriteAllTextAsync(filePath, content, cancellationToken);
+
+            if (await WriteGeneratedFileIfChangedAsync(filePath, content, cancellationToken))
+            {
+                writtenCount++;
+            }
         }
 
         // Write generation hash for caching
         SaveGenerationHash(outputPath, integrationsList);
 
-        _logger.LogInformation("Generated {Count} {CodeGenerator} files in {Path}",
-            files.Count, codeGenerator, outputPath);
+        _logger.LogInformation("Generated {Count} {CodeGenerator} files in {Path} ({WrittenCount} changed)",
+            files.Count, codeGenerator, outputPath, writtenCount);
+    }
+
+    /// <summary>
+    /// Writes a generated file only when its content differs from what is already on disk.
+    /// </summary>
+    /// <remarks>
+    /// The generated SDK is hundreds of files and is regenerated on every launch, but its content is
+    /// identical from one launch to the next unless the app model changed. Rewriting it unconditionally
+    /// moves every last-write time forward, which invalidates every downstream incremental build --
+    /// javac, Maven, Gradle, and the IDE all decide what to rebuild from these timestamps. Comparing
+    /// first costs a read of files that are already in the page cache and keeps those timestamps stable.
+    /// </remarks>
+    /// <returns><see langword="true" /> when the file was written.</returns>
+    internal static async Task<bool> WriteGeneratedFileIfChangedAsync(string filePath, string content, CancellationToken cancellationToken)
+    {
+        if (File.Exists(filePath))
+        {
+            try
+            {
+                var existing = await File.ReadAllTextAsync(filePath, cancellationToken);
+                if (string.Equals(existing, content, StringComparison.Ordinal))
+                {
+                    return false;
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // An unreadable file is rewritten rather than treated as current; the write below
+                // surfaces the real error if it is not transient.
+            }
+        }
+
+        await File.WriteAllTextAsync(filePath, content, cancellationToken);
+        return true;
     }
 
     internal static Dictionary<string, string> ConvertGeneratedFilesForLegacyTypeScriptAppHost(Dictionary<string, string> files)
