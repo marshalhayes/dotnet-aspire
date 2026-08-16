@@ -22,7 +22,9 @@ import {
     expandEnvironmentVariables
 } from '../launchProfiles';
 import { AspireDebugSession } from '../AspireDebugSession';
-import { createAspireCliPathProcessEnvironment } from '../../utils/cliPathEnvironment';
+import { createResolvedAspireCliPathProcessEnvironment } from '../../utils/cliPathEnvironment';
+import { resolveCliPath } from '../../utils/cliPath';
+import { getCliPathTargetForUri } from '../../utils/cliPathVariables';
 import { getHotReloadDiagnostics, logHotReloadDiagnostics, showHotReloadDisabledAdvisoryIfNeeded } from '../hotReload';
 
 interface IDotNetService {
@@ -66,48 +68,52 @@ export class DotNetService implements IDotNetService {
             extensionLogOutputChannel.info(`Building .NET project: ${projectFile} using dotnet CLI`);
 
             const args = ['build', projectFile];
-            const buildProcess = spawn('dotnet', args, {
-                // The .NET SDK searches for global.json from the process working directory, not the
-                // project argument. Run from the project directory so extension and CLI builds select
-                // the same SDK and repository configuration.
-                cwd: path.dirname(projectFile),
-                env: createAspireCliPathProcessEnvironment()
-            });
 
-            let stdoutOutput = '';
-            let stderrOutput = '';
+            void (async () => {
+                const { cliPath } = await resolveCliPath(getCliPathTargetForUri(vscode.Uri.file(projectFile)));
+                const buildProcess = spawn('dotnet', args, {
+                    // The .NET SDK searches for global.json from the process working directory, not the
+                    // project argument. Run from the project directory so extension and CLI builds select
+                    // the same SDK and repository configuration.
+                    cwd: path.dirname(projectFile),
+                    env: createResolvedAspireCliPathProcessEnvironment(cliPath)
+                });
 
-            // Stream stdout in real-time
-            buildProcess.stdout?.on('data', (data: Buffer) => {
-                const output = data.toString();
-                stdoutOutput += output;
-                this.writeToDebugConsole(output, 'stdout');
-            });
+                let stdoutOutput = '';
+                let stderrOutput = '';
 
-            // Stream stderr in real-time
-            buildProcess.stderr?.on('data', (data: Buffer) => {
-                const output = data.toString();
-                stderrOutput += output;
-                this.writeToDebugConsole(output, 'stderr');
-            });
+                // Stream stdout in real-time
+                buildProcess.stdout?.on('data', (data: Buffer) => {
+                    const output = data.toString();
+                    stdoutOutput += output;
+                    this.writeToDebugConsole(output, 'stdout');
+                });
 
-            buildProcess.on('error', (err) => {
-                extensionLogOutputChannel.error(`dotnet build process error: ${err}`);
-                reject(new Error(buildFailedForProjectWithError(projectFile, err.message)));
-            });
+                // Stream stderr in real-time
+                buildProcess.stderr?.on('data', (data: Buffer) => {
+                    const output = data.toString();
+                    stderrOutput += output;
+                    this.writeToDebugConsole(output, 'stderr');
+                });
 
-            buildProcess.on('close', (code) => {
-                if (code === 0) {
-                    // if build succeeds, simply return. otherwise throw to trigger error handling
-                    if (stderrOutput) {
-                        reject(createErrorWithStreamedDebugConsoleOutput(stderrOutput));
+                buildProcess.on('error', (err) => {
+                    extensionLogOutputChannel.error(`dotnet build process error: ${err}`);
+                    reject(new Error(buildFailedForProjectWithError(projectFile, err.message)));
+                });
+
+                buildProcess.on('close', (code) => {
+                    if (code === 0) {
+                        // if build succeeds, simply return. otherwise throw to trigger error handling
+                        if (stderrOutput) {
+                            reject(createErrorWithStreamedDebugConsoleOutput(stderrOutput));
+                        } else {
+                            resolve();
+                        }
                     } else {
-                        resolve();
+                        reject(createErrorWithStreamedDebugConsoleOutput(buildFailedForProjectWithError(projectFile, stdoutOutput || stderrOutput || `Exit code ${code}`)));
                     }
-                } else {
-                    reject(createErrorWithStreamedDebugConsoleOutput(buildFailedForProjectWithError(projectFile, stdoutOutput || stderrOutput || `Exit code ${code}`)));
-                }
-            });
+                });
+            })().catch(reject);
         });
     }
 
@@ -121,10 +127,11 @@ export class DotNetService implements IDotNetService {
             '-property:GenerateFullPaths=true'
         ];
         try {
+            const { cliPath } = await resolveCliPath(getCliPathTargetForUri(vscode.Uri.file(projectFile)));
             const { stdout } = await this.execFileAsync('dotnet', args, {
                 cwd: path.dirname(projectFile),
                 encoding: 'utf8',
-                env: createAspireCliPathProcessEnvironment()
+                env: createResolvedAspireCliPathProcessEnvironment(cliPath)
             });
             const output = stdout.trim();
             if (!output) {
@@ -149,9 +156,10 @@ export class DotNetService implements IDotNetService {
 
                 extensionLogOutputChannel.info('dotnet run-api - starting process');
 
+                const { cliPath } = await resolveCliPath(getCliPathTargetForUri(vscode.Uri.file(projectPath)));
                 childProcess = spawn('dotnet', ['run-api'], {
                     cwd: path.dirname(projectPath),
-                    env: createAspireCliPathProcessEnvironment({ ...process.env, ...environment }),
+                    env: createResolvedAspireCliPathProcessEnvironment(cliPath, { ...process.env, ...environment }),
                     stdio: ['pipe', 'pipe', 'pipe']
                 });
 

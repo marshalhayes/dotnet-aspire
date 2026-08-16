@@ -31,6 +31,7 @@ import { getAppHostTargetVersion } from "../utils/appHostTargetVersion";
 import type { AspireDebugConsoleOutputEvent } from "../types/extensionApi";
 import { appHostRestartSourceSessionIdConfigKey, appHostSelectionOriginConfigKey, appHostTelemetryTargetPathConfigKey } from "./AspireDebugConfigurationMetadata";
 import { AppHostParentOutputFilter } from "./session/appHostParentOutputFilter";
+import { getCliPathTargetForUri, windowCliPathTarget } from "../utils/cliPathVariables";
 import { DashboardLauncher, type DashboardBrowserType, type DashboardLauncherHost } from "./session/dashboardLauncher";
 import { describeStopFailure, startStop, stopSessionInBackground } from "./session/stopHelpers";
 
@@ -1024,7 +1025,14 @@ export class AspireDebugSession implements vscode.DebugAdapter, DashboardLaunche
       return partial;
     };
 
-    const cliPath = await this._terminalProvider.getAspireCliExecutablePath();
+    // Prefer the AppHost path this session actually resolved to, falling back to the raw
+    // configured program, then to the working directory when neither identifies an AppHost.
+    // A path outside every open workspace folder falls back to the window scope.
+    const cliPathTargetSource = this.resolvedAppHostPath ?? this.appHostPath ?? workingDirectory;
+    const cliPathTarget = cliPathTargetSource !== undefined
+      ? getCliPathTargetForUri(vscode.Uri.file(cliPathTargetSource))
+      : windowCliPathTarget;
+    const cliPath = await this._terminalProvider.getAspireCliExecutablePath(cliPathTarget);
     if (this.isShuttingDown) {
       // CLI resolution can outlive shutdown. Spawning now would create a detached `aspire run`
       // after every teardown owner has already started or completed its cleanup.

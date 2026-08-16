@@ -5,6 +5,7 @@ import { findAspireSettingsFiles } from './workspace';
 import { ChildProcessWithoutNullStreams } from 'child_process';
 import { spawnCliProcess } from './process/cliProcess';
 import { AspireTerminalProvider } from './AspireTerminalProvider';
+import { getCliPathTargetForUri } from './cliPathVariables';
 import { extensionLogOutputChannel } from './logging';
 import { getEnableAutoRestore } from './settings';
 import { runningAspireRestore, runningAspireRestoreProgress, aspireRestoreCompleted, aspireRestoreAllCompleted, aspireRestoreFailed, aspireRestoreFailedStatusBar } from '../loc/strings';
@@ -160,7 +161,7 @@ export class AspirePackageRestoreProvider implements vscode.Disposable {
         }
 
         try {
-            await this._runRestore(configDir, relativePath);
+            await this._runRestore(uri, configDir, relativePath);
             // Only update baseline after successful restore so a retry is attempted on next change
             this._lastContent.set(uri.fsPath, content);
             this._failedDirs.delete(configDir);
@@ -178,12 +179,12 @@ export class AspirePackageRestoreProvider implements vscode.Disposable {
         }
     }
 
-    private async _runRestore(configDir: string, relativePath: string): Promise<void> {
+    private async _runRestore(uri: vscode.Uri, configDir: string, relativePath: string): Promise<void> {
         this._active.set(configDir, relativePath);
         this._showProgress();
 
         try {
-            const cliPath = await this._terminalProvider.getAspireCliExecutablePath();
+            const cliPath = await this._terminalProvider.getAspireCliExecutablePath(getCliPathTargetForUri(uri));
             await new Promise<void>((resolve, reject) => {
                 let settled = false;
                 const proc = spawnCliProcess(this._terminalProvider, cliPath, ['restore'], {

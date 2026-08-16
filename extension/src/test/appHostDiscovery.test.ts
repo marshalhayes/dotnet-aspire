@@ -14,7 +14,7 @@ import * as configInfoProvider from '../utils/configInfoProvider';
 import { lsJsonStreamCapability } from '../types/configInfo';
 import { __resetCommonPropertiesForTests, __setReporterForTests } from '../utils/telemetry';
 import { appHostDiscoveryFindFilesMaxResults } from '../utils/workspaceFileSearch';
-import { workspaceFolderCliPathTarget } from '../utils/cliPathVariables';
+import { workspaceFolderCliPathTarget, getCliPathTargetKey } from '../utils/cliPathVariables';
 
 interface RecordedEvent {
     name: string;
@@ -1493,9 +1493,9 @@ suite('AppHost discovery', () => {
                     { cliPath: 'old-aspire', args: ['ls', '--format', 'json', '--nologo'] },
                     { cliPath: 'new-aspire', args: ['ls', '--format', 'json', '--stream', '--nologo'] },
                 ]);
-                assert.deepStrictEqual(getConfigInfoStub.getCalls().map(call => call.args[0]), [
-                    { suppressErrors: true, forceRefresh: false, cliPath: 'old-aspire' },
-                    { suppressErrors: true, forceRefresh: false, cliPath: 'new-aspire' },
+                assert.deepStrictEqual(getConfigInfoStub.getCalls().map(call => ({ ...call.args[0], target: getCliPathTargetKey(call.args[0].target) })), [
+                    { suppressErrors: true, forceRefresh: false, cliPath: 'old-aspire', target: getCliPathTargetKey(workspaceFolderCliPathTarget(makeWorkspaceFolder(buildPath('workspace-one')))) },
+                    { suppressErrors: true, forceRefresh: false, cliPath: 'new-aspire', target: getCliPathTargetKey(workspaceFolderCliPathTarget(makeWorkspaceFolder(buildPath('workspace-two')))) },
                 ]);
             }
             finally {
@@ -1530,8 +1530,8 @@ suite('AppHost discovery', () => {
                     ['ls', '--format', 'json', '--stream', '--nologo'],
                 ]);
                 assert.deepStrictEqual(getConfigInfoStub.getCalls().map(call => call.args[0]), [
-                    { suppressErrors: true, forceRefresh: false, cliPath: 'aspire' },
-                    { suppressErrors: true, forceRefresh: true, cliPath: 'aspire' },
+                    { suppressErrors: true, forceRefresh: false, cliPath: 'aspire', target: workspaceFolderCliPathTarget(workspaceFolder) },
+                    { suppressErrors: true, forceRefresh: true, cliPath: 'aspire', target: workspaceFolderCliPathTarget(workspaceFolder) },
                 ]);
             }
             finally {

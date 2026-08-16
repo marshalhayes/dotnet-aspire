@@ -699,8 +699,6 @@ export const onDidChangeResolvedCliPathForForwarding = legacyResolvedCliPathForF
  * callers; it resolves against `windowCliPathTarget` with the supplied dependencies. The two
  * shapes are discriminated by the `kind` property, which only a `CliPathResolutionTarget` has.
  */
-export function resolveCliPath(target?: CliPathResolutionTarget): Promise<CliPathResolutionResult>;
-export function resolveCliPath(deps?: CliPathDependencies): Promise<CliPathResolutionResult>;
 export function resolveCliPath(
     targetOrDeps?: CliPathResolutionTarget | CliPathDependencies,
 ): Promise<CliPathResolutionResult> {

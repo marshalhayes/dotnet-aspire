@@ -142,6 +142,51 @@ export function createAspireCliPathProcessEnvironment(
     };
 }
 
+/**
+ * Builds a child process environment that forwards exactly the concrete, already-resolved CLI
+ * path a caller is about to invoke (or run against a project via `dotnet build`/`msbuild`/
+ * `dotnet run-api`), rather than re-reading the configured setting.
+ *
+ * Unlike {@link createAspireCliPathProcessEnvironment}, this does not consult configured-path
+ * rejection state: the caller already resolved and is about to run this exact executable, so a
+ * *different* configured value being rejected must not suppress it. When the resolved path is
+ * not forwardable (relative, missing, or an unbundled framework-dependent build), any stale
+ * `AspireCliPath` already present in `baseEnv` is removed instead of being left to point at a
+ * different CLI than the one actually running.
+ */
+export function createResolvedAspireCliPathProcessEnvironment(
+    resolvedCliPath: string | undefined,
+    baseEnv: NodeJS.ProcessEnv = process.env,
+    deps: ResolvedCliPathDependencies = defaultResolvedCliPathDeps,
+): NodeJS.ProcessEnv {
+    const env = { ...baseEnv };
+    const forwardablePath = getForwardableResolvedAspireCliPath(resolvedCliPath, deps);
+    if (forwardablePath === undefined) {
+        deleteEnvVarCaseInsensitive(env, ASPIRE_CLI_PATH_ENV_VAR);
+        return env;
+    }
+
+    env[ASPIRE_CLI_PATH_ENV_VAR] = forwardablePath;
+    return env;
+}
+
+// Windows environment variable names are case-insensitive, so a stale `AspireCliPath` (or
+// `ASPIRECLIPATH`, etc.) already in `baseEnv` must be removed regardless of casing, matching the
+// case-insensitive override semantics `mergeCliSpawnEnvironment` applies to spawned CLI processes.
+function deleteEnvVarCaseInsensitive(env: NodeJS.ProcessEnv, name: string): void {
+    if (process.platform !== 'win32') {
+        delete env[name];
+        return;
+    }
+
+    const lowerName = name.toLowerCase();
+    for (const key of Object.keys(env)) {
+        if (key.toLowerCase() === lowerName) {
+            delete env[key];
+        }
+    }
+}
+
 function fileExists(filePath: string): boolean {
     try {
         return fs.statSync(filePath).isFile();

@@ -6,6 +6,7 @@ import { extensionLogOutputChannel } from './logging';
 import { ConfigInfo, FeatureInfo, PropertyInfo, SettingsSchema } from '../types/configInfo';
 import * as strings from '../loc/strings';
 import { isNoLogoUnsupportedOutput, noLogoOption, removeRootNoLogoOption } from './cliCompatibility';
+import { CliPathResolutionTarget, windowCliPathTarget } from './cliPathVariables';
 
 const configInfoTimeoutMs = 30_000;
 
@@ -42,10 +43,12 @@ export async function getConfigInfo(terminalProvider: AspireTerminalProvider): P
     return new ConfigInfoProvider(terminalProvider).getConfigInfo();
 }
 
-interface ConfigInfoOptions {
+export interface ConfigInfoOptions {
     suppressErrors?: boolean;
     forceRefresh?: boolean;
     cliPath?: string;
+    /** The resolution scope to use when `cliPath` is not already known. Defaults to the window scope. */
+    target?: CliPathResolutionTarget;
 }
 
 /**
@@ -81,7 +84,7 @@ export class ConfigInfoProvider {
     async getConfigInfo(options?: ConfigInfoOptions): Promise<ConfigInfo | null> {
         const suppressErrors = options?.suppressErrors ?? false;
         const startTime = Date.now();
-        const cliPath = options?.cliPath ?? await this._resolveCliPath(suppressErrors);
+        const cliPath = options?.cliPath ?? await this._resolveCliPath(suppressErrors, options?.target ?? windowCliPathTarget);
         if (!cliPath) {
             return null;
         }
@@ -156,7 +159,7 @@ export class ConfigInfoProvider {
         }
     }
 
-    private _resolveCliPath(suppressErrors: boolean): Promise<string | null> {
+    private _resolveCliPath(suppressErrors: boolean, target: CliPathResolutionTarget): Promise<string | null> {
         return new Promise<string | null>((resolve) => {
             let settled = false;
             const settle = (result: string | null) => {
@@ -182,7 +185,7 @@ export class ConfigInfoProvider {
             }, configInfoTimeoutMs);
 
             try {
-                this._terminalProvider.getAspireCliExecutablePath().then(
+                this._terminalProvider.getAspireCliExecutablePath(target).then(
                     cliPath => settle(cliPath),
                     reportError);
             }

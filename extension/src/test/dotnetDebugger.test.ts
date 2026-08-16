@@ -447,7 +447,7 @@ suite('Dotnet Debugger Extension Tests', () => {
         });
         const folder = { name: 'workspace', index: 0, uri: vscode.Uri.file(projectDirectory) } as vscode.WorkspaceFolder;
         sinon.stub(vscode.workspace, 'getWorkspaceFolder').callsFake((uri: vscode.Uri) =>
-            uri.fsPath === projectDirectory ? folder : undefined);
+            uri.fsPath.startsWith(projectDirectory) ? folder : undefined);
         const resolveCliPathStub = sinon.stub(cliPathModule, 'resolveCliPath').resolves({ cliPath: '/resolved/aspire', available: true, source: 'configured' });
         const resolvedEnv = { MARKER: 'resolved-env' } as unknown as NodeJS.ProcessEnv;
         const createResolvedEnvStub = sinon.stub(cliPathEnvironmentModule, 'createResolvedAspireCliPathProcessEnvironment').returns(resolvedEnv);
