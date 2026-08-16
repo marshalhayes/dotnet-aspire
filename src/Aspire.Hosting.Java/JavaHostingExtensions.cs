@@ -1512,10 +1512,10 @@ public static partial class JavaHostingExtensions
         var wrapperName = JavaBuildToolResolver.GetDefaultWrapperName(tool, OperatingSystem.IsWindows());
 
         throw new DistributedApplicationException(
-            $"Java application '{resource.Name}' has no {wrapperName} in '{resource.WorkingDirectory}'. " +
-            $"Aspire runs Java applications through the project's own wrapper so that every build uses " +
-            $"the tool version the repository pins. Generate one with {GenerateWrapperCommand(tool)}, " +
-            $"or point at an existing wrapper with {nameof(WithWrapperPath)}.");
+            $"Java application '{resource.Name}' has no {wrapperName} in '{resource.WorkingDirectory}' " +
+            $"or in the build root above it. Aspire runs Java applications through the project's own " +
+            $"wrapper so that every build uses the tool version the repository pins. Generate one with " +
+            $"{GenerateWrapperCommand(tool)}, or point at an existing wrapper with {nameof(WithWrapperPath)}.");
     }
 
     /// <summary>

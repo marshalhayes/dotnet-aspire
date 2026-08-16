@@ -341,6 +341,65 @@ public class AddJavaAppTests
     }
 
     [Fact]
+    public async Task WithGradleTask_FindsTheWrapperAtTheRootOfAMultiProjectBuild()
+    {
+        // A Gradle multi-project build has exactly one gradlew, at the root next to settings.gradle.
+        // Subprojects never carry their own, so a resource pointed at services/api has to walk up to it.
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+        using var repo = new TempJavaAppDirectory();
+        repo.WriteWrapper(JavaHostingExtensions.s_defaultGradleWrapper);
+        File.WriteAllText(Path.Combine(repo.Path, "settings.gradle"), "include 'services:api'");
+        var module = Directory.CreateDirectory(Path.Combine(repo.Path, "services", "api")).FullName;
+        File.WriteAllText(Path.Combine(module, "build.gradle"), "");
+
+        var app = builder.AddJavaApp("api", module).WithGradleTask("bootRun");
+
+        var args = await ArgumentEvaluator.GetArgumentListAsync(app.Resource);
+
+        var expectedWrapper = Path.GetFullPath(Path.Combine(repo.Path, JavaHostingExtensions.s_defaultGradleWrapper));
+        Assert.Equal(ExpectedWrapperInvocation.Command(), app.Resource.Command);
+        Assert.Equal(ExpectedWrapperInvocation.Args(expectedWrapper, module, "bootRun"), args);
+    }
+
+    [Fact]
+    public async Task WithMavenGoal_FindsTheWrapperAtTheRootOfAMultiModuleBuild()
+    {
+        // Maven multi-module repositories keep mvnw next to the aggregator pom, not in each module.
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+        using var repo = new TempJavaAppDirectory();
+        repo.WriteWrapper(JavaHostingExtensions.s_defaultMavenWrapper);
+        File.WriteAllText(Path.Combine(repo.Path, "pom.xml"), "<project />");
+        var module = Directory.CreateDirectory(Path.Combine(repo.Path, "services", "api")).FullName;
+        File.WriteAllText(Path.Combine(module, "pom.xml"), "<project />");
+
+        var app = builder.AddJavaApp("api", module).WithMavenGoal("spring-boot:run");
+
+        var args = await ArgumentEvaluator.GetArgumentListAsync(app.Resource);
+
+        var expectedWrapper = Path.GetFullPath(Path.Combine(repo.Path, JavaHostingExtensions.s_defaultMavenWrapper));
+        Assert.Equal(ExpectedWrapperInvocation.Command(), app.Resource.Command);
+        Assert.Equal(ExpectedWrapperInvocation.Args(expectedWrapper, module, "spring-boot:run"), args);
+    }
+
+    [Fact]
+    public async Task WithGradleTask_PrefersTheWrapperInTheApplicationDirectory()
+    {
+        // A module that carries its own wrapper keeps using it, even when an ancestor has one too.
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+        using var repo = new TempJavaAppDirectory();
+        repo.WriteWrapper(JavaHostingExtensions.s_defaultGradleWrapper);
+        var module = Directory.CreateDirectory(Path.Combine(repo.Path, "services", "api")).FullName;
+        File.WriteAllText(Path.Combine(module, JavaHostingExtensions.s_defaultGradleWrapper), "#!/bin/sh\n");
+
+        var app = builder.AddJavaApp("api", module).WithGradleTask("bootRun");
+
+        var args = await ArgumentEvaluator.GetArgumentListAsync(app.Resource);
+
+        var expectedWrapper = Path.GetFullPath(Path.Combine(module, JavaHostingExtensions.s_defaultGradleWrapper));
+        Assert.Equal(ExpectedWrapperInvocation.Args(expectedWrapper, module, "bootRun"), args);
+    }
+
+    [Fact]
     public async Task WithGradleTask_WithArgs_IncludesTaskAndArgs()
     {
         using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);

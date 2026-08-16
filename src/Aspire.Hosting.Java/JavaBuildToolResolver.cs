@@ -52,6 +52,18 @@ internal static class JavaBuildToolResolver
     /// <summary>
     /// Resolves the wrapper selected for a resource on the requested execution platform.
     /// </summary>
+    /// <remarks>
+    /// The application's own directory wins, then the search walks up to the build root. A Gradle
+    /// multi-project build has exactly one <c>gradlew</c>, next to the <c>settings.gradle</c> that
+    /// declares the subprojects, and Maven multi-module repositories keep <c>mvnw</c> next to the
+    /// aggregator POM — so a resource pointed at a module would otherwise never find a wrapper.
+    /// <para>
+    /// An ancestor only qualifies when it also holds that tool's build-root marker, which keeps an
+    /// unrelated wrapper somewhere higher up the filesystem from being picked. The walk stops after
+    /// the directory holding <c>.git</c> so a submodule or nested checkout uses its own wrapper
+    /// rather than the outer repository's.
+    /// </para>
+    /// </remarks>
     internal static string ResolveWrapperPath(JavaAppResource resource, JavaBuildTool tool, bool isWindows)
     {
         if (resource.TryGetLastAnnotation<WrapperAnnotation>(out var wrapper))
@@ -59,8 +71,69 @@ internal static class JavaBuildToolResolver
             return wrapper.WrapperPath;
         }
 
+        var wrapperName = GetDefaultWrapperName(tool, isWindows);
+        var appDirectory = resource.WorkingDirectory;
+
         return PathNormalizer.NormalizePathForCurrentPlatform(
-            Path.Combine(resource.WorkingDirectory, GetDefaultWrapperName(tool, isWindows)));
+            FindWrapperInBuildRoot(appDirectory, wrapperName, tool) ?? Path.Combine(appDirectory, wrapperName));
+    }
+
+    /// <inheritdoc cref="ResolveWrapperPath" />
+    private static string? FindWrapperInBuildRoot(string appDirectory, string wrapperName, JavaBuildTool tool)
+    {
+        for (var directory = SafeDirectoryInfo(appDirectory); directory is not null; directory = directory.Parent)
+        {
+            var candidate = Path.Combine(directory.FullName, wrapperName);
+            var isApplicationDirectory = directory.FullName == appDirectory;
+
+            if (File.Exists(candidate) && (isApplicationDirectory || IsBuildRoot(directory.FullName, tool)))
+            {
+                return candidate;
+            }
+
+            // A worktree or submodule records .git as a file rather than a directory, so both count.
+            var gitPath = Path.Combine(directory.FullName, ".git");
+            if (Directory.Exists(gitPath) || File.Exists(gitPath))
+            {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Returns whether a directory is the root of a build for <paramref name="tool"/>.
+    /// </summary>
+    private static bool IsBuildRoot(string directory, JavaBuildTool tool) => tool switch
+    {
+        // Gradle requires a settings file at the root of a multi-project build; that is the directory
+        // the wrapper is generated into. https://docs.gradle.org/current/userguide/multi_project_builds.html
+        JavaBuildTool.Gradle => File.Exists(Path.Combine(directory, "settings.gradle"))
+                                || File.Exists(Path.Combine(directory, "settings.gradle.kts")),
+        // A Maven aggregator is itself a project, so its POM is the marker.
+        // https://maven.apache.org/guides/introduction/introduction-to-the-pom.html
+        JavaBuildTool.Maven => File.Exists(Path.Combine(directory, "pom.xml")),
+        _ => false
+    };
+
+    /// <summary>
+    /// Returns the directory, or <see langword="null"/> when the path cannot be interpreted.
+    /// </summary>
+    /// <remarks>
+    /// Wrapper resolution runs while the AppHost is still being authored, so the directory may not
+    /// exist yet and may be a value the developer has not finished typing.
+    /// </remarks>
+    private static DirectoryInfo? SafeDirectoryInfo(string path)
+    {
+        try
+        {
+            return new DirectoryInfo(path);
+        }
+        catch (Exception ex) when (ex is ArgumentException or PathTooLongException or NotSupportedException)
+        {
+            return null;
+        }
     }
 
     /// <summary>
