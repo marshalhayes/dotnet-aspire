@@ -580,7 +580,7 @@ suite('Java AppHost Command Parsing Tests', () => {
     // debug adapter resolves a relative entry somewhere else, so the JVM it starts has no AppHost
     // class on its classpath and dies with ClassNotFoundException before Aspire connects to it.
     test('resolves a relative AppHost classpath against the AppHost directory', () => {
-        const appHostDirectory = path.join(path.sep, 'repo', 'JavaSpringBoot.AppHost.Java');
+        const appHostDirectory = absoluteTestPath('repo', 'JavaSpringBoot.AppHost.Java');
 
         assert.deepStrictEqual(
             resolveJavaClassPaths(['build/classes/java/main', 'build/aspire-deps/*'], appHostDirectory),
@@ -591,9 +591,23 @@ suite('Java AppHost Command Parsing Tests', () => {
     });
 
     test('leaves an absolute AppHost classpath entry alone', () => {
-        const appHostDirectory = path.join(path.sep, 'repo', 'JavaSpringBoot.AppHost.Java');
-        const absoluteEntry = path.join(path.sep, 'elsewhere', 'classes');
+        const appHostDirectory = absoluteTestPath('repo', 'JavaSpringBoot.AppHost.Java');
+        const absoluteEntry = absoluteTestPath('elsewhere', 'classes');
 
         assert.deepStrictEqual(resolveJavaClassPaths([absoluteEntry], appHostDirectory), [absoluteEntry]);
     });
 });
+
+/**
+ * Builds a fully qualified path for a test fixture.
+ *
+ * `path.join(path.sep, 'repo')` looks absolute and even satisfies `path.isAbsolute`, but on Windows it
+ * produces the drive-relative `\repo` rather than a fully qualified path. `path.resolve` — which is what
+ * the production code under test uses — completes that against the current drive and returns `D:\repo`,
+ * so a fixture built with `join` and an expectation built from the same fixture disagree by a drive
+ * letter and the test only fails on Windows. `path.resolve` fully qualifies on both platforms, which
+ * keeps the fixture and the code under test in the same shape.
+ */
+function absoluteTestPath(...segments: string[]): string {
+    return path.resolve(path.sep, ...segments);
+}
