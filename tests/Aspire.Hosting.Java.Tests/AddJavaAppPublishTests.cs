@@ -417,6 +417,65 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
     }
 
     [Fact]
+    public async Task PublishingAnAuthoredDockerfileRejectsABuildProducedAgent()
+    {
+        // /app/agent.jar only exists because the generated Dockerfile copies the agent there. An
+        // authored Dockerfile has no reason to, so pointing JAVA_TOOL_OPTIONS at it would produce an
+        // image whose JVM dies during initialization with "Error opening zip file or JAR manifest
+        // missing" — before anything the developer could debug.
+        using var workspace = TemporaryWorkspace.Create(outputHelper);
+        var sourceDir = workspace.CreateDirectory("source");
+        var outputDir = workspace.CreateDirectory("output");
+
+        WritePom(sourceDir.FullName, javaVersion: "21");
+        File.WriteAllText(Path.Combine(sourceDir.FullName, "Dockerfile"), "FROM scratch\n");
+
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish, outputDir.FullName, step: "publish-manifest");
+        builder.AddJavaApp("api", sourceDir.FullName)
+               .WithMavenGoal("spring-boot:run")
+               .WithOtelAgent("target/otel/javaagent.jar");
+
+        var container = Assert.Single(builder.Resources.OfType<ContainerResource>());
+
+        var exception = await Assert.ThrowsAsync<DistributedApplicationException>(
+            async () => await EnvironmentVariableEvaluator.GetEnvironmentVariablesAsync(
+                container, DistributedApplicationOperation.Publish, TestServiceProvider.Instance));
+
+        Assert.Equal(
+            $"Java application 'api' cannot be published because it uses the Dockerfile in " +
+            $"'{sourceDir.FullName}' and its OpenTelemetry agent path 'target/otel/javaagent.jar' is " +
+            "relative to the build output. Aspire copies a build-produced agent into the image only in " +
+            "the Dockerfile it generates. Copy the agent in your Dockerfile and pass its path inside the " +
+            "image to WithOtelAgent, for example WithOtelAgent(\"/opt/otel/javaagent.jar\").",
+            exception.Message);
+    }
+
+    [Fact]
+    public async Task PublishingAnAuthoredDockerfileAcceptsAnAbsoluteAgentPath()
+    {
+        // An absolute path names a location inside the image, which is the developer's to guarantee.
+        using var workspace = TemporaryWorkspace.Create(outputHelper);
+        var sourceDir = workspace.CreateDirectory("source");
+        var outputDir = workspace.CreateDirectory("output");
+
+        WritePom(sourceDir.FullName, javaVersion: "21");
+        File.WriteAllText(Path.Combine(sourceDir.FullName, "Dockerfile"), "FROM scratch\n");
+
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish, outputDir.FullName, step: "publish-manifest");
+        builder.AddJavaApp("api", sourceDir.FullName)
+               .WithMavenGoal("spring-boot:run")
+               .WithOtelAgent("/opt/otel/javaagent.jar");
+
+        var container = Assert.Single(builder.Resources.OfType<ContainerResource>());
+        var envVars = await EnvironmentVariableEvaluator.GetEnvironmentVariablesAsync(
+            container, DistributedApplicationOperation.Publish, TestServiceProvider.Instance);
+
+        builder.Build().Run();
+
+        Assert.Equal("-javaagent:/opt/otel/javaagent.jar", envVars["JAVA_TOOL_OPTIONS"]);
+    }
+
+    [Fact]
     public async Task VerifyPublish_ProducesAContainerManifestEntry()
     {
         using var workspace = TemporaryWorkspace.Create(outputHelper);

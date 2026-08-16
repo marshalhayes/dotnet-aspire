@@ -116,6 +116,7 @@ public static partial class JavaHostingExtensions
                 // anything else the project depends on.
                 if (File.Exists(Path.Combine(appDirectory, "Dockerfile")))
                 {
+                    resource.Annotations.Add(new JavaAuthoredDockerfileAnnotation());
                     return;
                 }
 
@@ -1236,6 +1237,21 @@ public static partial class JavaHostingExtensions
             }
             else if (JavaDockerfileGenerator.TryGetBuildProducedAgentPath(builder.Resource, out _))
             {
+                // /app/agent.jar is where the generated Dockerfile copies the agent to. When the
+                // developer wrote the Dockerfile, nothing put it there, and a JVM told to load an agent
+                // that is not in the image dies during VM initialization with "Error opening zip file or
+                // JAR manifest missing" — which says nothing about the cause.
+                if (builder.Resource.HasAnnotationOfType<JavaAuthoredDockerfileAnnotation>())
+                {
+                    throw new DistributedApplicationException(
+                        $"Java application '{builder.Resource.Name}' cannot be published because it uses " +
+                        $"the Dockerfile in '{builder.Resource.WorkingDirectory}' and its OpenTelemetry " +
+                        $"agent path '{authored}' is relative to the build output. Aspire copies a " +
+                        $"build-produced agent into the image only in the Dockerfile it generates. Copy " +
+                        $"the agent in your Dockerfile and pass its path inside the image to " +
+                        $"{nameof(WithOtelAgent)}, for example WithOtelAgent(\"/opt/otel/javaagent.jar\").");
+                }
+
                 resolved = JavaDockerfileGenerator.ContainerAgentPath;
             }
             else

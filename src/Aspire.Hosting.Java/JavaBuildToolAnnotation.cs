@@ -98,6 +98,16 @@ internal sealed record JavaDetectedBuildToolAnnotation(
 internal sealed record JavaOtelAgentAnnotation(string? AgentPath) : IResourceAnnotation;
 
 /// <summary>
+/// Records that publishing found a Dockerfile the developer wrote and left it alone.
+/// </summary>
+/// <remarks>
+/// The rest of the integration assumes it produced the image, and so knows where the build put things.
+/// An authored Dockerfile is the developer's contract instead, so anything that would otherwise point
+/// at a generated layout has to notice and say so rather than guess.
+/// </remarks>
+internal sealed record JavaAuthoredDockerfileAnnotation : IResourceAnnotation;
+
+/// <summary>
 /// Records that a Java application is a Quarkus application, which packages differently from every other
 /// build the integration supports.
 /// </summary>
