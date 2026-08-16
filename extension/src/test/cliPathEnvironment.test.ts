@@ -17,6 +17,7 @@ import {
     syncAspireCliPathEnvironment,
 } from '../utils/cliPathEnvironment';
 import {
+    CliPathDependencies,
     CliPathResolver,
     isConfiguredCliPathRejectedForForwarding,
     resetRejectedConfiguredCliPathForForwarding,
@@ -681,30 +682,98 @@ suite('CliPathEnvironmentSynchronizer tests', () => {
         workspaceFoldersEmitter.dispose();
     });
 
-    test('applies the latest path once when forwarding changes during resolution', async () => {
+    test('clears a persisted global mutation before resolving open workspace folders', async () => {
         const workspaceFoldersEmitter = new vscode.EventEmitter<vscode.WorkspaceFoldersChangeEvent>();
         const forwardingEmitter = new vscode.EventEmitter<CliPathResolutionTarget>();
         const scopedCollections = new Map<string, ReturnType<typeof createFakeCollection>>();
         const globalCollection = createFakeGlobalCollection(scopedCollections);
+        const globalEntries = (globalCollection as unknown as ReturnType<typeof createFakeCollection>).entries;
         const scopedCollection = globalCollection.getScoped({ workspaceFolder: folderA }) as unknown as ReturnType<typeof createFakeCollection>;
-        const replaceSpy = sinon.spy(scopedCollection, 'replace');
-        let folderResolutionCount = 0;
+        globalCollection.replace(ASPIRE_CLI_PATH_ENV_VAR, '/persisted/window-aspire');
+        let completeResolution: ((result: { cliPath: string; available: boolean; source: 'path' }) => void) | undefined;
+        const resolution = new Promise<{ cliPath: string; available: boolean; source: 'path' }>(resolve => {
+            completeResolution = resolve;
+        });
         const resolver = {
-            resolve: sinon.stub().callsFake(async (target: CliPathResolutionTarget) => {
-                if (target.kind === 'window') {
-                    return { cliPath: 'aspire', available: true, source: 'path' };
-                }
-
-                folderResolutionCount++;
-                if (folderResolutionCount === 1) {
-                    forwardingEmitter.fire(target);
-                    return { cliPath: '/repo/a/stale-aspire', available: true, source: 'configured' };
-                }
-
-                return { cliPath: '/repo/a/current-aspire', available: true, source: 'configured' };
-            }),
+            resolve: sinon.stub().returns(resolution),
             onDidChangeForwarding: forwardingEmitter.event,
         } as unknown as CliPathResolver;
+        const synchronizer = new CliPathEnvironmentSynchronizer(
+            globalCollection,
+            resolver,
+            [],
+            undefined,
+            createSynchronizerDependencies([folderA], workspaceFoldersEmitter.event));
+
+        const initialization = synchronizer.initialize();
+
+        assert.strictEqual(globalEntries.has(ASPIRE_CLI_PATH_ENV_VAR), false);
+
+        completeResolution!({ cliPath: '/resolved/aspire', available: true, source: 'path' });
+        await initialization;
+
+        assert.strictEqual(globalEntries.has(ASPIRE_CLI_PATH_ENV_VAR), false);
+        assert.strictEqual(scopedCollection.entries.get(ASPIRE_CLI_PATH_ENV_VAR), '/resolved/aspire');
+
+        synchronizer.dispose();
+        forwardingEmitter.dispose();
+        workspaceFoldersEmitter.dispose();
+    });
+
+    test('applies the latest path once when the real resolver emits forwarding during resolution', async () => {
+        const workspaceFoldersEmitter = new vscode.EventEmitter<vscode.WorkspaceFoldersChangeEvent>();
+        const scopedCollections = new Map<string, ReturnType<typeof createFakeCollection>>();
+        const globalCollection = createFakeGlobalCollection(scopedCollections);
+        const globalCollectionState = globalCollection as unknown as ReturnType<typeof createFakeCollection>;
+        const replaceSpy = sinon.spy(globalCollectionState, 'replace');
+        const resolverDependencies: CliPathDependencies = {
+            getConfiguredPath: () => 'relative-aspire',
+            getWorkspaceFolders: () => [],
+            getDefaultPaths: () => [],
+            isConfiguredPathAutoConfigured: () => false,
+            findOnPath: async () => '/resolved/aspire',
+            findAtDefaultPath: async () => undefined,
+            tryExecute: async () => false,
+            getExecutableCandidates: candidate => [candidate],
+            setConfiguredPath: async () => { },
+        };
+        const resolver = new CliPathResolver(resolverDependencies);
+        const synchronizer = new CliPathEnvironmentSynchronizer(
+            globalCollection,
+            resolver,
+            [],
+            undefined,
+            createSynchronizerDependencies([], workspaceFoldersEmitter.event));
+
+        await synchronizer.initialize();
+        await new Promise<void>(resolve => setImmediate(resolve));
+
+        assert.strictEqual(globalCollectionState.entries.get(ASPIRE_CLI_PATH_ENV_VAR), '/resolved/aspire');
+        assert.ok(replaceSpy.calledOnceWithExactly(ASPIRE_CLI_PATH_ENV_VAR, '/resolved/aspire'));
+
+        synchronizer.dispose();
+        resolver.dispose();
+        workspaceFoldersEmitter.dispose();
+    });
+
+    test('applies the latest folder path once when the real resolver emits forwarding during resolution', async () => {
+        const workspaceFoldersEmitter = new vscode.EventEmitter<vscode.WorkspaceFoldersChangeEvent>();
+        const scopedCollections = new Map<string, ReturnType<typeof createFakeCollection>>();
+        const globalCollection = createFakeGlobalCollection(scopedCollections);
+        const scopedCollection = globalCollection.getScoped({ workspaceFolder: folderA }) as unknown as ReturnType<typeof createFakeCollection>;
+        const replaceSpy = sinon.spy(scopedCollection, 'replace');
+        const resolverDependencies: CliPathDependencies = {
+            getConfiguredPath: target => target.kind === 'workspaceFolder' ? '${workspaceFolder}/aspire' : '',
+            getWorkspaceFolders: () => [folderA],
+            getDefaultPaths: () => [],
+            isConfiguredPathAutoConfigured: () => false,
+            findOnPath: async () => '/fallback/aspire',
+            findAtDefaultPath: async () => undefined,
+            tryExecute: async candidate => candidate === '/repo/a/aspire',
+            getExecutableCandidates: candidate => [candidate],
+            setConfiguredPath: async () => { },
+        };
+        const resolver = new CliPathResolver(resolverDependencies);
         const synchronizer = new CliPathEnvironmentSynchronizer(
             globalCollection,
             resolver,
@@ -715,11 +784,113 @@ suite('CliPathEnvironmentSynchronizer tests', () => {
         await synchronizer.initialize();
         await new Promise<void>(resolve => setImmediate(resolve));
 
-        assert.strictEqual(scopedCollection.entries.get(ASPIRE_CLI_PATH_ENV_VAR), '/repo/a/current-aspire');
-        assert.ok(replaceSpy.calledOnceWithExactly(ASPIRE_CLI_PATH_ENV_VAR, '/repo/a/current-aspire'));
+        assert.strictEqual(scopedCollection.entries.get(ASPIRE_CLI_PATH_ENV_VAR), '/repo/a/aspire');
+        assert.ok(replaceSpy.calledOnceWithExactly(ASPIRE_CLI_PATH_ENV_VAR, '/repo/a/aspire'));
 
         synchronizer.dispose();
-        forwardingEmitter.dispose();
+        resolver.dispose();
+        workspaceFoldersEmitter.dispose();
+    });
+
+    test('does not publish a removed folder CLI from an in-flight window resolution', async () => {
+        const workspaceFoldersEmitter = new vscode.EventEmitter<vscode.WorkspaceFoldersChangeEvent>();
+        const scopedCollections = new Map<string, ReturnType<typeof createFakeCollection>>();
+        const globalCollection = createFakeGlobalCollection(scopedCollections);
+        const globalCollectionState = globalCollection as unknown as ReturnType<typeof createFakeCollection>;
+        let workspaceFolders: readonly vscode.WorkspaceFolder[] = [folderA];
+        let completeOldProbe: ((result: boolean) => void) | undefined;
+        let oldProbeStarted: (() => void) | undefined;
+        const oldProbeStart = new Promise<void>(resolve => oldProbeStarted = resolve);
+        const oldProbe = new Promise<boolean>(resolve => completeOldProbe = resolve);
+        const resolverDependencies: CliPathDependencies = {
+            getConfiguredPath: target => target.kind === 'window' ? '${workspaceFolder}/aspire' : '',
+            getWorkspaceFolders: () => workspaceFolders,
+            getDefaultPaths: () => [],
+            isConfiguredPathAutoConfigured: () => false,
+            findOnPath: async () => '/fallback/aspire',
+            findAtDefaultPath: async () => undefined,
+            tryExecute: candidate => {
+                if (candidate === '/repo/a/aspire') {
+                    oldProbeStarted!();
+                    return oldProbe;
+                }
+                return Promise.resolve(false);
+            },
+            getExecutableCandidates: candidate => [candidate],
+            setConfiguredPath: async () => { },
+        };
+        const resolver = new CliPathResolver(resolverDependencies);
+        const synchronizerDependencies = {
+            ...createSynchronizerDependencies([folderA], workspaceFoldersEmitter.event),
+            getWorkspaceFolders: () => workspaceFolders,
+        };
+        const synchronizer = new CliPathEnvironmentSynchronizer(
+            globalCollection,
+            resolver,
+            [],
+            undefined,
+            synchronizerDependencies);
+
+        const initialization = synchronizer.initialize();
+        await oldProbeStart;
+        workspaceFolders = [];
+        workspaceFoldersEmitter.fire({ added: [], removed: [folderA] });
+        completeOldProbe!(true);
+        await initialization;
+        await new Promise<void>(resolve => setImmediate(resolve));
+
+        assert.strictEqual(globalCollectionState.entries.get(ASPIRE_CLI_PATH_ENV_VAR), '/fallback/aspire');
+
+        synchronizer.dispose();
+        resolver.dispose();
+        workspaceFoldersEmitter.dispose();
+    });
+
+    test('re-resolves surviving folders whose named workspace token changes', async () => {
+        const workspaceFoldersEmitter = new vscode.EventEmitter<vscode.WorkspaceFoldersChangeEvent>();
+        const scopedCollections = new Map<string, ReturnType<typeof createFakeCollection>>();
+        const globalCollection = createFakeGlobalCollection(scopedCollections);
+        let workspaceFolders: readonly vscode.WorkspaceFolder[] = [folderA, folderB];
+        const resolverDependencies: CliPathDependencies = {
+            getConfiguredPath: target => target.kind === 'workspaceFolder' && target.workspaceFolder.uri.toString() === folderA.uri.toString()
+                ? '${workspaceFolder:b}/aspire'
+                : '',
+            getWorkspaceFolders: () => workspaceFolders,
+            getDefaultPaths: () => [],
+            isConfiguredPathAutoConfigured: () => false,
+            findOnPath: async () => 'aspire',
+            findAtDefaultPath: async () => undefined,
+            tryExecute: async candidate => candidate === '/repo/b/aspire',
+            getExecutableCandidates: candidate => [candidate],
+            setConfiguredPath: async () => { },
+        };
+        const resolver = new CliPathResolver(resolverDependencies);
+        const synchronizerDependencies = {
+            ...createSynchronizerDependencies([folderA, folderB], workspaceFoldersEmitter.event),
+            getWorkspaceFolders: () => workspaceFolders,
+        };
+        const synchronizer = new CliPathEnvironmentSynchronizer(
+            globalCollection,
+            resolver,
+            [],
+            undefined,
+            synchronizerDependencies);
+
+        await synchronizer.initialize();
+        assert.strictEqual(
+            scopedCollections.get(folderA.uri.toString())?.entries.get(ASPIRE_CLI_PATH_ENV_VAR),
+            '/repo/b/aspire');
+
+        workspaceFolders = [folderA];
+        workspaceFoldersEmitter.fire({ added: [], removed: [folderB] });
+        await new Promise<void>(resolve => setImmediate(resolve));
+
+        assert.strictEqual(
+            scopedCollections.get(folderA.uri.toString())?.entries.has(ASPIRE_CLI_PATH_ENV_VAR),
+            false);
+
+        synchronizer.dispose();
+        resolver.dispose();
         workspaceFoldersEmitter.dispose();
     });
 });

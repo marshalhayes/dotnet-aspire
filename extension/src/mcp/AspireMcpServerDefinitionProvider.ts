@@ -8,6 +8,7 @@ import { getRegisterMcpServerInWorkspace, registerMcpServerInWorkspaceSetting } 
 const mcpServerLabel = 'Aspire';
 const mcpServerArgs = ['agent', 'mcp'];
 const aspireCliExecutablePathSetting = 'aspire.aspireCliExecutablePath';
+const aspireCliPathEnvironmentVariable = 'AspireCliPath';
 
 /**
  * Builds the stdio definition VS Code uses to launch `aspire agent mcp`.
@@ -22,13 +23,14 @@ export function createAspireMcpServerDefinition(
     label = mcpServerLabel,
     cwd?: vscode.Uri,
 ): vscode.McpStdioServerDefinition {
+    const env = { [aspireCliPathEnvironmentVariable]: cliPath };
     let definition: vscode.McpStdioServerDefinition;
     if (!shouldWrapWithCmd(cliPath)) {
-        definition = new vscode.McpStdioServerDefinition(label, cliPath, [...mcpServerArgs]);
+        definition = new vscode.McpStdioServerDefinition(label, cliPath, [...mcpServerArgs], env);
     }
     else {
         const { command, args } = getCmdShimSpawnCommandWithoutVerbatimArguments(cliPath, mcpServerArgs);
-        definition = new vscode.McpStdioServerDefinition(label, command, args);
+        definition = new vscode.McpStdioServerDefinition(label, command, args, env);
     }
     definition.cwd = cwd;
     return definition;
@@ -90,20 +92,29 @@ export class AspireMcpServerDefinitionProvider implements vscode.McpServerDefini
         for (const folder of workspaceFolders) {
             folderNameCounts.set(folder.name, (folderNameCounts.get(folder.name) ?? 0) + 1);
         }
+        const reservedFolderLabels = new Set(workspaceFolders.map(folder => folder.name));
+        const allocatedFolderLabels = new Set<string>();
         const folderNameOrdinals = new Map<string, number>();
+        const folderLabels = workspaceFolders.map(folder => {
+            let folderLabel = folder.name;
+            if ((folderNameCounts.get(folder.name) ?? 0) > 1) {
+                let ordinal = folderNameOrdinals.get(folder.name) ?? 0;
+                do {
+                    ordinal++;
+                    folderLabel = `${folder.name} ${ordinal}`;
+                } while (reservedFolderLabels.has(folderLabel) || allocatedFolderLabels.has(folderLabel));
+                folderNameOrdinals.set(folder.name, ordinal);
+            }
+            allocatedFolderLabels.add(folderLabel);
+            return folderLabel;
+        });
         const definitions = cliResults.flatMap((result, index) => {
             if (!result.available) {
                 return [];
             }
 
             const folder = workspaceFolders[index];
-            let folderLabel = folder.name;
-            if ((folderNameCounts.get(folder.name) ?? 0) > 1) {
-                const ordinal = (folderNameOrdinals.get(folder.name) ?? 0) + 1;
-                folderNameOrdinals.set(folder.name, ordinal);
-                folderLabel = `${folder.name} ${ordinal}`;
-            }
-            const label = workspaceFolders.length === 1 ? mcpServerLabel : `${mcpServerLabel} (${folderLabel})`;
+            const label = workspaceFolders.length === 1 ? mcpServerLabel : `${mcpServerLabel} (${folderLabels[index]})`;
             return [createAspireMcpServerDefinition(result.cliPath, label, folder.uri)];
         });
         const changed = !areMcpDefinitionsEqual(this._definitions, definitions);
@@ -139,7 +150,8 @@ function areMcpDefinitionsEqual(
             && definition.command === other.command
             && definition.cwd?.toString() === other.cwd?.toString()
             && definition.args.length === other.args.length
-            && definition.args.every((argument, argumentIndex) => argument === other.args[argumentIndex]);
+            && definition.args.every((argument, argumentIndex) => argument === other.args[argumentIndex])
+            && JSON.stringify(definition.env) === JSON.stringify(other.env);
     });
 }
 
@@ -150,6 +162,10 @@ function areMcpDefinitionsEqual(
  * "aspire.registerMcpServerInWorkspace" setting is enabled.
  */
 async function checkShouldProvideMcpServer(): Promise<boolean> {
+    if (!vscode.workspace.isTrusted) {
+        return false;
+    }
+
     if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
         return false;
     }

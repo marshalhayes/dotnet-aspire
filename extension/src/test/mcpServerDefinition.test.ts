@@ -43,6 +43,7 @@ suite('AspireMcpServerDefinitionProvider definition tests', () => {
 
         assert.strictEqual(definition.command, 'C:\\Program Files\\Aspire\\aspire.exe');
         assert.deepStrictEqual(definition.args, ['agent', 'mcp']);
+        assert.deepStrictEqual(definition.env, { AspireCliPath: 'C:\\Program Files\\Aspire\\aspire.exe' });
     });
 });
 
@@ -100,6 +101,30 @@ suite('AspireMcpServerDefinitionProvider refresh tests', () => {
 
         assert.ok(refresh.calledOnce);
         provider.dispose();
+    });
+
+    test('does not provide MCP definitions in an untrusted workspace', async () => {
+        const folder = { index: 0, name: 'app', uri: vscode.Uri.file('/repo/app') };
+        const workspaceFoldersValueStub = sinon.stub(vscode.workspace, 'workspaceFolders').value([folder]);
+        const trustDescriptor = Object.getOwnPropertyDescriptor(vscode.workspace, 'isTrusted');
+        Object.defineProperty(vscode.workspace, 'isTrusted', { value: false, configurable: true });
+        const forwardingEmitter = new vscode.EventEmitter<CliPathResolutionTarget>();
+        const resolve = sinon.stub().resolves({ available: true, cliPath: '/repo/app/aspire', source: 'configured' });
+        const resolver = { resolve, onDidChangeForwarding: forwardingEmitter.event } as unknown as cliPath.CliPathResolver;
+        const provider = new AspireMcpServerDefinitionProvider(resolver);
+
+        try {
+            await provider.refresh();
+
+            assert.deepStrictEqual(provider.provideMcpServerDefinitions(new vscode.CancellationTokenSource().token), []);
+            assert.ok(resolve.notCalled);
+        }
+        finally {
+            provider.dispose();
+            forwardingEmitter.dispose();
+            Object.defineProperty(vscode.workspace, 'isTrusted', trustDescriptor!);
+            workspaceFoldersValueStub.restore();
+        }
     });
 
     test('refreshes when CLI resolution rejects a configured path', async () => {
@@ -224,6 +249,70 @@ suite('AspireMcpServerDefinitionProvider refresh tests', () => {
             assert.deepStrictEqual(definitions.map(definition => definition.label), [
                 'Aspire (api 1)',
                 'Aspire (api 2)',
+            ]);
+        }
+        finally {
+            cancellationSource.dispose();
+            forwardingEmitter.dispose();
+            provider.dispose();
+            workspaceFoldersValueStub.restore();
+        }
+    });
+
+    test('keeps duplicate-folder labels stable when one CLI is unavailable', async () => {
+        const folderA = { index: 0, name: 'api', uri: vscode.Uri.file('/repo/a/api') };
+        const folderB = { index: 1, name: 'api', uri: vscode.Uri.file('/repo/b/api') };
+        const workspaceFoldersValueStub = sinon.stub(vscode.workspace, 'workspaceFolders').value([folderA, folderB]);
+        const forwardingEmitter = new vscode.EventEmitter<CliPathResolutionTarget>();
+        const resolver = {
+            resolve: sinon.stub().callsFake(async (target: CliPathResolutionTarget) => ({
+                available: target.kind === 'workspaceFolder' && target.workspaceFolder.index === 1,
+                cliPath: '/repo/b/aspire',
+                source: 'configured',
+            })),
+            onDidChangeForwarding: forwardingEmitter.event,
+        } as unknown as cliPath.CliPathResolver;
+        const provider = new AspireMcpServerDefinitionProvider(resolver);
+
+        try {
+            await provider.refresh();
+            const definitions = await Promise.resolve(
+                provider.provideMcpServerDefinitions(new vscode.CancellationTokenSource().token)) ?? [];
+
+            assert.deepStrictEqual(definitions.map(definition => definition.label), ['Aspire (api 2)']);
+        }
+        finally {
+            forwardingEmitter.dispose();
+            provider.dispose();
+            workspaceFoldersValueStub.restore();
+        }
+    });
+
+    test('does not collide a generated MCP label with a real folder name', async () => {
+        const folderA = { index: 0, name: 'api', uri: vscode.Uri.file('/repo/a/api') };
+        const folderB = { index: 1, name: 'api', uri: vscode.Uri.file('/repo/b/api') };
+        const folderC = { index: 2, name: 'api 1', uri: vscode.Uri.file('/repo/c/api') };
+        const workspaceFoldersValueStub = sinon.stub(vscode.workspace, 'workspaceFolders').value([folderA, folderB, folderC]);
+        const forwardingEmitter = new vscode.EventEmitter<CliPathResolutionTarget>();
+        const resolver = {
+            resolve: sinon.stub().callsFake(async (target: CliPathResolutionTarget) => ({
+                available: true,
+                cliPath: `/repo/${target.kind === 'workspaceFolder' ? target.workspaceFolder.index : 'window'}/aspire`,
+                source: 'configured',
+            })),
+            onDidChangeForwarding: forwardingEmitter.event,
+        } as unknown as cliPath.CliPathResolver;
+        const provider = new AspireMcpServerDefinitionProvider(resolver);
+        const cancellationSource = new vscode.CancellationTokenSource();
+
+        try {
+            await provider.refresh();
+            const definitions = await Promise.resolve(provider.provideMcpServerDefinitions(cancellationSource.token)) ?? [];
+
+            assert.deepStrictEqual(definitions.map(definition => definition.label), [
+                'Aspire (api 2)',
+                'Aspire (api 3)',
+                'Aspire (api 1)',
             ]);
         }
         finally {

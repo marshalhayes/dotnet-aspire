@@ -313,6 +313,7 @@ export class CliPathEnvironmentSynchronizer implements vscode.Disposable {
         for (const target of folderTargets) {
             this._activeFolderTargets.set(getCliPathTargetKey(target), target);
         }
+        this.clearGlobalPathForFolders();
 
         await Promise.all([
             this.syncTarget(windowCliPathTarget),
@@ -392,15 +393,38 @@ export class CliPathEnvironmentSynchronizer implements vscode.Disposable {
         for (const folder of event.removed) {
             this.removeFolderTarget(workspaceFolderCliPathTarget(folder));
         }
-        for (const folder of event.added) {
-            const target = workspaceFolderCliPathTarget(folder);
+        const addedTargets = event.added.map(folder => workspaceFolderCliPathTarget(folder));
+        for (const target of addedTargets) {
             this._activeFolderTargets.set(getCliPathTargetKey(target), target);
+        }
+        this.clearGlobalPathForFolders();
+
+        // A folder setting can reference any other folder through ${workspaceFolder:name},
+        // so additions and removals can change every active folder's effective executable.
+        for (const target of this._activeFolderTargets.values()) {
             this.syncTargetInBackground(target);
         }
 
         // An unqualified ${workspaceFolder} window setting changes meaning as folders are
         // added or removed, even when no configuration value itself changed.
         this.syncTargetInBackground(windowCliPathTarget);
+    }
+
+    private clearGlobalPathForFolders(): void {
+        if (this._activeFolderTargets.size === 0) {
+            return;
+        }
+
+        this._globalCollection.description = undefined;
+        this._globalCollection.delete(ASPIRE_CLI_PATH_ENV_VAR);
+
+        const key = getCliPathTargetKey(windowCliPathTarget);
+        const hadPreviousPath = this._forwardedPaths.has(key);
+        const previousPath = this._forwardedPaths.get(key);
+        this._forwardedPaths.set(key, undefined);
+        if (hadPreviousPath && previousPath !== undefined) {
+            this._onForwardedPathChanged?.(windowCliPathTarget, previousPath, undefined);
+        }
     }
 
     private removeFolderTarget(target: CliPathResolutionTarget): void {

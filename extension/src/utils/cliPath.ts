@@ -168,16 +168,27 @@ interface CliPathLookupOptions {
 export async function findCliOnPath(options: CliPathLookupOptions = {}): Promise<string | undefined> {
     const platform = options.platform ?? process.platform;
     const tryExecute = options.tryExecute ?? tryExecuteCli;
-    if (platform !== 'win32') {
-        return await tryExecute('aspire') ? 'aspire' : undefined;
-    }
-
     const pathValue = options.pathValue ?? process.env.PATH;
     if (!pathValue) {
         return undefined;
     }
 
     const candidateExists = options.fileExists ?? fileExists;
+    if (platform !== 'win32') {
+        for (const pathEntry of pathValue.split(path.posix.delimiter)) {
+            if (!path.posix.isAbsolute(pathEntry)) {
+                continue;
+            }
+
+            const candidate = path.posix.join(pathEntry, 'aspire');
+            if (await candidateExists(candidate) && await tryExecute(candidate)) {
+                return candidate;
+            }
+        }
+
+        return undefined;
+    }
+
     const executableNames = ['aspire.exe', 'aspire.cmd', 'aspire.bat', 'aspire'];
     for (const pathEntry of pathValue.split(path.win32.delimiter)) {
         const directory = pathEntry.trim().replace(/^"(.*)"$/, '$1');
@@ -320,12 +331,15 @@ interface ConfiguredCliPathSnapshot {
     configuredPath: string;
     configuredPathIsLegacyDefault: boolean;
     defaultPaths: string[];
+    workspaceFolders: readonly vscode.WorkspaceFolder[];
+    workspaceFoldersKey: string;
 }
 
 interface InFlightCliPathResolution {
     deps: CliPathDependencies;
     configuredPath: string;
     configuredPathIsLegacyDefault: boolean;
+    workspaceFoldersKey: string;
     e2eCliPath: string | undefined;
     promise: Promise<CliPathResolutionResult>;
 }
@@ -395,6 +409,7 @@ export class CliPathResolver implements vscode.Disposable {
         if (state.inFlight?.deps === deps
             && state.inFlight.configuredPath === configuredPathSnapshot.configuredPath
             && state.inFlight.configuredPathIsLegacyDefault === configuredPathSnapshot.configuredPathIsLegacyDefault
+            && state.inFlight.workspaceFoldersKey === configuredPathSnapshot.workspaceFoldersKey
             && state.inFlight.e2eCliPath === e2eCliPath) {
             return state.inFlight.promise;
         }
@@ -402,14 +417,18 @@ export class CliPathResolver implements vscode.Disposable {
         const generation = ++state.generation;
         let writtenConfiguredPathSnapshot: ConfiguredCliPathSnapshot | undefined;
         let promise!: Promise<CliPathResolutionResult>;
-        promise = this.resolveCore(
-            target,
-            state,
-            deps,
-            configuredPathSnapshot,
-            e2eCliPath,
-            generation,
-            snapshot => writtenConfiguredPathSnapshot = snapshot)
+        // resolveCore can synchronously publish a configured-path rejection before its first
+        // await. Publish state.inFlight first so forwarding listeners that re-enter resolve()
+        // coalesce with this probe instead of replacing it and creating a promise cycle.
+        promise = Promise.resolve()
+            .then(() => this.resolveCore(
+                target,
+                state,
+                deps,
+                configuredPathSnapshot,
+                e2eCliPath,
+                generation,
+                snapshot => writtenConfiguredPathSnapshot = snapshot))
             .then(result => {
                 // A setting edit or scope change can race a CLI probe. Do not return a result
                 // for a configuration snapshot that is no longer current.
@@ -443,6 +462,7 @@ export class CliPathResolver implements vscode.Disposable {
             deps,
             configuredPath: configuredPathSnapshot.configuredPath,
             configuredPathIsLegacyDefault: configuredPathSnapshot.configuredPathIsLegacyDefault,
+            workspaceFoldersKey: configuredPathSnapshot.workspaceFoldersKey,
             e2eCliPath,
             promise,
         };
@@ -481,11 +501,16 @@ export class CliPathResolver implements vscode.Disposable {
     private getConfiguredCliPathSnapshot(deps: CliPathDependencies, target: CliPathResolutionTarget): ConfiguredCliPathSnapshot {
         const configuredPath = deps.getConfiguredPath(target);
         const defaultPaths = deps.getDefaultPaths();
+        const workspaceFolders = configuredPath.includes('${workspaceFolder')
+            ? [...deps.getWorkspaceFolders()]
+            : [];
         return {
             configuredPath,
             configuredPathIsLegacyDefault: configuredPath !== ''
                 && deps.isConfiguredPathAutoConfigured(configuredPath, defaultPaths, target),
             defaultPaths,
+            workspaceFolders,
+            workspaceFoldersKey: JSON.stringify(workspaceFolders.map(folder => [folder.name, folder.uri.toString()])),
         };
     }
 
@@ -495,7 +520,8 @@ export class CliPathResolver implements vscode.Disposable {
     ): boolean {
         return right !== undefined
             && left.configuredPath === right.configuredPath
-            && left.configuredPathIsLegacyDefault === right.configuredPathIsLegacyDefault;
+            && left.configuredPathIsLegacyDefault === right.configuredPathIsLegacyDefault
+            && left.workspaceFoldersKey === right.workspaceFoldersKey;
     }
 
     private updateRejectedConfiguredCliPath(
@@ -549,7 +575,7 @@ export class CliPathResolver implements vscode.Disposable {
         generation: number,
         configuredPathWritten: (snapshot: ConfiguredCliPathSnapshot) => void,
     ): Promise<CliPathResolutionResult> {
-        const { configuredPath, configuredPathIsLegacyDefault, defaultPaths } = configuredPathSnapshot;
+        const { configuredPath, configuredPathIsLegacyDefault, defaultPaths, workspaceFolders } = configuredPathSnapshot;
         let expectedConfiguredPathSnapshot = configuredPathSnapshot;
 
         const updateConfiguredPath = async (value: string): Promise<void> => {
@@ -579,6 +605,8 @@ export class CliPathResolver implements vscode.Disposable {
                 configuredPath: value,
                 configuredPathIsLegacyDefault: value !== '' && containsCliPath(defaultPaths, value),
                 defaultPaths,
+                workspaceFolders,
+                workspaceFoldersKey: configuredPathSnapshot.workspaceFoldersKey,
             };
             await deps.setConfiguredPath(value, target);
             expectedConfiguredPathSnapshot = writtenConfiguredPathSnapshot;
@@ -596,7 +624,7 @@ export class CliPathResolver implements vscode.Disposable {
 
         // Check if user has configured a custom path (not one of the defaults)
         if (configuredPath && (!configuredPathIsLegacyDefault || isCommandShimPath(configuredPath))) {
-            const expanded = expandConfiguredCliPath(configuredPath, target, deps.getWorkspaceFolders());
+            const expanded = expandConfiguredCliPath(configuredPath, target, workspaceFolders);
 
             if (expanded.error) {
                 // An unresolvable token (unknown workspace folder, ambiguous window scope, or an
