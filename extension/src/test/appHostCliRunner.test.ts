@@ -94,6 +94,62 @@ suite('data/appHostCliRunner tests', () => {
             }
         });
 
+        test('isolates nologo fallback by concrete CLI path', async () => {
+            const folderA: vscode.WorkspaceFolder = {
+                uri: vscode.Uri.file('/workspace/a'),
+                name: 'a',
+                index: 0,
+            };
+            const folderB: vscode.WorkspaceFolder = {
+                uri: vscode.Uri.file('/workspace/b'),
+                name: 'b',
+                index: 1,
+            };
+            const targetA = workspaceFolderCliPathTarget(folderA);
+            const targetB = workspaceFolderCliPathTarget(folderB);
+            getCliPathStub.callsFake(async target => target?.kind === 'workspaceFolder'
+                ? `/cli/${target.workspaceFolder.name}/aspire`
+                : '/cli/global/aspire');
+            spawnStub.callsFake(() => new TestChildProcess());
+
+            const completeSpawn = (index: number, code: number, stderr = '') => {
+                const call = spawnStub.getCall(index);
+                const process = call.returnValue as TestChildProcess;
+                if (stderr) {
+                    call.args[3].stderrCallback(stderr);
+                }
+                process.exitCode = code;
+                call.args[3].exitCallback(code);
+            };
+
+            const runner = new AppHostCliRunner(terminalProvider);
+            try {
+                const firstA = runner.runCliCommand('describe A', runner.withNoLogo(['describe']), { target: targetA });
+                await waitForCondition(() => spawnStub.callCount === 1, 'expected first CLI A invocation');
+                completeSpawn(0, 1, "Unrecognized command or argument '--nologo'.");
+                await waitForCondition(() => spawnStub.callCount === 2, 'expected CLI A fallback invocation');
+                completeSpawn(1, 0);
+                await firstA;
+
+                const firstB = runner.runCliCommand('describe B', runner.withNoLogo(['describe']), { target: targetB });
+                await waitForCondition(() => spawnStub.callCount === 3, 'expected first CLI B invocation');
+                completeSpawn(2, 0);
+                await firstB;
+
+                const laterA = runner.runCliCommand('describe A', runner.withNoLogo(['describe']), { target: targetA });
+                await waitForCondition(() => spawnStub.callCount === 4, 'expected later CLI A invocation');
+                completeSpawn(3, 0);
+                await laterA;
+
+                assert.deepStrictEqual(spawnStub.getCall(0).args.slice(1, 3), ['/cli/a/aspire', ['describe', '--nologo']]);
+                assert.deepStrictEqual(spawnStub.getCall(1).args.slice(1, 3), ['/cli/a/aspire', ['describe']]);
+                assert.deepStrictEqual(spawnStub.getCall(2).args.slice(1, 3), ['/cli/b/aspire', ['describe', '--nologo']]);
+                assert.deepStrictEqual(spawnStub.getCall(3).args.slice(1, 3), ['/cli/a/aspire', ['describe']]);
+            } finally {
+                runner.dispose();
+            }
+        });
+
         test('tracks a one-shot process that is still running so it can be stopped', async () => {
             const cliProcess = new TestChildProcess();
             let exitCallback: ((code: number | null) => void) | undefined;

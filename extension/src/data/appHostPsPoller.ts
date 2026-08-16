@@ -170,7 +170,7 @@ export class AppHostPsPoller implements vscode.Disposable {
             }
         };
 
-        const args = this._cliRunner.withNoLogo(['ps', '--follow', '--format', 'json']);
+        const args = this._cliRunner.withNoLogo(['ps', '--follow', '--format', 'json'], cliPath);
         const psFollowStdout = new LimitedOutputBuffer(AppHostPsPoller._oneShotOutputBufferLimit);
         const psFollowStderr = new LimitedOutputBuffer(AppHostPsPoller._oneShotOutputBufferLimit);
 
@@ -202,7 +202,7 @@ export class AppHostPsPoller implements vscode.Disposable {
                 }
 
                 if (code !== 0) {
-                    if (this._cliRunner.disableNoLogoForRetry(args, psFollowStdout.value, psFollowStderr.value, 'aspire ps --follow')) {
+                    if (this._cliRunner.disableNoLogoForRetry(cliPath, args, psFollowStdout.value, psFollowStderr.value, 'aspire ps --follow')) {
                         this._startPsFollow();
                         return;
                     }
@@ -343,6 +343,7 @@ export class AppHostPsPoller implements vscode.Disposable {
         if (!isCurrentPsCommand()) {
             return;
         }
+        const invocationArgs = this._cliRunner.normalizeNoLogoArgs(cliPath, args);
 
         let stdout = '';
         let stderr = '';
@@ -358,7 +359,7 @@ export class AppHostPsPoller implements vscode.Disposable {
             }
         };
 
-        psProcess = spawnCliProcess(this._terminalProvider, cliPath, args, {
+        psProcess = spawnCliProcess(this._terminalProvider, cliPath, invocationArgs, {
             createProcessGroup: true,
             noExtensionVariables: true,
             stdoutCallback: (data) => { stdout += data; },
@@ -367,7 +368,7 @@ export class AppHostPsPoller implements vscode.Disposable {
                 removePsProcess();
                 if (!callbackInvoked) {
                     if ((code ?? 1) !== 0) {
-                        const retryArgs = this._cliRunner.tryGetNoLogoRetryArgs(args, stdout, stderr, 'aspire ps');
+                        const retryArgs = this._cliRunner.tryGetNoLogoRetryArgs(cliPath, invocationArgs, stdout, stderr, 'aspire ps');
                         if (retryArgs) {
                             this._runPsCommand(retryArgs, callback, options);
                             return;
