@@ -111,6 +111,34 @@ public class DotNetBasedAppHostServerScaffoldCacheTests(ITestOutputHelper output
             "obj/ was reused even though no project.assets.json was present to restore from.");
     }
 
+    [Fact]
+    public async Task CreateProjectFiles_ClearsRestoreArtifacts_WhenProjectReferencePathChanges()
+    {
+        // Pointing an integration at a local checkout is the in-repo dev-speed path: edits to that
+        // project flow straight into the next build without a repack. The cache must not pin an
+        // earlier target, so retargeting the reference has to rewrite the scaffold.
+        using var workspace = TemporaryWorkspace.CreateForCli(outputHelper);
+        var appPath = workspace.WorkspaceRoot.FullName;
+        var project = CreateProject(appPath);
+
+        var firstProject = Path.Combine(appPath, "v1", "Contoso.Widgets.csproj");
+        var secondProject = Path.Combine(appPath, "v2", "Contoso.Widgets.csproj");
+
+        await project.CreateProjectFilesAsync(
+            [IntegrationReference.FromProject("Contoso.Widgets", firstProject)]);
+        var assetsPath = SeedRestoreArtifacts(project);
+
+        var csprojPath = Path.Combine(project.ProjectModelPath, DotNetBasedAppHostServerProject.ProjectFileName);
+        Assert.Contains(firstProject, await File.ReadAllTextAsync(csprojPath));
+
+        await project.CreateProjectFilesAsync(
+            [IntegrationReference.FromProject("Contoso.Widgets", secondProject)]);
+
+        Assert.False(File.Exists(assetsPath),
+            "obj/project.assets.json survived even though the project reference was retargeted.");
+        Assert.Contains(secondProject, await File.ReadAllTextAsync(csprojPath));
+    }
+
     /// <summary>
     /// Writes the marker file the cache uses to decide whether a usable restore already exists.
     /// Real restores create far more under obj/, but project.assets.json is the file the skip path
