@@ -7,6 +7,7 @@ using System.Net.Sockets;
 using System.Text.Json;
 using Aspire.Cli.Backchannel;
 using Aspire.Cli.Certificates;
+using Aspire.Cli.Commands;
 using Aspire.Cli.Configuration;
 using Aspire.Cli.Diagnostics;
 using Aspire.Cli.DotNet;
@@ -530,7 +531,7 @@ internal sealed class GuestAppHostProject : IAppHostProject, IGuestAppHostSdkGen
 
             // Internal escalation CTS for the AppHost system. We cancel this when something fatal
             // happens to either the server or the guest (e.g. backchannel polling fails after the
-            // 60s timeout, the server exits unexpectedly) so the remaining process gets torn down
+            // configured timeout, the server exits unexpectedly) so the remaining process gets torn down
             // promptly. Without this, a hung guest can keep pendingRun alive forever after the CLI
             // has already given up on the backchannel, causing aspire run/start to hang instead of
             // surfacing the failure. Linked to the outer cancellationToken (which IS CCM.Token in
@@ -1256,7 +1257,7 @@ internal sealed class GuestAppHostProject : IAppHostProject, IGuestAppHostSdkGen
         ActivityContext parentContext,
         CancellationToken cancellationToken)
     {
-        const int ConnectionTimeoutSeconds = 60;
+        var connectionTimeout = AppHostStartupTimeout.GetBackchannelConnectionTimeout(_configuration);
 
         using var activity = _profilingTelemetry.StartBackchannelConnect(socketPath, parentContext, enableHotReload, retryCount: 0);
         var startTime = DateTimeOffset.UtcNow;
@@ -1315,11 +1316,13 @@ internal sealed class GuestAppHostProject : IAppHostProject, IGuestAppHostSdkGen
             {
                 var waitingFor = DateTimeOffset.UtcNow - startTime;
 
-                // Timeout after ConnectionTimeoutSeconds - the AppHost server should have started by now
-                if (waitingFor > TimeSpan.FromSeconds(ConnectionTimeoutSeconds))
+                // The AppHost server cannot open this backchannel until the guest has executed its
+                // builder. Use the outer startup budget so an extension-managed debugger can remain
+                // paused before builder creation without the guest path tearing down the session first.
+                if (waitingFor > connectionTimeout)
                 {
-                    _logger.LogError("Timed out waiting for AppHost server to start after {Timeout} seconds", ConnectionTimeoutSeconds);
-                    var timeoutException = new TimeoutException($"Timed out waiting for AppHost server to start after {ConnectionTimeoutSeconds} seconds. Check the debug logs for more details.");
+                    _logger.LogError("Timed out waiting for AppHost server to start after {Timeout} seconds", connectionTimeout.TotalSeconds);
+                    var timeoutException = new TimeoutException($"Timed out waiting for AppHost server to start after {connectionTimeout.TotalSeconds} seconds. Check the debug logs for more details.");
                     activity.SetError(timeoutException);
                     backchannelCompletionSource.TrySetException(timeoutException);
                     return;

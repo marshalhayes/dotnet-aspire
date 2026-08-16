@@ -960,6 +960,41 @@ public class GuestAppHostProjectTests : IDisposable
     }
 
     [Fact]
+    public async Task StartBackchannelConnectionAsync_UsesConfiguredBackchannelTimeout()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                [KnownConfigNames.CliBackchannelConnectTimeoutSeconds] = "0"
+            })
+            .Build();
+        var backchannel = new TestAppHostBackchannel
+        {
+            ConnectAsyncCallback = (_, _) => throw new SocketException((int)SocketError.ConnectionRefused)
+        };
+        var project = CreateGuestAppHostProject(backchannel: backchannel, configuration: configuration);
+        var serverSession = new FakeAppHostServerSession();
+        var backchannelCompletionSource = new TaskCompletionSource<IAppHostCliBackchannel>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cancellationSource = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+
+        try
+        {
+            await InvokeStartBackchannelConnectionAsync(
+                project,
+                serverSession,
+                backchannelCompletionSource,
+                cancellationSource.Token);
+        }
+        catch (OperationCanceledException) when (cancellationSource.IsCancellationRequested)
+        {
+        }
+
+        Assert.True(backchannelCompletionSource.Task.IsFaulted, "The configured immediate timeout should fault the guest backchannel wait before test cancellation.");
+        var exception = await Assert.ThrowsAsync<TimeoutException>(() => backchannelCompletionSource.Task);
+        Assert.Contains("after 0 seconds", exception.Message);
+    }
+
+    [Fact]
     public async Task RunAsync_PassesWorkloadIdToAppHostServerEnvironment()
     {
         var appHostPath = Path.Combine(_workspace.WorkspaceRoot.FullName, "apphost.ts");
@@ -1283,8 +1318,11 @@ public class GuestAppHostProjectTests : IDisposable
         bool identityOverridden = false,
         string languageId = "typescript/nodejs",
         IEnvironment? environment = null,
-        DirectoryInfo? homeDirectory = null)
+        DirectoryInfo? homeDirectory = null,
+        IConfiguration? configuration = null)
     {
+        var effectiveConfiguration = configuration ?? _configuration;
+
         var language = new LanguageInfo(
             LanguageId: languageId,
             DisplayName: "TypeScript (Node.js)",
@@ -1316,8 +1354,8 @@ public class GuestAppHostProjectTests : IDisposable
             certificateService: new TestCertificateService(),
             runner: new TestDotNetCliRunner(),
             packagingService: new TestPackagingService(),
-            configuration: _configuration,
-            features: new Features(_configuration, NullLogger<Features>.Instance),
+            configuration: effectiveConfiguration,
+            features: new Features(effectiveConfiguration, NullLogger<Features>.Instance),
             languageDiscovery: new TestLanguageDiscovery(),
             executionContext: executionContext,
             environment: environment ?? new TestEnvironment(),
@@ -1552,7 +1590,8 @@ public class GuestAppHostProjectTests : IDisposable
     private static async Task InvokeStartBackchannelConnectionAsync(
         GuestAppHostProject project,
         IAppHostServerSession serverSession,
-        TaskCompletionSource<IAppHostCliBackchannel> backchannelCompletionSource)
+        TaskCompletionSource<IAppHostCliBackchannel> backchannelCompletionSource,
+        CancellationToken cancellationToken = default)
     {
         var method = typeof(GuestAppHostProject).GetMethod(
             "StartBackchannelConnectionAsync",
@@ -1565,7 +1604,7 @@ public class GuestAppHostProjectTests : IDisposable
             backchannelCompletionSource,
             false,
             default(System.Diagnostics.ActivityContext),
-            CancellationToken.None
+            cancellationToken
         ]));
         await task.DefaultTimeout();
     }
