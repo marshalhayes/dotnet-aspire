@@ -126,7 +126,7 @@ internal static partial class JavaDockerfileGenerator
         }
 
         var build = prebuiltJar is null ? JavaContainerBuild.Resolve(resource, appDirectory) : null;
-        var javaVersion = JavaVersionDetector.Detect(appDirectory);
+        var javaVersion = JavaVersionDetector.Detect(appDirectory, build?.Tool);
 
         // ctx.Resource is the ContainerResource PublishAsDockerFile substitutes in, but it shares the
         // original JavaAppResource's annotation collection, which is why WithDockerfileBaseImage authored

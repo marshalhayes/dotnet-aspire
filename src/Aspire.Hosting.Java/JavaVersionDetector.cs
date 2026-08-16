@@ -26,12 +26,33 @@ internal static partial class JavaVersionDetector
     /// </summary>
     internal const string DefaultJavaVersion = "21";
 
-    public static string Detect(string appDirectory)
+    /// <param name="appDirectory">The application directory to read build files from.</param>
+    /// <param name="tool">
+    /// The build tool that actually builds the application, when it is known. A directory can hold both a
+    /// POM and a Gradle script — a repository part-way through a migration, for example — and the two can
+    /// name different releases. Reading the tool that does not run would tag the image for a release the
+    /// application was never compiled for, which surfaces at runtime as
+    /// <c>UnsupportedClassVersionError</c> rather than as a build failure. This is an ordering rather than
+    /// a filter: Gradle projects often leave the release to a toolchain block that is not read here, and a
+    /// sibling POM is still better evidence than the default.
+    /// </param>
+    public static string Detect(string appDirectory, JavaBuildTool? tool = null)
     {
-        return DetectFromPom(Path.Combine(appDirectory, "pom.xml"))
-            ?? DetectFromGradle(Path.Combine(appDirectory, "build.gradle"))
-            ?? DetectFromGradle(Path.Combine(appDirectory, "build.gradle.kts"))
-            ?? DefaultJavaVersion;
+        string?[] candidates = tool is JavaBuildTool.Gradle
+            ?
+            [
+                DetectFromGradle(Path.Combine(appDirectory, "build.gradle")),
+                DetectFromGradle(Path.Combine(appDirectory, "build.gradle.kts")),
+                DetectFromPom(Path.Combine(appDirectory, "pom.xml")),
+            ]
+            :
+            [
+                DetectFromPom(Path.Combine(appDirectory, "pom.xml")),
+                DetectFromGradle(Path.Combine(appDirectory, "build.gradle")),
+                DetectFromGradle(Path.Combine(appDirectory, "build.gradle.kts")),
+            ];
+
+        return Array.Find(candidates, candidate => candidate is not null) ?? DefaultJavaVersion;
     }
 
     /// <summary>

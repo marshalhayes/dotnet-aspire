@@ -535,6 +535,18 @@ export class CliPathResolver implements vscode.Disposable {
         let expectedConfiguredPathSnapshot = configuredPathSnapshot;
 
         const updateConfiguredPath = async (value: string): Promise<void> => {
+            // Only the window-wide setting has auto-configuration provenance; a workspace-folder
+            // target must never write or clear it on another scope's behalf.
+            if (target.kind !== 'window') {
+                return;
+            }
+
+            // Defensive: a tokenized value should never reach here as a legacy/auto-configured
+            // snapshot, but never persist or clear a `${...}` variable reference regardless.
+            if (configuredPath.includes('${') || expectedConfiguredPathSnapshot.configuredPath.includes('${')) {
+                return;
+            }
+
             // Do not overwrite a setting whose value or scope changed while the CLI probe
             // was running. A workspace pin can have the same effective value as the global
             // auto-configured setting, but must still block a stale global write.

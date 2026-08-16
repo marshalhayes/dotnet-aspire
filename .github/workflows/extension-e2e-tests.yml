@@ -260,7 +260,6 @@ jobs:
             useXvfb: true
             installJava: true
             timeoutMinutes: 110
-            unsetCliStartTimeout: true
           - name: Linux
             shardName: java-apphost-debug-startup-timeout
             spec: out/test-e2e/test-e2e/javaAppHostDebugStartupTimeout.e2e.test.js

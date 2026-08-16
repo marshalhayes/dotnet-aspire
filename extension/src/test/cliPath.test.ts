@@ -1099,6 +1099,58 @@ suite('CliPathResolver scoped tests', () => {
         assert.ok(setConfiguredPath.notCalled);
     });
 
+    test('does not persist the global setting for a folder target with an empty configured path when a default install is found', async () => {
+        const setConfiguredPath = sinon.stub().resolves();
+        const resolver = new CliPathResolver(createMockDeps({
+            getConfiguredPath: () => '',
+            getWorkspaceFolders: () => [folderA],
+            findOnPath: async () => undefined,
+            findAtDefaultPath: async () => bundlePath,
+            setConfiguredPath,
+        }));
+
+        const result = await resolver.resolve(targetA);
+
+        assert.strictEqual(result.cliPath, bundlePath);
+        assert.strictEqual(result.source, 'default-install');
+        assert.ok(setConfiguredPath.notCalled, 'a folder target must never write the window-wide setting');
+    });
+
+    test('does not clear the global setting for a folder target inheriting a legacy configured path when PATH is found', async () => {
+        const setConfiguredPath = sinon.stub().resolves();
+        const resolver = new CliPathResolver(createMockDeps({
+            getConfiguredPath: () => bundlePath,
+            isConfiguredPathAutoConfigured: () => true,
+            getWorkspaceFolders: () => [folderA],
+            findOnPath: async () => 'aspire',
+            setConfiguredPath,
+        }));
+
+        const result = await resolver.resolve(targetA);
+
+        assert.strictEqual(result.cliPath, 'aspire');
+        assert.strictEqual(result.source, 'path');
+        assert.ok(setConfiguredPath.notCalled, 'a folder target must never clear the window-wide setting');
+    });
+
+    test('does not persist the global setting when a tokenized configured candidate fails and a default install is found', async () => {
+        const setConfiguredPath = sinon.stub().resolves();
+        const resolver = new CliPathResolver(createMockDeps({
+            getConfiguredPath: () => '${workspaceFolder}/bin/aspire',
+            getWorkspaceFolders: () => [folderA],
+            tryExecute: async () => false,
+            findOnPath: async () => undefined,
+            findAtDefaultPath: async () => bundlePath,
+            setConfiguredPath,
+        }));
+
+        const result = await resolver.resolve(targetA);
+
+        assert.strictEqual(result.cliPath, bundlePath);
+        assert.strictEqual(result.source, 'default-install');
+        assert.ok(setConfiguredPath.notCalled, 'a rejected tokenized candidate must never fall back to persisting a default install path');
+    });
+
     test('scopes rejection state to the folder that produced it', async () => {
         const resolver = new CliPathResolver(createMockDeps({
             getConfiguredPath: target => target.kind === 'workspaceFolder' && target.workspaceFolder.name === 'a'

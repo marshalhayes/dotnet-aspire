@@ -596,6 +596,42 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
         Assert.Equal("17", JavaVersionDetector.Detect(appDirectory.Path));
     }
 
+    [Theory]
+    [InlineData("gradle", "21")]
+    [InlineData("maven", "17")]
+    public void JavaVersionDetector_FollowsTheResolvedBuildToolWhenBothBuildFilesArePresent(string toolName, string expected)
+    {
+        // A repository part-way through a Maven to Gradle migration keeps both build files and picks the
+        // tool explicitly. Reading the other tool's file would tag the image for a release the application
+        // was not compiled for, which surfaces at runtime as UnsupportedClassVersionError rather than as a
+        // build failure.
+        using var appDirectory = new TempJavaAppDirectory();
+
+        File.WriteAllText(Path.Combine(appDirectory.Path, "pom.xml"), """
+            <project><properties><java.version>17</java.version></properties></project>
+            """);
+        File.WriteAllText(Path.Combine(appDirectory.Path, "build.gradle"), "sourceCompatibility = '21'");
+
+        var tool = toolName is "gradle" ? JavaBuildTool.Gradle : JavaBuildTool.Maven;
+
+        Assert.Equal(expected, JavaVersionDetector.Detect(appDirectory.Path, tool));
+    }
+
+    [Fact]
+    public void JavaVersionDetector_FallsBackToTheOtherBuildFileWhenTheResolvedToolDeclaresNothing()
+    {
+        // Gradle projects commonly leave the release to a toolchain block this does not read. The POM is
+        // still better evidence than the default, so the tool preference is an ordering, not a filter.
+        using var appDirectory = new TempJavaAppDirectory();
+
+        File.WriteAllText(Path.Combine(appDirectory.Path, "pom.xml"), """
+            <project><properties><java.version>17</java.version></properties></project>
+            """);
+        File.WriteAllText(Path.Combine(appDirectory.Path, "build.gradle"), "plugins { id 'java' }");
+
+        Assert.Equal("17", JavaVersionDetector.Detect(appDirectory.Path, JavaBuildTool.Gradle));
+    }
+
     [Fact]
     public void JavaVersionDetector_IgnoresReleaseAndTargetOutsideTheCompilerPlugin()
     {
