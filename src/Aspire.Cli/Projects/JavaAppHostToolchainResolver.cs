@@ -227,16 +227,19 @@ internal static class JavaAppHostToolchainResolver
         // silently produce no output (see NpmRunner, which hits the same problem with npm.cmd), so the
         // command interpreter runs it instead.
         //
-        // cmd.exe strips quotes in ways that do not match how ProcessStartInfo.ArgumentList escapes
-        // arguments: if the *first* token is quoted, cmd removes that quote and the last one on the
-        // line, mangling everything in between. Passing the wrapper as a path relative to the working
-        // directory keeps that token free of spaces, so ArgumentList never quotes it and the hazard
-        // cannot arise. See the quote-processing rules printed by `cmd /?`.
+        // The path is made relative to the working directory to keep it short, and "call" runs it. That
+        // matters because cmd.exe strips quotes in a way that does not match how ProcessStartInfo
+        // escapes arguments: when the *first* token on the line is quoted, cmd removes that quote and
+        // the last one on the line, mangling everything in between. A wrapper reached through a
+        // directory whose name contains a space is quoted, so with the wrapper first the line would be
+        // mangled; with "call" first the first character is never a quote and the rule cannot apply.
+        // "call" is also how one batch file invokes another: it returns control and propagates the
+        // exit code. See the quote-processing rules printed by `cmd /?`.
         var relativeWrapperPath = Path.GetRelativePath(appHostDirectory.FullName, wrapperPath);
 
         return new JavaToolInvocation(
             Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe",
-            ["/c", relativeWrapperPath]);
+            ["/c", "call", relativeWrapperPath]);
     }
 
     /// <summary>

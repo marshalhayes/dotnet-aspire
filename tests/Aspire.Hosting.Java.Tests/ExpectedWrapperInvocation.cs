@@ -10,8 +10,8 @@ namespace Aspire.Hosting.Java.Tests;
 /// Unix launches go through <c>sh</c>, because a wrapper committed from Windows checks out without an
 /// executable bit, so the wrapper path moves from the command into the first argument. Windows launches
 /// the <c>.cmd</c> and <c>.bat</c> wrappers through the command interpreter, because a batch file started
-/// with redirected stdout can silently produce no output, and passes the wrapper relative to the working
-/// directory so <c>cmd.exe</c> never sees a quoted first token.
+/// with redirected stdout can silently produce no output, and runs it through <c>call</c> so the quoted
+/// wrapper path is never the first token on a line whose quotes <c>cmd.exe</c> would otherwise strip.
 /// <para>
 /// Tests state the wrapper, the working directory, and the tool's own arguments, and let this decide the
 /// shape, so neither platform is asserted against the other's command line.
@@ -26,6 +26,6 @@ internal static class ExpectedWrapperInvocation
 
     public static string[] Args(string wrapperPath, string workingDirectory, params string[] toolArgs)
         => OperatingSystem.IsWindows()
-            ? ["/c", Path.GetRelativePath(workingDirectory, wrapperPath), .. toolArgs]
+            ? ["/c", "call", Path.GetRelativePath(workingDirectory, wrapperPath), .. toolArgs]
             : [wrapperPath, .. toolArgs];
 }

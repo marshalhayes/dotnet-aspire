@@ -1475,24 +1475,31 @@ public static partial class JavaHostingExtensions
     private static (string Command, string[] LeadingArgs) ResolveWrapperInvocation(JavaAppResource resource, JavaBuildTool tool)
         => WrapperInvocationFor(
             JavaBuildToolResolver.ResolveWrapperPath(resource, tool, OperatingSystem.IsWindows()),
-            resource.WorkingDirectory);
+            resource.WorkingDirectory,
+            OperatingSystem.IsWindows());
 
     /// <inheritdoc cref="ResolveWrapperInvocation" />
-    private static (string Command, string[] LeadingArgs) WrapperInvocationFor(string wrapperPath, string workingDirectory)
+    internal static (string Command, string[] LeadingArgs) WrapperInvocationFor(string wrapperPath, string workingDirectory, bool isWindows)
     {
-        if (!OperatingSystem.IsWindows())
+        if (!isWindows)
         {
             return ("sh", [wrapperPath]);
         }
 
-        // cmd.exe strips quotes in a way that does not match how ProcessStartInfo escapes arguments: if
-        // the *first* token is quoted, cmd removes that quote and the last one on the line, mangling
-        // everything in between. Passing the wrapper as a path relative to the resource's working
-        // directory keeps that token free of spaces, so it is never quoted and the hazard cannot arise.
-        // See the quote-processing rules printed by `cmd /?`.
+        // Passing the wrapper as a path relative to the resource's working directory keeps it short and
+        // usually free of spaces, which matters because cmd.exe strips quotes in a way that does not
+        // match how arguments are escaped for it: when the *first* token on the line is quoted, cmd
+        // removes that quote and the last one on the line, mangling everything in between.
         var relativeWrapperPath = Path.GetRelativePath(workingDirectory, wrapperPath);
 
-        return (Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe", ["/c", relativeWrapperPath]);
+        // "call" makes that unreachable rather than merely unlikely. A wrapper reached through a
+        // directory with a space in its name — WithWrapperPath("../build tools/mvnw.cmd") — is quoted
+        // when the command line is built, and quoting the first token is exactly what triggers the
+        // stripping. With "call" ahead of it the first character is never a quote, so the rule cannot
+        // apply, and "call" is how a batch file is meant to be invoked from another anyway: it returns
+        // control and propagates the wrapper's exit code.
+        // See the quote-processing rules printed by `cmd /?`.
+        return (Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe", ["/c", "call", relativeWrapperPath]);
     }
 
     private static string WrapperCommand()

@@ -253,10 +253,11 @@ public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
         if (OperatingSystem.IsWindows())
         {
             // The wrappers are batch files, which produce no output when launched directly with
-            // redirected stdout, so the command interpreter runs them instead. The wrapper is passed
-            // relative to the working directory so cmd.exe never sees a quoted first token.
+            // redirected stdout, so the command interpreter runs them instead. "call" leads so the
+            // wrapper is never the first token: cmd strips the first and last quote on the line when
+            // the first token is quoted, which would mangle a path containing a space.
             Assert.Equal(Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe", invocation.Command);
-            Assert.Equal(["/c", expectedWrapper], invocation.PrefixArgs);
+            Assert.Equal(["/c", "call", expectedWrapper], invocation.PrefixArgs);
         }
         else
         {
