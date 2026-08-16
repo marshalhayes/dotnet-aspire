@@ -663,6 +663,29 @@ suite('AspireCodeLensProvider resource lens anchoring', () => {
         harness.dispose();
     });
 
+    test('renders resource and builder lenses for a Java AppHost, which previously had none', async () => {
+        const appHostPath = p('repo', 'AppHost', 'AppHost.java');
+        const content = [
+            'import aspire.*;',
+            'void main() throws Exception {',
+            '    var builder = DistributedApplication.CreateBuilder();',
+            '    var catalog = builder.addSpringBootApp("catalog", "./catalog");',
+            '    builder.build().run();',
+            '}',
+        ].join('\n');
+        const harness = createHarness({
+            appHosts: [makeAppHost(appHostPath)],
+            workspaceAppHostPath: appHostPath,
+            workspaceResources: [makeResource('catalog', { state: 'Running' })],
+        });
+
+        const lenses = await harness.provider.provideCodeLenses(createMockDocument(content, appHostPath), cancellationToken) as vscode.CodeLens[];
+
+        assert.ok(lenses.some(lens => lens.range.start.line === 3), 'expected at least one lens anchored on the addSpringBootApp line');
+        assert.ok(lenses.some(lens => lens.command?.command === 'aspire-vscode.codeLensOpenDashboard'), 'expected the builder statement to carry Open Dashboard');
+        harness.dispose();
+    });
+
     test('emits pipeline debug lenses for a stopped Rust AppHost', async () => {
         const appHostPath = p('repo', 'AppHost', 'apphost.rs');
         const content = [
@@ -1143,8 +1166,18 @@ suite('AspireCodeLensProvider resource lens anchoring', () => {
         harness.dispose();
     });
     suite('Java AppHost entry point warning', () => {
-        const javaDebug = 'vscjava.vscode-java-debug';
         const javaAppHostPath = p('repo', 'AppHost', 'AppHost.java');
+
+        function appHostSource(main: string): string {
+            return [
+                'import aspire.*;',
+                main,
+                '    var builder = DistributedApplication.CreateBuilder();',
+                '    builder.addSpringBootApp("catalog", "./catalog");',
+                '    builder.build().run();',
+                '}',
+            ].join('\n');
+        }
 
         function entryPointLenses(lenses: vscode.CodeLens[]): vscode.CodeLens[] {
             return lenses.filter(lens =>
@@ -1152,7 +1185,7 @@ suite('AspireCodeLensProvider resource lens anchoring', () => {
                 lens.command?.title === codeLensJavaAppHostAlreadyRunning);
         }
 
-        async function lensesFor(content: string, opts: Parameters<typeof createHarness>[0] = { installedExtensions: [javaDebug] }): Promise<vscode.CodeLens[]> {
+        async function lensesFor(content: string, opts: Parameters<typeof createHarness>[0] = {}): Promise<vscode.CodeLens[]> {
             const harness = createHarness(opts);
             const lenses = entryPointLenses(await harness.provider.provideCodeLenses(createMockDocument(content, javaAppHostPath), cancellationToken) as vscode.CodeLens[]);
             harness.dispose();
@@ -1161,91 +1194,31 @@ suite('AspireCodeLensProvider resource lens anchoring', () => {
 
         test('warns on the implicitly declared instance main the Java AppHost actually ships', async () => {
             // JEP 512: a source-launched AppHost.java has no class, no modifiers and no parameters.
-            // Requiring `public static` would have missed every AppHost in the repo.
-            const lenses = await lensesFor([
-                'import aspire.*;',
-                '',
-                'void main() throws Exception {',
-                '    var builder = DistributedApplication.CreateBuilder();',
-                '    builder.build().run();',
-                '}',
-            ].join('\n'));
+            const lenses = await lensesFor(appHostSource('void main() throws Exception {'));
 
             assert.strictEqual(lenses.length, 1);
-            assert.strictEqual(lenses[0].range.start.line, 2, 'the warning belongs on the declaration the Run/Debug lens sits above');
+            assert.strictEqual(lenses[0].range.start.line, 1, 'the warning belongs on the declaration the Run/Debug lens sits above');
             assert.strictEqual(lenses[0].command?.title, codeLensJavaAppHostUseAspire);
             assert.strictEqual(lenses[0].command?.tooltip, codeLensJavaAppHostUseAspireTooltip);
             // Rendered as plain text: a stopped AppHost has nothing in the tree to reveal.
             assert.strictEqual(lenses[0].command?.command, '');
         });
 
-        test('warns on every classic entry point shape', async () => {
-            const shapes = [
-                'public static void main(String[] args) {',
-                'static public void main(final String... argv) {',
-                'public static void main(String args[]) throws Exception {',
-                'private static void main(String[] a) {',
-                'void main() {',
-                'void main(String[] args) {',
-            ];
+        test('warns on a conventional static main, which is the Maven and Gradle project shape', async () => {
+            const lenses = await lensesFor(appHostSource('public static void main(String[] args) throws Exception {'));
 
-            for (const shape of shapes) {
-                const lenses = await lensesFor(`class AppHost {\n    ${shape}\n    }\n}`);
-                assert.strictEqual(lenses.length, 1, `expected a warning for: ${shape}`);
-                assert.strictEqual(lenses[0].range.start.line, 1, `wrong line for: ${shape}`);
-            }
+            assert.strictEqual(lenses.length, 1);
+            assert.strictEqual(lenses[0].range.start.line, 1);
         });
 
-        test('does not warn without the Java debug extension, which is what draws the Run/Debug lens', async () => {
-            const lenses = await lensesFor('void main() {\n}', { installedExtensions: [] });
+        test('does not warn on a Java file that is not an AppHost', async () => {
+            const lenses = await lensesFor('public class Application {\n    public static void main(String[] args) {\n    }\n}');
 
-            assert.deepStrictEqual(lenses, []);
-        });
-
-        test('does not warn on a file that is not an AppHost', async () => {
-            const harness = createHarness({ installedExtensions: [javaDebug] });
-            const otherFile = p('repo', 'api', 'src', 'main', 'java', 'Application.java');
-
-            const lenses = entryPointLenses(await harness.provider.provideCodeLenses(
-                createMockDocument('public static void main(String[] args) {\n}', otherFile), cancellationToken) as vscode.CodeLens[]);
-
-            assert.deepStrictEqual(lenses, [], 'only AppHost.java gets the warning; every other Java file is a legitimate Run/Debug target');
-            harness.dispose();
-        });
-
-        test('does not warn on a commented-out or quoted main', async () => {
-            const lenses = await lensesFor([
-                '// void main() {',
-                '/* public static void main(String[] args) { */',
-                'var sample = "void main() {";',
-            ].join('\n'));
-
-            assert.deepStrictEqual(lenses, []);
-        });
-
-        test('does not warn on a main that takes something other than a String', async () => {
-            const lenses = await lensesFor('class AppHost {\n    static void main(int iterations) {\n    }\n}');
-
-            assert.deepStrictEqual(lenses, [], 'a helper named main is not an entry point and gets no Run/Debug lens');
-        });
-
-        test('warns once when the file declares more than one main', async () => {
-            const lenses = await lensesFor([
-                'void main() {',
-                '}',
-                'class Helper {',
-                '    public static void main(String[] args) {',
-                '    }',
-                '}',
-            ].join('\n'));
-
-            assert.strictEqual(lenses.length, 1, 'only the first entry point is reachable, so only it is warned about');
-            assert.strictEqual(lenses[0].range.start.line, 0);
+            assert.deepStrictEqual(lenses, [], 'detection is content-based, so an ordinary Java file with a main is left alone');
         });
 
         test('points at the running AppHost once it is started under Aspire', async () => {
-            const lenses = await lensesFor('void main() {\n}', {
-                installedExtensions: [javaDebug],
+            const lenses = await lensesFor(appHostSource('void main() {'), {
                 appHosts: [makeAppHost(javaAppHostPath)],
             });
 
@@ -1309,7 +1282,7 @@ suite('AspireCodeLensProvider resource lens anchoring', () => {
                 [p('repo', 'AppHost', 'apphost.ts'), "const builder = createBuilder();\nbuilder.addSpringBootApp('catalog', '../catalog');"],
                 [p('repo', 'AppHost', 'apphost.rs'), 'fn main() {\n    let builder = create_builder(None)?;\n    let catalog = builder.add_spring_boot_app("catalog", "../catalog")?;\n}'],
                 [p('repo', 'AppHost', 'apphost.py'), 'builder = create_builder()\nbuilder.add_spring_boot_app("catalog", "../catalog")'],
-                [p('repo', 'AppHost', 'AppHost.java'), 'public class AppHost {\n    public static void main(String[] args) {\n        builder.addSpringBootApp("catalog", "../catalog");\n    }\n}'],
+                [p('repo', 'AppHost', 'AppHost.java'), 'public class AppHost {\n    public static void main(String[] args) {\n        var builder = DistributedApplication.CreateBuilder();\n        builder.addSpringBootApp("catalog", "../catalog");\n    }\n}'],
                 [p('repo', 'AppHost', 'apphost.go'), 'func main() {\n\tbuilder.AddSpringBootApp("catalog", "../catalog")\n}'],
             ];
 
@@ -1346,9 +1319,8 @@ suite('AspireCodeLensProvider resource lens anchoring', () => {
 
         test('warns in AppHost languages that have no resource parser', async () => {
             // These languages produce no state or action lenses because nothing parses their resource
-            // model, but a Java AppHost is exactly where a Spring Boot launch is most likely to appear.
+            // model, but they can still launch a Java resource through Spring Boot's build plugins.
             const cases: ReadonlyArray<readonly [string, string]> = [
-                [p('repo', 'AppHost', 'AppHost.java'), 'public class AppHost {\n    public static void main(String[] args) {\n        builder.addJavaApp("api", "../api").withMavenGoal("spring-boot:run");\n    }\n}'],
                 [p('repo', 'AppHost', 'apphost.py'), 'builder = create_builder()\nbuilder.add_java_app("api", "../api").with_gradle_task("bootRun")'],
                 [p('repo', 'AppHost', 'apphost.go'), 'func main() {\n\tbuilder.AddJavaApp("api", "../api").WithMavenGoal("spring-boot:run")\n}'],
             ];
@@ -1363,7 +1335,7 @@ suite('AspireCodeLensProvider resource lens anchoring', () => {
 
         test('stays silent for a source file that is not the AppHost', async () => {
             // The parserless languages have nothing narrowing the document to an AppHost, so without a
-            // file-name gate every Java, Python and Go file in the workspace would be scanned - and any
+            // file-name gate every Python and Go file in the workspace would be scanned - and any
             // that happened to contain the call would get an Aspire lens.
             const cases: ReadonlyArray<readonly [string, string]> = [
                 [p('repo', 'src', 'Application.java'), 'class Application {\n    void configure() {\n        builder.addJavaApp("api", "../api").withMavenGoal("spring-boot:run");\n    }\n}'],
@@ -1380,10 +1352,11 @@ suite('AspireCodeLensProvider resource lens anchoring', () => {
         });
 
         test('warns in a nested AppHost that keeps the conventional file name', async () => {
-            // A Maven or Gradle Java AppHost sits at the build tool's source root rather than the
-            // project root, so the gate has to look at the file name and not at the directory.
+            // A Maven or Gradle Java AppHost sits at the build tool's source root rather than next to
+            // the project file, so content-based parser detection has to work no matter how deep the
+            // AppHost.java source file is nested.
             const appHostPath = p('repo', 'AppHost', 'src', 'main', 'java', 'AppHost.java');
-            const content = 'public class AppHost {\n    public static void main(String[] args) {\n        builder.addJavaApp("api", "../api").withMavenGoal("spring-boot:run");\n    }\n}';
+            const content = 'public class AppHost {\n    public static void main(String[] args) {\n        var builder = DistributedApplication.CreateBuilder();\n        builder.addJavaApp("api", "../api").withMavenGoal("spring-boot:run");\n    }\n}';
             const harness = createHarness({ installedExtensions: [springBootDashboard] });
 
             const lenses = springBootLenses(await harness.provider.provideCodeLenses(createMockDocument(content, appHostPath), cancellationToken) as vscode.CodeLens[]);
@@ -1392,9 +1365,9 @@ suite('AspireCodeLensProvider resource lens anchoring', () => {
             harness.dispose();
         });
 
-        test('stays silent for a commented-out launch in a language that has no parser', async () => {
+        test('stays silent for a commented-out launch in Java and languages that have no parser', async () => {
             const cases: ReadonlyArray<readonly [string, string]> = [
-                [p('repo', 'AppHost', 'AppHost.java'), 'public class AppHost {\n    // builder.addJavaApp("api", "../api").withMavenGoal("spring-boot:run");\n    /* builder.addJavaApp("b", "../b").withGradleTask("bootRun"); */\n}'],
+                [p('repo', 'AppHost', 'AppHost.java'), 'public class AppHost {\n    public static void main(String[] args) {\n        var builder = DistributedApplication.CreateBuilder();\n        // builder.addJavaApp("api", "../api").withMavenGoal("spring-boot:run");\n        /* builder.addJavaApp("b", "../b").withGradleTask("bootRun"); */\n    }\n}'],
                 [p('repo', 'AppHost', 'apphost.py'), '# builder.add_java_app("api", "../api").with_maven_goal("spring-boot:run")'],
                 [p('repo', 'AppHost', 'apphost.go'), 'func main() {\n\t// builder.AddJavaApp("api", "../api").WithMavenGoal("spring-boot:run")\n}'],
             ];
@@ -1407,11 +1380,12 @@ suite('AspireCodeLensProvider resource lens anchoring', () => {
             }
         });
 
-        test('still warns on a live launch that follows a commented-out one without a parser', async () => {
+        test('still warns on a live Java launch that follows a commented-out one', async () => {
             const appHostPath = p('repo', 'AppHost', 'AppHost.java');
             const content = [
                 'public class AppHost {',
                 '    public static void main(String[] args) {',
+                '        var builder = DistributedApplication.CreateBuilder();',
                 '        // builder.addJavaApp("old", "../old").withMavenGoal("spring-boot:run");',
                 '        builder.addJavaApp("api", "../api").withMavenGoal("spring-boot:run");',
                 '    }',
@@ -1422,7 +1396,7 @@ suite('AspireCodeLensProvider resource lens anchoring', () => {
             const lenses = springBootLenses(await harness.provider.provideCodeLenses(createMockDocument(content, appHostPath), cancellationToken) as vscode.CodeLens[]);
 
             assert.strictEqual(lenses.length, 1);
-            assert.strictEqual(lenses[0].range.start.line, 3);
+            assert.strictEqual(lenses[0].range.start.line, 4);
             harness.dispose();
         });
 
@@ -1430,6 +1404,9 @@ suite('AspireCodeLensProvider resource lens anchoring', () => {
             const appHostPath = p('repo', 'AppHost', 'AppHost.java');
             const content = [
                 'public class AppHost {',
+                '    public static void main(String[] args) {',
+                '        var builder = DistributedApplication.CreateBuilder();',
+                '    }',
                 '    static final String DOCS = """',
                 '        builder.addJavaApp("api", "../api").withMavenGoal("spring-boot:run");',
                 '        """;',
