@@ -327,9 +327,7 @@ export function parseJavaAppHostCommand(args: string[]): { mainClass: string; cl
     // anything looking wrong. The "--name=value" spelling is a single token and needs no entry here.
     // https://docs.oracle.com/en/java/javase/25/docs/specs/man/java.html
     const valueTakingOptions = new Set([
-        '-p', '--module-path',
-        '--upgrade-module-path',
-        '--add-modules', '--limit-modules',
+        '--limit-modules',
         '--add-exports', '--add-opens', '--add-reads',
         '--patch-module',
         '--enable-native-access',

@@ -543,33 +543,6 @@ public class AddJavaAppTests
         Assert.Equal("-Xmx512m -Xms256m", envVars["JAVA_TOOL_OPTIONS"]);
     }
 
-    [Fact]
-    public async Task WithJvmArgs_AddJavaAppWithJar_PassesJvmArgsBeforeJar()
-    {
-        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
-
-        var app = builder.AddJavaApp("javafx", AppContext.BaseDirectory, "target/javafx.jar")
-            .WithJvmArgs("--module-path", "target/javafx-modules", "--add-modules", "javafx.controls,javafx.fxml");
-
-        var args = await ArgumentEvaluator.GetArgumentListAsync(app.Resource);
-
-        Assert.Equal(["--module-path", "target/javafx-modules", "--add-modules", "javafx.controls,javafx.fxml", "-jar", "target/javafx.jar"], args);
-    }
-
-    [Fact]
-    public async Task WithJvmArgs_AddJavaAppWithJar_DoesNotSetJavaToolOptions()
-    {
-        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
-
-        var app = builder.AddJavaApp("javafx", AppContext.BaseDirectory, "target/javafx.jar")
-            .WithJvmArgs("--module-path", "target/javafx-modules", "--add-modules", "javafx.controls,javafx.fxml");
-
-        var envVars = await EnvironmentVariableEvaluator.GetEnvironmentVariablesAsync(
-            app.Resource, DistributedApplicationOperation.Run, TestServiceProvider.Instance);
-
-        Assert.False(envVars.ContainsKey("JAVA_TOOL_OPTIONS"));
-    }
-
     // ---- WithOtelAgent ------------------------------------------------------
 
     [Fact]
@@ -1089,23 +1062,6 @@ public class AddJavaAppTests
 
         var annotation = app.Resource.Annotations.OfType<SupportsDebuggingAnnotation>().SingleOrDefault();
         Assert.Null(annotation);
-    }
-
-    [Fact]
-    public async Task WithJvmArgs_AddsVmArgsToJavaLaunchConfiguration()
-    {
-        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Run).WithResourceCleanUp(true);
-        using var tempDir = new TempJavaAppDirectory();
-        tempDir.Write("pom.xml", "<project><artifactId>javafx-app</artifactId></project>");
-
-        var app = builder.AddJavaApp("javafx", tempDir.Path)
-            .WithMavenGoal("javafx:run")
-            .WithJvmArgs("--module-path", "target/javafx-sdk/lib", "--add-modules", "javafx.controls,javafx.fxml");
-
-        var launchConfig = await GetLaunchConfigurationAsync(app);
-
-        Assert.NotNull(launchConfig.VmArgs);
-        Assert.Equal(["--module-path", "target/javafx-sdk/lib", "--add-modules", "javafx.controls,javafx.fxml"], launchConfig.VmArgs);
     }
 
     // ---- Chaining multiple methods ------------------------------------------

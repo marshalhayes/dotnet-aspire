@@ -524,11 +524,9 @@ suite('Java AppHost Command Parsing Tests', () => {
         // makes it the main class, and the adapter then launches something the user never asked for
         // without reporting anything wrong.
         const cases: [string[], string][] = [
-            [['java', '--module-path', '/libs', '-cp', 'out', 'AppHost'], '--module-path'],
-            [['java', '-p', '/libs', '-cp', 'out', 'AppHost'], '-p'],
             [['java', '--add-opens', 'java.base/java.lang=ALL-UNNAMED', '-cp', 'out', 'AppHost'], '--add-opens'],
-            [['java', '--add-modules', 'java.sql', '-cp', 'out', 'AppHost'], '--add-modules'],
-            [['java', '--upgrade-module-path', '/libs', '-cp', 'out', 'AppHost'], '--upgrade-module-path']
+            [['java', '--add-exports', 'java.base/sun.nio.ch=ALL-UNNAMED', '-cp', 'out', 'AppHost'], '--add-exports'],
+            [['java', '--patch-module', 'java.base=patches', '-cp', 'out', 'AppHost'], '--patch-module']
         ];
 
         for (const [args, option] of cases) {
@@ -537,9 +535,9 @@ suite('Java AppHost Command Parsing Tests', () => {
     });
 
     test('keeps a separated option and its value together in the JVM arguments', () => {
-        const parsed = parseJavaAppHostCommand(['java', '--module-path', '/libs', '-cp', 'out', 'AppHost']);
+        const parsed = parseJavaAppHostCommand(['java', '--add-opens', 'java.base/java.lang=ALL-UNNAMED', '-cp', 'out', 'AppHost']);
 
-        assert.deepStrictEqual(parsed?.vmArgs, ['--module-path', '/libs']);
+        assert.deepStrictEqual(parsed?.vmArgs, ['--add-opens', 'java.base/java.lang=ALL-UNNAMED']);
     });
 
     test('returns null for a JAR launch, whose entry point lives in the archive manifest', () => {
@@ -552,8 +550,8 @@ suite('Java AppHost Command Parsing Tests', () => {
 
     test('returns null when a separated option is missing its value', () => {
         // The option consumes the token that would otherwise be the main class, leaving nothing to
-        // launch rather than a class named "--module-path".
-        assert.strictEqual(parseJavaAppHostCommand(['java', '--module-path']), null);
+        // launch rather than a class named "--add-opens".
+        assert.strictEqual(parseJavaAppHostCommand(['java', '--add-opens']), null);
     });
 
     test('returns null when the command is not a recognizable JVM launch', () => {

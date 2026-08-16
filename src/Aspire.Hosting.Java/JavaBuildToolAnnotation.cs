@@ -69,18 +69,6 @@ internal sealed record JavaBuildStepAnnotation(string? ResourceName, JavaBuildTo
 internal sealed record JavaOtelAgentAnnotation(string? AgentPath) : IResourceAnnotation;
 
 /// <summary>
-/// Records JVM arguments authored through <c>WithJvmArgs</c>.
-/// </summary>
-/// <remarks>
-/// <c>JAVA_TOOL_OPTIONS</c> is still used for Aspire-managed process and container launches because it
-/// reaches JVMs forked by Maven and Gradle. IDE debug launches are different: they bypass those wrappers
-/// and start the application JVM directly, so the same arguments must also be sent as structured
-/// <c>vmArgs</c> in the Java launch configuration.
-/// </remarks>
-/// <param name="Args">The JVM arguments exactly as authored.</param>
-internal sealed record JavaJvmArgsAnnotation(string[] Args) : IResourceAnnotation;
-
-/// <summary>
 /// Records that a Java application is a Quarkus application, which packages differently from every other
 /// build the integration supports.
 /// </summary>

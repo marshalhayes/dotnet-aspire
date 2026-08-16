@@ -896,12 +896,6 @@ public static partial class JavaHostingExtensions
     /// entrypoint, including the JVM those build tools fork. Values containing spaces are quoted, because
     /// the JVM splits this variable on whitespace.
     /// <para>
-    /// For local <see cref="JavaAppResource"/> instances that Aspire launches directly with <c>java -jar</c>,
-    /// the arguments are passed before <c>-jar</c> instead. Some launcher options, including JavaFX's
-    /// <c>--module-path</c> and <c>--add-modules</c>, are rejected from <c>JAVA_TOOL_OPTIONS</c> but work
-    /// when they are part of the actual <c>java</c> invocation.
-    /// </para>
-    /// <para>
     /// This is also how a container image that already carries the OpenTelemetry Java agent turns it on,
     /// since <see cref="WithOtelAgent{T}(IResourceBuilder{T}, string)"/> copies an agent from the build
     /// context and so applies only to applications Aspire itself launches or builds:
@@ -921,26 +915,7 @@ public static partial class JavaHostingExtensions
             return builder;
         }
 
-        var resource = builder.Resource;
-
-        return builder
-            .WithAnnotation(new JavaJvmArgsAnnotation(args), ResourceAnnotationMutationBehavior.Append)
-            .WithEnvironment(context =>
-            {
-                // JAVA_TOOL_OPTIONS is consumed by the JVM API rather than by every option parser in the
-                // `java` launcher. Options such as JavaFX's --module-path are therefore invalid there
-                // ("Unrecognized option: --module-path"). When Aspire owns the direct `java -jar` command
-                // we can put the options in the command line itself; Maven/Gradle wrappers and containers
-                // still need JAVA_TOOL_OPTIONS because they own the application JVM process.
-                if (resource is JavaAppResource app
-                    && app.TryGetLastAnnotation<JavaJarPathAnnotation>(out _)
-                    && !app.TryGetLastAnnotation<JavaBuildToolAnnotation>(out _))
-                {
-                    return;
-                }
-
-                AppendJavaToolOptions(context.EnvironmentVariables, args);
-            });
+        return builder.WithEnvironment(context => AppendJavaToolOptions(context.EnvironmentVariables, args));
     }
 
     /// <summary>
@@ -1113,11 +1088,6 @@ public static partial class JavaHostingExtensions
 
         if (resource.TryGetLastAnnotation<JavaJarPathAnnotation>(out var jar))
         {
-            foreach (var arg in GetJvmArgs(resource) ?? [])
-            {
-                ctx.Args.Add(arg);
-            }
-
             ctx.Args.Add("-jar");
             ctx.Args.Add(jar.JarPath);
 
@@ -1297,13 +1267,6 @@ public static partial class JavaHostingExtensions
         };
     }
 
-    private static string[]? GetJvmArgs(JavaAppResource resource)
-    {
-        return resource.TryGetAnnotationsOfType<JavaJvmArgsAnnotation>(out var annotations)
-            ? [.. annotations.SelectMany(annotation => annotation.Args)]
-            : null;
-    }
-
     /// <summary>
     /// Pairs the two facets Aspire needs to compose a value into a <see cref="ReferenceExpression"/>.
     /// </summary>
@@ -1460,7 +1423,6 @@ public static partial class JavaHostingExtensions
                     ProjectName = classPaths is { Length: > 0 }
                         ? null
                         : TryResolveIdeProjectName(builder.Resource),
-                    VmArgs = GetJvmArgs(builder.Resource),
                     BuildTool = builder.Resource.TryGetLastAnnotation<JavaBuildToolAnnotation>(out var buildTool)
                         ? buildTool.Tool.ToString().ToLowerInvariant()
                         : null
