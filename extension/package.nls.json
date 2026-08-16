@@ -114,6 +114,7 @@
   "aspire-vscode.strings.debugSessionsFailedToStop": "{0} debug sessions failed to stop: {1}",
   "aspire-vscode.strings.invalidTokenProvided": "Invalid token provided.",
   "aspire-vscode.strings.noWorkspaceFolder": "No workspace folder found.",
+  "aspire-vscode.strings.selectWorkspaceFolderForAspireCommand": "Select the workspace folder for the Aspire command",
   "aspire-vscode.strings.aspireConfigExists": "Aspire launch configuration already exists in launch.json.",
   "aspire-vscode.strings.failedToConfigureLaunchJson": "Failed to configure launch.json: {0}.",
   "aspire-vscode.strings.debugSessionAlreadyExists": "A debug session is already active for id {0}.",

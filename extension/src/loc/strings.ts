@@ -67,6 +67,7 @@ export const debugSessionStartTimedOut = (sessionName: string, seconds: number) 
 export const debugSessionStopTimedOut = (sessionName: string, seconds: number) => vscode.l10n.t("Timed out after {1} seconds waiting for debug session '{0}' to stop.", sessionName, seconds);
 export const invalidTokenProvided = vscode.l10n.t('Invalid token provided.');
 export const noWorkspaceFolder = vscode.l10n.t('No workspace folder found.');
+export const selectWorkspaceFolderForAspireCommand = vscode.l10n.t('Select the workspace folder for the Aspire command');
 export const aspireConfigExists = vscode.l10n.t('Aspire launch configuration already exists in launch.json.');
 export const failedToConfigureLaunchJson = (error: any) => vscode.l10n.t('Failed to configure launch.json: {0}.', error);
 export const defaultConfigurationName = vscode.l10n.t('Aspire: Launch default AppHost');

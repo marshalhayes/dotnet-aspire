@@ -255,6 +255,98 @@ suite('AspireTerminalProvider tests', () => {
             }
         });
 
+        test('does not reuse a shared Aspire terminal across workspace folders', async () => {
+            const folderA = createWorkspaceFolder('a', '/repo/a');
+            const folderB = createWorkspaceFolder('b', '/repo/b');
+            const targetA = workspaceFolderCliPathTarget(folderA);
+            const targetB = workspaceFolderCliPathTarget(folderB);
+            resolveCliPathStub.callsFake(async target => ({
+                cliPath: target === targetA ? '/repo/a/aspire' : '/repo/b/aspire',
+                available: true,
+                source: 'configured',
+            }));
+            const createEnvironmentStub = sinon.stub(terminalProvider, 'createEnvironment').returns({});
+            const createTerminalStub = sinon.stub(vscode.window, 'createTerminal').callsFake(() => ({
+                shellIntegration: { executeCommand: () => ({} as vscode.TerminalShellExecution) },
+                show: () => { },
+                dispose: () => { },
+            } as unknown as vscode.Terminal));
+
+            try {
+                await terminalProvider.sendAspireCommandToAspireTerminal('logs', false, undefined, { target: targetA });
+                await terminalProvider.sendAspireCommandToAspireTerminal('logs', false, undefined, { target: targetB });
+
+                assert.strictEqual(createTerminalStub.callCount, 2);
+                assert.strictEqual((createTerminalStub.firstCall.args[0] as vscode.TerminalOptions).cwd, folderA.uri);
+                assert.strictEqual((createTerminalStub.secondCall.args[0] as vscode.TerminalOptions).cwd, folderB.uri);
+            }
+            finally {
+                createTerminalStub.restore();
+                createEnvironmentStub.restore();
+            }
+        });
+
+        test('uses the same concrete CLI for the command and terminal environment', async () => {
+            const folder = createWorkspaceFolder('a', '/repo/a');
+            const target = workspaceFolderCliPathTarget(folder);
+            const cliPath = '/repo/a/bin/aspire';
+            resolveCliPathStub.resolves({ cliPath, available: true, source: 'configured' });
+            const createEnvironmentStub = sinon.stub(terminalProvider, 'createEnvironment').returns({});
+            let executedCommand: string | undefined;
+            const createTerminalStub = sinon.stub(vscode.window, 'createTerminal').returns({
+                shellIntegration: {
+                    executeCommand: (commandLine: string) => {
+                        executedCommand = commandLine;
+                        return {} as vscode.TerminalShellExecution;
+                    }
+                },
+                show: () => { },
+                dispose: () => { },
+            } as unknown as vscode.Terminal);
+
+            try {
+                await terminalProvider.sendAspireCommandToAspireTerminal('logs', false, undefined, { target });
+
+                assert.ok(resolveCliPathStub.calledOnceWith(target));
+                assert.strictEqual(executedCommand, `${cliPath} logs`);
+                assert.ok(createEnvironmentStub.calledOnceWith(undefined, undefined, undefined, cliPath));
+            }
+            finally {
+                createTerminalStub.restore();
+                createEnvironmentStub.restore();
+            }
+        });
+
+        test('targeted invalidation stops reusing only the matching folder terminal', async () => {
+            const folderA = createWorkspaceFolder('a', '/repo/a');
+            const folderB = createWorkspaceFolder('b', '/repo/b');
+            const targetA = workspaceFolderCliPathTarget(folderA);
+            const targetB = workspaceFolderCliPathTarget(folderB);
+            resolveCliPathStub.resolves({ cliPath: 'aspire', available: true, source: 'path' });
+            const createEnvironmentStub = sinon.stub(terminalProvider, 'createEnvironment').returns({});
+            const createTerminalStub = sinon.stub(vscode.window, 'createTerminal').callsFake(() => ({
+                shellIntegration: { executeCommand: () => ({} as vscode.TerminalShellExecution) },
+                show: () => { },
+                dispose: () => { },
+            } as unknown as vscode.Terminal));
+
+            try {
+                await terminalProvider.sendAspireCommandToAspireTerminal('logs', false, undefined, { target: targetA });
+                await terminalProvider.sendAspireCommandToAspireTerminal('logs', false, undefined, { target: targetB });
+
+                (terminalProvider as unknown as { invalidateSharedAspireTerminal(target: typeof targetA): void }).invalidateSharedAspireTerminal(targetA);
+
+                await terminalProvider.sendAspireCommandToAspireTerminal('logs', false, undefined, { target: targetB });
+                await terminalProvider.sendAspireCommandToAspireTerminal('logs', false, undefined, { target: targetA });
+
+                assert.strictEqual(createTerminalStub.callCount, 3);
+            }
+            finally {
+                createTerminalStub.restore();
+                createEnvironmentStub.restore();
+            }
+        });
+
         test('uses shell integration to execute command when available', async () => {
             resolveCliPathStub.resolves({ cliPath: 'aspire', available: true, source: 'path' });
             const events: string[] = [];
@@ -314,7 +406,7 @@ suite('AspireTerminalProvider tests', () => {
             const sharedTerminalStub = sinon.stub(terminalProvider, 'getAspireTerminal');
 
             try {
-                await terminalProvider.sendAspireCommandToAspireTerminal('logs', true, undefined, { terminalTarget: 'editor' });
+                await terminalProvider.sendAspireCommandToAspireTerminal('logs', true, undefined, { terminalTarget: 'editor', target: windowCliPathTarget });
 
                 assert.strictEqual(sharedTerminalStub.called, false);
                 assert.strictEqual(createTerminalStub.calledOnce, true);
@@ -638,7 +730,7 @@ suite('AspireTerminalProvider tests', () => {
                     '--',
                     '--secret',
                     'super-secret',
-                ], { redactAdditionalArgs: true });
+                ], { redactAdditionalArgs: true, target: windowCliPathTarget });
 
                 assert.ok(executedCommand?.includes('super-secret'));
                 assert.strictEqual(infoStub.calledOnce, true);

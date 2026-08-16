@@ -685,6 +685,9 @@
     <trans-unit id="aspire-vscode.strings.selectDefaultLaunchApphost">
       <source xml:lang="en">Select the default AppHost to launch when starting an Aspire debug session</source>
     </trans-unit>
+    <trans-unit id="aspire-vscode.strings.selectWorkspaceFolderForAspireCommand">
+      <source xml:lang="en">Select the workspace folder for the Aspire command</source>
+    </trans-unit>
     <trans-unit id="aspire-vscode.strings.selectDashboardLaunchBehavior">
       <source xml:lang="en">Select what should happen with the Aspire Dashboard when this launch configuration starts</source>
     </trans-unit>

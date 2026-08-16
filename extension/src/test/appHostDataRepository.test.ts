@@ -2005,7 +2005,22 @@ suite('AppHostDataRepository', () => {
 
     test('describe reports minimum CLI version when command help is returned', async () => {
         const executeCommandStub = sinon.stub(vscode.commands, 'executeCommand').resolves(undefined);
-        const repository = new AppHostDataRepository(terminalProvider);
+        const workspaceFoldersStub = stubWorkspaceFolders([{
+            uri: vscode.Uri.file('/workspace'),
+            name: 'workspace',
+            index: 0,
+        }]);
+        const discoveryService = {
+            discover: async () => [{
+                path: '/workspace/AppHost.csproj',
+                language: 'csharp' as const,
+                status: 'buildable' as const,
+                selected: true,
+            }],
+            onDidChangeCandidates: () => ({ dispose: () => { } }),
+            dispose: () => { },
+        } as unknown as AppHostDiscoveryService;
+        const repository = new AppHostDataRepository(terminalProvider, discoveryService);
 
         try {
             repository.activate();
@@ -2051,12 +2066,28 @@ suite('AppHostDataRepository', () => {
         } finally {
             repository.dispose();
             executeCommandStub.restore();
+            workspaceFoldersStub.restore();
         }
     });
 
     test('describe reports minimum CLI version when localized command help is returned', async () => {
         const executeCommandStub = sinon.stub(vscode.commands, 'executeCommand').resolves(undefined);
-        const repository = new AppHostDataRepository(terminalProvider);
+        const workspaceFoldersStub = stubWorkspaceFolders([{
+            uri: vscode.Uri.file('/workspace'),
+            name: 'workspace',
+            index: 0,
+        }]);
+        const discoveryService = {
+            discover: async () => [{
+                path: '/workspace/AppHost.csproj',
+                language: 'csharp' as const,
+                status: 'buildable' as const,
+                selected: true,
+            }],
+            onDidChangeCandidates: () => ({ dispose: () => { } }),
+            dispose: () => { },
+        } as unknown as AppHostDiscoveryService;
+        const repository = new AppHostDataRepository(terminalProvider, discoveryService);
 
         try {
             repository.activate();
@@ -2102,6 +2133,7 @@ suite('AppHostDataRepository', () => {
         } finally {
             repository.dispose();
             executeCommandStub.restore();
+            workspaceFoldersStub.restore();
         }
     });
 

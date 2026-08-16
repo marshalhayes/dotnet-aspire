@@ -8,7 +8,7 @@ import { getRunSessionInfo, getSupportedCapabilities } from '../capabilities';
 import { EnvironmentVariables, getEnvironmentWithoutE2EBridgeVariables } from './environment';
 import { resolveCliPath } from './cliPath';
 import { ASPIRE_CLI_PATH_ENV_VAR, getForwardableAspireCliPath, getForwardableResolvedAspireCliPath } from './cliPathEnvironment';
-import { CliPathResolutionTarget, windowCliPathTarget } from './cliPathVariables';
+import { CliPathResolutionTarget, getCliPathTargetKey, windowCliPathTarget } from './cliPathVariables';
 import path from 'path';
 import { assertNoTerminalControlCharacters } from './cmdShim';
 
@@ -29,6 +29,7 @@ export interface AspireTerminal {
 export interface SendAspireCommandOptions {
     redactAdditionalArgs?: boolean;
     terminalTarget?: 'shared' | 'editor';
+    target: CliPathResolutionTarget;
 }
 
 // String parts are fixed CLI syntax and are validated before interpolation.
@@ -113,7 +114,7 @@ export function shellArg(value: string): ShellArg {
 }
 
 export class AspireTerminalProvider implements vscode.Disposable {
-    private _terminalByDebugSessionId: Map<string | null, AspireTerminal> = new Map();
+    private _terminalByDebugSessionId = new Map<string, AspireTerminal>();
     private _invalidatedSharedTerminals = new Set<vscode.Terminal>();
     private _rpcServerConnectionInfo?: RpcServerConnectionInfo;
     private _dcpServerConnectionInfo?: DcpServerConnectionInfo;
@@ -162,7 +163,8 @@ export class AspireTerminalProvider implements vscode.Disposable {
     }
 
     async sendAspireCommandToAspireTerminal(subcommand: AspireSubcommand, showTerminal: boolean = true, additionalArgs?: string[], options?: SendAspireCommandOptions) {
-        const cliPath = await this.getAspireCliExecutablePath();
+        const target = options?.target ?? windowCliPathTarget;
+        const cliPath = await this.getAspireCliExecutablePath(target);
         const subcommandLine = formatSubcommand(subcommand);
         assertNoTerminalControlCharacters(cliPath);
 
@@ -212,8 +214,8 @@ export class AspireTerminalProvider implements vscode.Disposable {
         }
         else {
             aspireTerminal = terminalTarget === 'editor'
-                ? this.createAspireEditorTerminal()
-                : this.getAspireTerminal();
+                ? this.createAspireEditorTerminal(target, cliPath)
+                : this.getAspireTerminal(false, target, cliPath);
             executionMode = aspireTerminal.terminal.shellIntegration ? 'shellIntegration' : 'sendText';
         }
         this._onDidSendAspireCommand.fire({
@@ -251,8 +253,13 @@ export class AspireTerminalProvider implements vscode.Disposable {
 
     }
 
-    getAspireTerminal(forceCreate?: boolean): AspireTerminal {
-        const existingTerminal = this._terminalByDebugSessionId.get(null);
+    getAspireTerminal(
+        forceCreate: boolean = false,
+        target: CliPathResolutionTarget = windowCliPathTarget,
+        resolvedCliPath?: string,
+    ): AspireTerminal {
+        const terminalKey = this.getTerminalKey(undefined, target);
+        const existingTerminal = this._terminalByDebugSessionId.get(terminalKey);
         if (existingTerminal) {
             if (!forceCreate) {
                 return existingTerminal;
@@ -263,49 +270,62 @@ export class AspireTerminalProvider implements vscode.Disposable {
         }
 
         extensionLogOutputChannel.info(`Creating new Aspire terminal`);
-        const terminal = this.createTerminal();
+        const terminal = this.createTerminal(undefined, target, resolvedCliPath);
 
         const aspireTerminal: AspireTerminal = {
             terminal,
             dispose: () => {
                 terminal.dispose();
-                this._terminalByDebugSessionId.delete(null);
+                this._terminalByDebugSessionId.delete(terminalKey);
             }
         };
 
-        this._terminalByDebugSessionId.set(null, aspireTerminal);
+        this._terminalByDebugSessionId.set(terminalKey, aspireTerminal);
 
         return aspireTerminal;
     }
 
-    invalidateSharedAspireTerminal(): void {
-        const existingTerminal = this._terminalByDebugSessionId.get(null);
-        if (!existingTerminal) {
-            return;
-        }
+    invalidateSharedAspireTerminal(target?: CliPathResolutionTarget): void {
+        const terminalKeys = target
+            ? [this.getTerminalKey(undefined, target)]
+            : [...this._terminalByDebugSessionId.keys()].filter(key => key.startsWith('shared:'));
 
-        // The terminal may be running a long-lived command, so leave it open. Stop reusing it
-        // so the next Aspire command gets a new terminal with the current environment.
-        extensionLogOutputChannel.info('Invalidating shared Aspire terminal environment');
-        this._terminalByDebugSessionId.delete(null);
-        this._invalidatedSharedTerminals.add(existingTerminal.terminal);
+        for (const terminalKey of terminalKeys) {
+            const existingTerminal = this._terminalByDebugSessionId.get(terminalKey);
+            if (!existingTerminal) {
+                continue;
+            }
+
+            // The terminal may be running a long-lived command, so leave it open. Stop reusing it
+            // so the next Aspire command gets a new terminal with the current environment.
+            extensionLogOutputChannel.info('Invalidating shared Aspire terminal environment');
+            this._terminalByDebugSessionId.delete(terminalKey);
+            this._invalidatedSharedTerminals.add(existingTerminal.terminal);
+        }
     }
 
-    private createAspireEditorTerminal(): AspireTerminal {
+    private createAspireEditorTerminal(target: CliPathResolutionTarget, resolvedCliPath: string): AspireTerminal {
         extensionLogOutputChannel.info('Creating Aspire editor terminal');
-        const terminal = this.createTerminal(vscode.TerminalLocation.Editor);
+        const terminal = this.createTerminal(vscode.TerminalLocation.Editor, target, resolvedCliPath);
         return {
             terminal,
             dispose: () => terminal.dispose(),
         };
     }
 
-    private createTerminal(location?: vscode.TerminalLocation): vscode.Terminal {
+    private createTerminal(
+        location?: vscode.TerminalLocation,
+        target: CliPathResolutionTarget = windowCliPathTarget,
+        resolvedCliPath?: string,
+    ): vscode.Terminal {
         const terminalOptions: vscode.TerminalOptions = {
             name: aspireTerminalName,
-            env: this.createEnvironment(),
+            env: this.createEnvironment(undefined, undefined, undefined, resolvedCliPath),
             location,
         };
+        if (target.kind === 'workspaceFolder') {
+            terminalOptions.cwd = target.workspaceFolder.uri;
+        }
         if (process.platform === 'win32') {
             // quoteShellArg uses PowerShell escaping on Windows. Do not rely on the
             // user's default terminal profile because cmd.exe treats backticks as
@@ -314,6 +334,10 @@ export class AspireTerminalProvider implements vscode.Disposable {
         }
 
         return vscode.window.createTerminal(terminalOptions);
+    }
+
+    private getTerminalKey(debugSessionId: string | undefined, target: CliPathResolutionTarget): string {
+        return `${debugSessionId ?? 'shared'}:${getCliPathTargetKey(target)}`;
     }
 
     createEnvironment(debugSessionId?: string, noDebug?: boolean, noExtensionVariables?: boolean, resolvedCliPath?: string): any {

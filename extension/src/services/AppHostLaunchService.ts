@@ -5,7 +5,7 @@ import { compareAppHostIdentity, getAppHostIdentityKeyInfo, isAppHostPathWithinD
 import { classifyError, isCommandCancellation, sendTelemetryEvent, type EventProperties } from '../utils/telemetry';
 import { extensionLogOutputChannel } from '../utils/logging';
 import { checkCliAvailableOrRedirect } from '../utils/workspace';
-import { getCliPathTargetForUri } from '../utils/cliPathVariables';
+import { CliPathResolutionTarget, getCliPathTargetForUri } from '../utils/cliPathVariables';
 import { appHostLaunchReservationIdConfigKey, appHostLaunchTokenConfigKey, appHostRestartSourceSessionIdConfigKey, appHostSelectionOriginConfigKey, appHostTelemetryTargetPathConfigKey, type AppHostSelectionOrigin } from '../debugger/AspireDebugConfigurationMetadata';
 import { markAspireDebugConfigurationAsExtensionOwned } from '../debugger/AspireDebugConfigurationProviderInternal';
 import { AppHostLifecycleLockTimeoutError, AppHostStopCancellationError, AppHostStopError, appHostLifecycleLockMaxHoldMs, appHostLifecycleLockWaitTimeoutMs, type AppHostDebugSessionTerminatedEvent, type AppHostEditorSessions, type AppHostLaunchRequestedEvent, type AppHostLaunchSession, type AppHostStopResult, type RunningAppHost } from './appHostLaunchContracts';
@@ -541,7 +541,7 @@ export class AppHostLaunchService implements vscode.Disposable {
      * @param noDebug When true, launches without the debugger attached.
      * @param doStep Optional step name for the 'do' command.
      */
-    async launch(appHostPath: string, command: AspireCommandType, noDebug: boolean, doStep?: string): Promise<void> {
+    async launch(appHostPath: string, command: AspireCommandType, noDebug: boolean, doStep?: string, target?: CliPathResolutionTarget): Promise<void> {
         const launchToken = this.trackPendingRun(appHostPath, command);
         try {
             return await this.runWithAppHostLifecycleLock(appHostPath, this._lifecycleCancellationSource.token, async lockToken => {
@@ -553,7 +553,7 @@ export class AppHostLaunchService implements vscode.Disposable {
                     throw new vscode.CancellationError();
                 }
 
-                await this.launchCore(appHostPath, command, noDebug, doStep, 'user-selection', launchToken, lockToken);
+                await this.launchCore(appHostPath, command, noDebug, doStep, 'user-selection', launchToken, lockToken, target);
             });
         }
         catch (error) {
@@ -587,6 +587,7 @@ export class AppHostLaunchService implements vscode.Disposable {
         selectionOrigin: AppHostSelectionOrigin,
         launchToken: number,
         token: vscode.CancellationToken,
+        target?: CliPathResolutionTarget,
     ): Promise<void> {
         // Reserve before the first await. The awaits below (telemetry, the CLI gate) run
         // before `startDebugging`, so reserving later would leave a window in which a
@@ -671,7 +672,7 @@ export class AppHostLaunchService implements vscode.Disposable {
         }
 
         try {
-            const cliAvailability = await checkCliAvailableOrRedirect('debug_gate', getCliPathTargetForUri(vscode.Uri.file(appHostPath)));
+            const cliAvailability = await checkCliAvailableOrRedirect('debug_gate', target ?? getCliPathTargetForUri(vscode.Uri.file(appHostPath)));
             if (!cliAvailability.available) {
                 throw new vscode.CancellationError();
             }
