@@ -317,6 +317,60 @@ suite('AspireTerminalProvider tests', () => {
             }
         });
 
+        test('uses a gate-resolved CLI without resolving the target again', async () => {
+            const folder = createWorkspaceFolder('a', '/repo/a');
+            const target = workspaceFolderCliPathTarget(folder);
+            const cliPath = '/gate/bin/aspire';
+            const createEnvironmentStub = sinon.stub(terminalProvider, 'createEnvironment').returns({});
+            let executedCommand: string | undefined;
+            const createTerminalStub = sinon.stub(vscode.window, 'createTerminal').returns({
+                shellIntegration: {
+                    executeCommand: (commandLine: string) => {
+                        executedCommand = commandLine;
+                        return {} as vscode.TerminalShellExecution;
+                    },
+                },
+                show: () => { },
+                dispose: () => { },
+            } as unknown as vscode.Terminal);
+
+            try {
+                await terminalProvider.sendAspireCommandToAspireTerminal('new', false, undefined, { target, cliPath });
+
+                assert.strictEqual(resolveCliPathStub.called, false);
+                assert.ok(executedCommand?.includes(cliPath), executedCommand);
+                assert.strictEqual(createEnvironmentStub.firstCall.args[3], cliPath);
+            }
+            finally {
+                createTerminalStub.restore();
+                createEnvironmentStub.restore();
+            }
+        });
+
+        test('does not reuse a shared terminal whose CLI environment is stale', async () => {
+            const folder = createWorkspaceFolder('a', '/repo/a');
+            const target = workspaceFolderCliPathTarget(folder);
+            const createEnvironmentStub = sinon.stub(terminalProvider, 'createEnvironment').returns({});
+            const createTerminalStub = sinon.stub(vscode.window, 'createTerminal').callsFake(() => ({
+                shellIntegration: { executeCommand: () => ({} as vscode.TerminalShellExecution) },
+                show: () => { },
+                dispose: () => { },
+            } as unknown as vscode.Terminal));
+
+            try {
+                await terminalProvider.sendAspireCommandToAspireTerminal('new', false, undefined, { target, cliPath: '/repo/a/first/aspire' });
+                await terminalProvider.sendAspireCommandToAspireTerminal('new', false, undefined, { target, cliPath: '/repo/a/second/aspire' });
+
+                assert.strictEqual(createTerminalStub.callCount, 2);
+                assert.strictEqual(createEnvironmentStub.firstCall.args[3], '/repo/a/first/aspire');
+                assert.strictEqual(createEnvironmentStub.secondCall.args[3], '/repo/a/second/aspire');
+            }
+            finally {
+                createTerminalStub.restore();
+                createEnvironmentStub.restore();
+            }
+        });
+
         test('targeted invalidation stops reusing only the matching folder terminal', async () => {
             const folderA = createWorkspaceFolder('a', '/repo/a');
             const folderB = createWorkspaceFolder('b', '/repo/b');

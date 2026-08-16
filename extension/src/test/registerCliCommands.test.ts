@@ -83,7 +83,7 @@ suite('registerCliCommands', () => {
 
         assert.strictEqual(showWorkspaceFolderPickStub.called, false);
         assert.ok(resolveCliPathStub.calledOnceWith(target));
-        assert.ok(sendCommandStub.calledOnceWith('init', true, undefined, { target }));
+        assert.ok(sendCommandStub.calledOnceWith('init', true, undefined, { target, cliPath: '/resolved/aspire' }));
     });
 
     test('new prompts once in a multi-root window and reuses the selected target', async () => {
@@ -97,7 +97,7 @@ suite('registerCliCommands', () => {
 
         assert.strictEqual(showWorkspaceFolderPickStub.calledOnce, true);
         assert.ok(resolveCliPathStub.calledOnceWith(target));
-        assert.ok(sendCommandStub.calledOnceWith('new', true, undefined, { target }));
+        assert.ok(sendCommandStub.calledOnceWith('new', true, undefined, { target, cliPath: '/resolved/aspire' }));
     });
 
     test('workspace folder selection cancellation prevents the gate and command body', async () => {
@@ -131,7 +131,7 @@ suite('registerCliCommands', () => {
 
         assert.strictEqual(showWorkspaceFolderPickStub.called, false);
         assert.ok(resolveCliPathStub.calledOnceWith(windowCliPathTarget));
-        assert.ok(sendCommandStub.calledOnceWith('init', true, undefined, { target: windowCliPathTarget }));
+        assert.ok(sendCommandStub.calledOnceWith('init', true, undefined, { target: windowCliPathTarget, cliPath: '/resolved/aspire' }));
     });
 
     test('add resolves the AppHost once and uses its workspace target for gate and terminal', async () => {
@@ -145,7 +145,7 @@ suite('registerCliCommands', () => {
 
         assert.strictEqual(getAppHostPathStub.calledOnce, true);
         assert.ok(resolveCliPathStub.calledOnceWith(target));
-        assert.ok(sendCommandStub.calledOnceWith('add', true, ['--apphost', appHostPath], { target }));
+        assert.ok(sendCommandStub.calledOnceWith('add', true, ['--apphost', appHostPath], { target, cliPath: '/resolved/aspire' }));
     });
 
     test('do uses the resolved AppHost target for capability probing and execution', async () => {
@@ -160,20 +160,36 @@ suite('registerCliCommands', () => {
 
         assert.strictEqual(getAppHostPathStub.calledOnce, true);
         assert.ok(resolveCliPathStub.calledOnceWith(target));
-        assert.ok(hasCapabilityStub.calledOnceWith('pipelines', { target }));
-        assert.ok(tryExecuteDoAppHostStub.calledOnceWith(false, undefined, appHostPath, target));
+        assert.ok(hasCapabilityStub.calledOnceWith('pipelines', { target, cliPath: '/resolved/aspire' }));
+        assert.ok(tryExecuteDoAppHostStub.calledOnceWith(false, undefined, appHostPath, target, '/resolved/aspire'));
     });
 
-    test('do does not attempt AppHost selection again when no AppHost is resolved', async () => {
+    test('do rejects a missing AppHost before probing the CLI', async () => {
         const hasCapabilityStub = sandbox.stub(ConfigInfoProvider.prototype, 'hasCapability').resolves(true);
         const showErrorMessageStub = sandbox.stub(vscode.window, 'showErrorMessage').resolves(undefined);
 
         await callbacks.get('aspire-vscode.do')!();
 
         assert.strictEqual(getAppHostPathStub.calledOnce, true);
-        assert.ok(hasCapabilityStub.calledOnceWith('pipelines', { target: windowCliPathTarget }));
+        assert.strictEqual(resolveCliPathStub.called, false);
+        assert.strictEqual(hasCapabilityStub.called, false);
         assert.strictEqual(tryExecuteDoAppHostStub.called, false);
         assert.strictEqual(showErrorMessageStub.calledOnce, true);
+    });
+
+    test('add without an AppHost selects one workspace folder for the gate and terminal', async () => {
+        const folderA = createWorkspaceFolder('a', '/repo/a');
+        const folderB = createWorkspaceFolder('b', '/repo/b');
+        const target = workspaceFolderCliPathTarget(folderB);
+        workspaceFoldersStub.value([folderA, folderB]);
+        showWorkspaceFolderPickStub.resolves(folderB);
+
+        await callbacks.get('aspire-vscode.add')!();
+
+        assert.strictEqual(getAppHostPathStub.calledOnce, true);
+        assert.strictEqual(showWorkspaceFolderPickStub.calledOnce, true);
+        assert.ok(resolveCliPathStub.calledOnceWith(target));
+        assert.ok(sendCommandStub.calledOnceWith('add', true, undefined, { target, cliPath: '/resolved/aspire' }));
     });
 
     test('local settings use the selected folder while global settings stay window scoped', async () => {
@@ -194,7 +210,7 @@ suite('registerCliCommands', () => {
         await callbacks.get('aspire-vscode.openLocalSettings')!();
         await callbacks.get('aspire-vscode.openGlobalSettings')!();
 
-        assert.ok(getConfigInfoStub.firstCall.calledWith({ target }));
+        assert.ok(getConfigInfoStub.firstCall.calledWith({ target, cliPath: '/resolved/aspire' }));
         assert.ok(getConfigInfoStub.secondCall.calledWith({ target: windowCliPathTarget }));
     });
 
