@@ -1632,7 +1632,7 @@ internal sealed class GuestAppHostProject : IAppHostProject, IGuestAppHostSdkGen
                 Directory.CreateDirectory(directory);
             }
 
-            if (await WriteGeneratedFileIfChangedAsync(filePath, content, cancellationToken))
+            if (await WriteGeneratedFileAsync(filePath, content, _resolvedLanguage.PreserveUnchangedGeneratedFiles, cancellationToken))
             {
                 writtenCount++;
             }
@@ -1646,19 +1646,27 @@ internal sealed class GuestAppHostProject : IAppHostProject, IGuestAppHostSdkGen
     }
 
     /// <summary>
-    /// Writes a generated file only when its content differs from what is already on disk.
+    /// Writes a generated file, skipping the write when <paramref name="preserveUnchangedFiles" /> is
+    /// set and the content already on disk is identical.
     /// </summary>
     /// <remarks>
     /// The generated SDK is hundreds of files and is regenerated on every launch, but its content is
     /// identical from one launch to the next unless the app model changed. Rewriting it unconditionally
     /// moves every last-write time forward, which invalidates every downstream incremental build --
-    /// javac, Maven, Gradle, and the IDE all decide what to rebuild from these timestamps. Comparing
+    /// javac, Maven, Gradle, and the IDE all decide what to recompile from these timestamps. Comparing
     /// first costs a read of files that are already in the page cache and keeps those timestamps stable.
+    /// <para>
+    /// Only languages that compile the generated sources in place opt in, via
+    /// <see cref="LanguageInfo.PreserveUnchangedGeneratedFiles" />. A language that installs them into
+    /// an environment first cannot: uv reuses its cached build of <c>.aspire/modules</c> when the
+    /// sources have not changed, so leaving an unchanged file alone leaves the Python AppHost importing
+    /// a stale install of the SDK.
+    /// </para>
     /// </remarks>
     /// <returns><see langword="true" /> when the file was written.</returns>
-    internal static async Task<bool> WriteGeneratedFileIfChangedAsync(string filePath, string content, CancellationToken cancellationToken)
+    internal static async Task<bool> WriteGeneratedFileAsync(string filePath, string content, bool preserveUnchangedFiles, CancellationToken cancellationToken)
     {
-        if (File.Exists(filePath))
+        if (preserveUnchangedFiles && File.Exists(filePath))
         {
             try
             {

@@ -46,14 +46,14 @@ public class GuestAppHostProjectTests : IDisposable
     }
 
     [Fact]
-    public async Task WriteGeneratedFileIfChangedAsync_WhenContentIsUnchanged_LeavesTimestampAlone()
+    public async Task WriteGeneratedFileAsync_WhenContentIsUnchanged_LeavesTimestampAlone()
     {
         var filePath = Path.Combine(_workspace.WorkspaceRoot.FullName, "Generated.java");
         await File.WriteAllTextAsync(filePath, "class Generated { }");
         var originalWriteTime = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
         File.SetLastWriteTimeUtc(filePath, originalWriteTime);
 
-        var written = await GuestAppHostProject.WriteGeneratedFileIfChangedAsync(filePath, "class Generated { }", CancellationToken.None);
+        var written = await GuestAppHostProject.WriteGeneratedFileAsync(filePath, "class Generated { }", preserveUnchangedFiles: true, CancellationToken.None);
 
         Assert.False(written);
         // The timestamp is the contract: every downstream incremental build decides what to recompile
@@ -62,13 +62,13 @@ public class GuestAppHostProjectTests : IDisposable
     }
 
     [Fact]
-    public async Task WriteGeneratedFileIfChangedAsync_WhenContentDiffers_WritesFile()
+    public async Task WriteGeneratedFileAsync_WhenContentDiffers_WritesFile()
     {
         var filePath = Path.Combine(_workspace.WorkspaceRoot.FullName, "Generated.java");
         await File.WriteAllTextAsync(filePath, "class Generated { }");
         File.SetLastWriteTimeUtc(filePath, new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc));
 
-        var written = await GuestAppHostProject.WriteGeneratedFileIfChangedAsync(filePath, "class Generated { int x; }", CancellationToken.None);
+        var written = await GuestAppHostProject.WriteGeneratedFileAsync(filePath, "class Generated { int x; }", preserveUnchangedFiles: true, CancellationToken.None);
 
         Assert.True(written);
         Assert.Equal("class Generated { int x; }", await File.ReadAllTextAsync(filePath));
@@ -76,14 +76,41 @@ public class GuestAppHostProjectTests : IDisposable
     }
 
     [Fact]
-    public async Task WriteGeneratedFileIfChangedAsync_WhenFileIsMissing_WritesFile()
+    public async Task WriteGeneratedFileAsync_WhenFileIsMissing_WritesFile()
     {
         var filePath = Path.Combine(_workspace.WorkspaceRoot.FullName, "New.java");
 
-        var written = await GuestAppHostProject.WriteGeneratedFileIfChangedAsync(filePath, "class New { }", CancellationToken.None);
+        var written = await GuestAppHostProject.WriteGeneratedFileAsync(filePath, "class New { }", preserveUnchangedFiles: true, CancellationToken.None);
 
         Assert.True(written);
         Assert.Equal("class New { }", await File.ReadAllTextAsync(filePath));
+    }
+
+    [Fact]
+    public async Task WriteGeneratedFileAsync_WhenNotPreservingUnchangedFiles_RewritesIdenticalContent()
+    {
+        var filePath = Path.Combine(_workspace.WorkspaceRoot.FullName, "aspire_app.py");
+        await File.WriteAllTextAsync(filePath, "def add_redis(): ...");
+        var originalWriteTime = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(filePath, originalWriteTime);
+
+        var written = await GuestAppHostProject.WriteGeneratedFileAsync(filePath, "def add_redis(): ...", preserveUnchangedFiles: false, CancellationToken.None);
+
+        // Languages that install the generated sources into an environment (uv/pip for Python)
+        // rebuild off the source timestamp, so an unchanged file must still be rewritten or the
+        // stale install is silently reused.
+        Assert.True(written);
+        Assert.True(File.GetLastWriteTimeUtc(filePath) > originalWriteTime);
+    }
+
+    [Fact]
+    public void JavaIsTheOnlyLanguageThatPreservesUnchangedGeneratedFiles()
+    {
+        var languages = DefaultLanguageDiscovery.AllLanguages;
+
+        Assert.Equal(
+            ["Java"],
+            languages.Where(language => language.PreserveUnchangedGeneratedFiles).Select(language => language.CodeGenerator));
     }
 
     [Fact]
