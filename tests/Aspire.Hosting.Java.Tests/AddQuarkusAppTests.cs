@@ -207,7 +207,10 @@ public class AddQuarkusAppTests
 
         var ex = Assert.Throws<InvalidOperationException>(() => builder.AddQuarkusApp("inventory", tempDir.Path));
 
-        Assert.Contains("no pom.xml, build.gradle, or build.gradle.kts", ex.Message, StringComparison.Ordinal);
+        Assert.Equal(
+            $"Directory '{tempDir.Path}' contains no pom.xml, build.gradle, build.gradle.kts, settings.gradle, or settings.gradle.kts, " +
+            "so the build tool for resource 'inventory' cannot be detected. Check the path, or use AddJavaApp for an application laid out differently.",
+            ex.Message);
     }
 
     [Fact]

@@ -663,7 +663,8 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
 
         Assert.Equal(
             $"The Java application 'api' cannot be published because no build tool was found. " +
-            $"Add a pom.xml or build.gradle to '{appDirectory.Path}', or call WithMavenBuild or WithGradleBuild " +
+            $"Add a pom.xml, build.gradle, build.gradle.kts, settings.gradle, or settings.gradle.kts to '{appDirectory.Path}', " +
+            "or call WithMavenBuild or WithGradleBuild " +
             "to state how the deployable JAR is produced.",
             exception.Message);
     }
