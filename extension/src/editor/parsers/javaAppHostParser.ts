@@ -149,13 +149,24 @@ function findInvocation(rootNode: TreeSitterNode, predicate: (node: TreeSitterNo
 }
 
 /**
- * Matches `DistributedApplication.CreateBuilder()` and `DistributedApplication.CreateBuilder(args)`.
+ * Matches `DistributedApplication.CreateBuilder()` and `DistributedApplication.CreateBuilder(args)`,
+ * whether the type is imported or written out in full as `aspire.DistributedApplication`.
  * The object is checked as well as the method name so an unrelated local `CreateBuilder()` helper
- * does not make an arbitrary Java file look like an AppHost.
+ * does not make an arbitrary Java file look like an AppHost. Only the segment after the last dot is
+ * compared, so a qualified call matches while `ReportBuilder.CreateBuilder()` still does not.
  */
 function isCreateBuilderCall(node: TreeSitterNode): boolean {
-    return node.childForFieldName('name')?.text === 'CreateBuilder'
-        && node.childForFieldName('object')?.text === 'DistributedApplication';
+    if (node.childForFieldName('name')?.text !== 'CreateBuilder') {
+        return false;
+    }
+
+    const objectText = node.childForFieldName('object')?.text;
+    if (objectText === undefined) {
+        return false;
+    }
+
+    // A qualified name may be split across lines, so the segment is trimmed before it is compared.
+    return objectText.slice(objectText.lastIndexOf('.') + 1).trim() === 'DistributedApplication';
 }
 
 /**

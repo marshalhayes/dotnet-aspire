@@ -58,6 +58,33 @@ suite('Java AppHost parser', () => {
         assert.strictEqual(parser, undefined);
     });
 
+    test('recognises a fully qualified CreateBuilder call, which needs no import', async () => {
+        // Writing the type out in full is ordinary Java, and the single-file AppHost shape invites it
+        // because it avoids the wildcard import entirely. The C# parser already matches on the trailing
+        // segment for the same reason.
+        const parser = await getParserForDocument(javaDoc([
+            'void main(String[] args) throws Exception {',
+            '    var builder = aspire.DistributedApplication.CreateBuilder(args);',
+            '    builder.addSpringBootApp("catalog", "./catalog");',
+            '    builder.build().run();',
+            '}',
+        ].join('\n')));
+
+        assert.ok(parser, 'expected a parser for a fully qualified Java AppHost');
+    });
+
+    test('still refuses an unrelated CreateBuilder on a different type', async () => {
+        // Matching the trailing segment must not degrade into matching the method name alone.
+        const parser = await getParserForDocument(javaDoc([
+            'void main() {',
+            '    var builder = ReportBuilder.CreateBuilder();',
+            '    builder.addSpringBootApp("catalog", "./catalog");',
+            '}',
+        ].join('\n')));
+
+        assert.strictEqual(parser, undefined);
+    });
+
     test('extracts every resource with its name, method and anchor line', async () => {
         const document = javaDoc(implicitClassAppHost);
         const parser = await getParserForDocument(document);
