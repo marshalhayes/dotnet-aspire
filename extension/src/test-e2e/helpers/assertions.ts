@@ -21,12 +21,23 @@ export async function waitForRepositoryIdle(timeoutMs = 120000): Promise<Extensi
 }
 
 export async function waitForWorkspaceAppHost(timeoutMs = 120000): Promise<ExtensionE2EStateFile> {
+    return await waitForWorkspaceAppHostCandidate(getPrimaryAppHostProjectPath(), timeoutMs);
+}
+
+/**
+ * Waits for discovery to surface a specific AppHost.
+ *
+ * Opening the workspace folder is part of the wait rather than a precondition: discovery does not
+ * run at all while the harness still has its own folder open, so a caller that skips it observes an
+ * empty candidate list until the timeout.
+ */
+export async function waitForWorkspaceAppHostCandidate(appHostPath: string, timeoutMs = 120000): Promise<ExtensionE2EStateFile> {
     const deadline = createDeadline(timeoutMs);
     await ensureWorkspaceFolderOpen(deadline);
     return await waitForExtensionState(
-        file => file.state.workspaceAppHostCandidatePaths.some(candidate => isSamePath(candidate, getPrimaryAppHostProjectPath())),
-        'workspace AppHost candidate',
-        getRemainingTimeout(deadline, 'workspace AppHost candidate'));
+        file => file.state.workspaceAppHostCandidatePaths.some(candidate => isSamePath(candidate, appHostPath)),
+        `workspace AppHost candidate '${appHostPath}'`,
+        getRemainingTimeout(deadline, `workspace AppHost candidate '${appHostPath}'`));
 }
 
 export async function waitForSelectedWorkspaceAppHost(appHostPath = getPrimaryAppHostProjectPath(), timeoutMs = 120000): Promise<ExtensionE2EStateFile> {

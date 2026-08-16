@@ -1528,9 +1528,16 @@ function getE2eRunPath(filePath: unknown): string {
     throw new Error(`Aspire extension E2E openFile requires an existing file: ${filePath}`);
   }
 
-  const runRoot = process.env.ASPIRE_EXTENSION_E2E_RUN_ROOT;
-  if (typeof runRoot !== 'string' || runRoot.length === 0 || !isPathWithinDirectory(filePath, runRoot)) {
-    throw new Error('Aspire extension E2E openFile can only open files inside the configured E2E run root.');
+  // The workspace root is normally inside the run root, but a run whose workspace has to live
+  // elsewhere (the Java run keeps it in the repository so the CLI resolves packages correctly)
+  // still needs to open its own sources. Both roots are harness-configured, so accept either.
+  const allowedRoots = [
+    process.env.ASPIRE_EXTENSION_E2E_RUN_ROOT,
+    process.env.ASPIRE_EXTENSION_E2E_WORKSPACE_ROOT,
+  ].filter((root): root is string => typeof root === 'string' && root.length > 0);
+
+  if (!allowedRoots.some(root => isPathWithinDirectory(filePath, root))) {
+    throw new Error('Aspire extension E2E openFile can only open files inside the configured E2E run root or workspace root.');
   }
 
   return filePath;
