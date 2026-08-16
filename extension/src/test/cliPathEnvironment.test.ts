@@ -338,11 +338,13 @@ suite('cliPathEnvironment.registerCliPathEnvironmentSync tests', () => {
 
         const resolutionDeps = {
             getConfiguredPath: () => configuredPath,
+            getWorkspaceFolders: () => [],
             getDefaultPaths: () => [],
             isConfiguredPathAutoConfigured: () => false,
             findOnPath: async () => 'aspire',
             findAtDefaultPath: async () => undefined,
             tryExecute: async () => configuredPathWorks,
+            getExecutableCandidates: (candidate: string) => [candidate],
             setConfiguredPath: async () => { },
             updateResolvedPathForForwarding: () => { },
         };

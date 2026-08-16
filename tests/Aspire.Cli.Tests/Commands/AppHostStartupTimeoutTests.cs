@@ -49,4 +49,22 @@ public class AppHostStartupTimeoutTests
 
         Assert.Equal(TimeSpan.FromSeconds(5), timeout);
     }
+
+    [Theory]
+    [InlineData("Infinity")]
+    [InlineData("1e30")]
+    public void InvalidExplicitBackchannelConnectionTimeoutUsesAppHostStartupTimeout(string configuredValue)
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                [CliConfigNames.AppHostStartupTimeout] = "180",
+                [KnownConfigNames.CliBackchannelConnectTimeoutSeconds] = configuredValue
+            })
+            .Build();
+
+        var timeout = AppHostStartupTimeout.GetBackchannelConnectionTimeout(configuration);
+
+        Assert.Equal(TimeSpan.FromSeconds(180), timeout);
+    }
 }

@@ -92,11 +92,13 @@ suite('AspireMcpServerDefinitionProvider refresh tests', () => {
         try {
             await cliPath.resolveCliPath({
                 getConfiguredPath: () => '/invalid/aspire',
+                getWorkspaceFolders: () => [],
                 getDefaultPaths: () => [],
                 isConfiguredPathAutoConfigured: () => false,
                 findOnPath: async () => 'aspire',
                 findAtDefaultPath: async () => undefined,
                 tryExecute: async () => false,
+                getExecutableCandidates: (candidate: string) => [candidate],
                 setConfiguredPath: async () => { },
                 updateResolvedPathForForwarding: () => { },
             });

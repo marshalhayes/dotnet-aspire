@@ -38,7 +38,10 @@ internal static class AppHostStartupTimeout
     public static TimeSpan GetBackchannelConnectionTimeout(IConfiguration configuration)
     {
         var configuredValue = configuration[KnownConfigNames.CliBackchannelConnectTimeoutSeconds];
-        if (double.TryParse(configuredValue, CultureInfo.InvariantCulture, out var seconds) && seconds >= 0)
+        if (double.TryParse(configuredValue, CultureInfo.InvariantCulture, out var seconds)
+            && double.IsFinite(seconds)
+            && seconds >= 0
+            && seconds <= TimeSpan.MaxValue.TotalSeconds)
         {
             return TimeSpan.FromSeconds(seconds);
         }

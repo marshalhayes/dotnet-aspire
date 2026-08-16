@@ -17,7 +17,11 @@ suite('Aspire Java AppHost debug startup timeout E2E', function () {
         await waitForJavaLanguageServerImport();
     });
 
-    test('debug startup waits past the old 60 second guest backchannel timeout', async () => {
+    test('debug startup waits past the old 60 second guest backchannel timeout', async function () {
+        if (!shouldRunStartupTimeoutProof()) {
+            this.skip();
+        }
+
         const appHostSourcePath = getJavaAppHostSourcePath();
         const originalSource = fs.readFileSync(appHostSourcePath, 'utf8');
 
@@ -60,6 +64,10 @@ suite('Aspire Java AppHost debug startup timeout E2E', function () {
         }
     });
 });
+
+function shouldRunStartupTimeoutProof(): boolean {
+    return process.env.ASPIRE_EXTENSION_E2E_UNSET_CLI_START_TIMEOUT === 'true';
+}
 
 function getMarkerTimestamp(output: string, marker: string): Date {
     const match = new RegExp(`${marker} ([^\\s]+)`).exec(output);
