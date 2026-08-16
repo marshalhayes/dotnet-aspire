@@ -14,12 +14,20 @@ namespace Aspire.Hosting.Java.Tests;
 
 public class AddJavaAppTests
 {
-    // An absolute path on the current platform. A POSIX-style literal would be rewritten to C:\opt\...
-    // by Path.GetFullPath on Windows, so the expected value has to be platform-specific.
+    // An absolute path on the current platform. Run mode resolves the agent through
+    // Path.GetFullPath, which rewrites a POSIX-style literal to C:\opt\... on Windows, so the
+    // expected value has to be platform-specific.
     private static readonly string s_absoluteAgentPath =
         OperatingSystem.IsWindows() ? @"C:\opt\otel\agent.jar" : "/opt/otel/agent.jar";
 
     private static string AbsoluteAgentPath => s_absoluteAgentPath;
+
+    // Publish mode emits the authored path verbatim, and it is read inside the Linux image the
+    // application is published to, so the absolute form is POSIX on every platform. Using the
+    // platform-specific literal above instead made this scenario unreachable on Windows: publishing
+    // rejects a Windows-rooted agent outright, which
+    // VerifyPublish_AWindowsAbsoluteOtelAgentIsRejectedOnEveryPlatform covers.
+    private const string ContainerProvidedAgentPath = "/opt/otel/agent.jar";
 
     // ---- Launch mode -------------------------------------------------------
 
@@ -909,14 +917,14 @@ public class AddJavaAppTests
         using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish);
 
         var app = builder.AddJavaApp("api", AppContext.BaseDirectory)
-            .WithOtelAgent(AbsoluteAgentPath);
+            .WithOtelAgent(ContainerProvidedAgentPath);
 
         var envVars = await EnvironmentVariableEvaluator.GetEnvironmentVariablesAsync(
             app.Resource, DistributedApplicationOperation.Publish, TestServiceProvider.Instance);
 
         // An absolute path cannot have come out of the build context, so it is the base image's or a
         // mount's responsibility and rewriting it would break that arrangement.
-        Assert.Equal($"-javaagent:{AbsoluteAgentPath}", envVars["JAVA_TOOL_OPTIONS"]);
+        Assert.Equal($"-javaagent:{ContainerProvidedAgentPath}", envVars["JAVA_TOOL_OPTIONS"]);
     }
 
     // ---- WithMavenBuild / WithGradleBuild -----------------------------------
@@ -1285,7 +1293,12 @@ public class AddJavaAppTests
         }
 
         writer.Write("\r\n");
-        return jarPath;
+
+        // Returned fully resolved because that is the shape the resource reports: the launch
+        // configuration runs the authored path through Path.GetFullPath. Path.Combine does not
+        // normalize separators, so a fileName such as "target/api.jar" would otherwise produce
+        // "C:\...\target/api.jar" on Windows and never compare equal to it.
+        return Path.GetFullPath(jarPath);
     }
 
     [Fact]
