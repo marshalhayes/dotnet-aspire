@@ -19,6 +19,7 @@ import { extensionLogOutputChannel } from '../utils/logging';
 import { onDidInvokeCommand } from '../utils/telemetry';
 import { AspireAppHostTreeProvider } from '../views/AspireAppHostTreeProvider';
 import { AppHostDataRepository } from '../data/AppHostDataRepository';
+import { getSupportedCapabilities } from '../capabilities';
 
 let atomicWriteSequence = 0;
 
@@ -1076,6 +1077,10 @@ async function proveAppHostAndResourceDebugging(command: AppHostAndResourceDebug
     throw new Error(`${error instanceof Error ? error.message : String(error)}
 Diagnostics:
 ${JSON.stringify({
+      // The CLI only delegates the AppHost launch to the extension when it advertises the language's
+      // capability, so a missing entry here is the difference between "the debugger failed" and "the
+      // debugger was never asked", which the session list alone cannot distinguish.
+      supportedCapabilities: getSupportedCapabilities(),
       debugSessions,
       launchRequests,
       debugAdapterResponses,

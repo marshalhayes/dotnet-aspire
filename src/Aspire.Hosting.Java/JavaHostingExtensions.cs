@@ -372,6 +372,12 @@ public static partial class JavaHostingExtensions
     /// resolves the same <c>%dev.</c> configuration the application would see when run normally.
     /// </para>
     /// <para>
+    /// In run mode the application is bound to all interfaces. Quarkus enables Host header validation
+    /// whenever it binds a localhost name, and that filter rejects the hostname Aspire publishes, which
+    /// makes the endpoint link in the dashboard return <c>400</c>. Published output is left alone, where
+    /// the application already binds all interfaces.
+    /// </para>
+    /// <para>
     /// No health check is added. <c>/q/health</c> only exists when the application depends on
     /// <c>quarkus-smallrye-health</c>, and adding it unconditionally would leave applications without that
     /// extension permanently unhealthy and silently stall every <c>WaitFor</c> on them. Add
@@ -413,9 +419,32 @@ public static partial class JavaHostingExtensions
                 .WithGradleBuild("build", "-x", "test")
                 .WithGradleTask("quarkusDev");
 
+        // Declared before the run-mode block so the Host validation configuration below can name this
+        // endpoint's host. QUARKUS_HTTP_PORT is the variable Quarkus reads for its listening port.
+        resourceBuilder = resourceBuilder.WithHttpEndpoint(env: "QUARKUS_HTTP_PORT");
+
         if (builder.ExecutionContext.IsRunMode)
         {
             resourceBuilder.WithEnvironment("QUARKUS_PROFILE", "dev");
+
+            // Quarkus turns on its Host header validation filter whenever quarkus.http.host holds a
+            // localhost name, which is the dev-mode default. The filter compares only the host portion of
+            // the request authority, lowercased, against an exact set, so it rejects the
+            // "<resource>.dev.localhost" hostname Aspire publishes with a bare 400 and no body: the
+            // endpoint link shown in the dashboard fails while the same request to 127.0.0.1 succeeds.
+            // See io.quarkus.vertx.http.runtime.HostValidationFilter.
+            //
+            // Binding all interfaces is what suppresses the filter, because it only auto-enables for a
+            // localhost bind. The targeted alternative, naming the hostname in
+            // quarkus.http.host-validation.allowed-hosts, cannot be delivered: the Quarkus Gradle plugin
+            // re-exports QUARKUS_* environment variables to the dev JVM as system properties by replacing
+            // every underscore with a dot, so a property whose name contains a dash arrives as
+            // "quarkus.http.host.validation.allowed.hosts" and is silently ignored. Aspire also has no
+            // access to the published hostname here - the endpoint's Host resolves to the bind address.
+            //
+            // Only run mode is configured, and only ever on a developer machine. A published container
+            // already binds all interfaces by default, so nothing needs to be said about it there.
+            resourceBuilder.WithEnvironment("QUARKUS_HTTP_HOST", "0.0.0.0");
 
             // Quarkus dev mode starts an "observability" Dev Service when an application depends on
             // quarkus-opentelemetry and no exporter endpoint is configured in the application itself. That
@@ -468,7 +497,7 @@ public static partial class JavaHostingExtensions
             MirrorOtelVariable(context, KnownOtelConfigNames.TracesSampler, "QUARKUS_OTEL_TRACES_SAMPLER");
         });
 
-        return resourceBuilder.WithHttpEndpoint(env: "QUARKUS_HTTP_PORT");
+        return resourceBuilder;
     }
 
     /// <summary>
