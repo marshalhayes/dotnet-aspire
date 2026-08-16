@@ -104,6 +104,29 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
     }
 
     [Fact]
+    public async Task VerifyPublish_WithJvmArgs_ComposesWithBuildProducedOtelAgent()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish).WithResourceCleanUp(true);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.Write("pom.xml", "<project/>");
+
+        builder.AddJavaApp("worker", tempDir.Path, "target/worker.jar")
+            .WithMavenBuild()
+            .WithJvmArgs("-Xmx128m", "-javaagent:/app/coverage-agent.jar")
+            .WithOtelAgent("target/agent/opentelemetry-javaagent.jar");
+
+        var container = Assert.Single(builder.Resources.OfType<ContainerResource>());
+        var envVars = await EnvironmentVariableEvaluator.GetEnvironmentVariablesAsync(
+            container, DistributedApplicationOperation.Publish, TestServiceProvider.Instance);
+
+        // Java agents initialize in option order. Preserve the fluent callback order rather than
+        // replacing or reordering the user's agent when Aspire appends its own telemetry agent.
+        Assert.Equal(
+            "-Xmx128m -javaagent:/app/coverage-agent.jar -javaagent:/app/agent.jar",
+            envVars["JAVA_TOOL_OPTIONS"]);
+    }
+
+    [Fact]
     public async Task VerifyPublish_StripsExactlyOneLeadingDotSlashFromTheOtelAgentPath()
     {
         var content = await PublishDockerfileAsync(
@@ -843,22 +866,39 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
         Assert.Contains("COPY --chown=999:999 target/worker.jar /app/app.jar", content);
     }
 
-    [Fact]
-    public async Task PublishingWithAWindowsBatchWrapperUsesThePosixSibling()
+    [Theory]
+    [InlineData("maven", "scripts/custom-mvnw", "scripts/custom-mvnw.cmd")]
+    [InlineData("gradle", "scripts/custom-gradlew", "scripts/custom-gradlew.bat")]
+    public async Task PublishingWithAWindowsBatchWrapperUsesThePosixSibling(
+        string tool,
+        string posixWrapper,
+        string windowsWrapper)
     {
         var content = await PublishDockerfileAsync(
             configureSource: source =>
             {
-                WritePom(source, javaVersion: "21");
-                WriteWrapper(source, "mvnw");
-                WriteWrapper(source, "mvnw.cmd");
+                if (tool is "maven")
+                {
+                    WritePom(source, javaVersion: "21");
+                }
+                else
+                {
+                    WriteGradleBuild(source, "sourceCompatibility = '21'");
+                }
+
+                var wrapperDirectory = Path.Combine(source, "scripts");
+                WriteWrapper(wrapperDirectory, Path.GetFileName(posixWrapper));
+                WriteWrapper(wrapperDirectory, Path.GetFileName(windowsWrapper));
             },
-            configureResource: app => app.WithMavenGoal("spring-boot:run").WithWrapperPath("mvnw.cmd"));
+            configureResource: app => (tool is "maven"
+                ? app.WithMavenGoal("spring-boot:run")
+                : app.WithGradleTask("bootRun"))
+                .WithWrapperPath(windowsWrapper));
 
         // Selecting the batch wrapper is reasonable on Windows, but the build stage is Linux and cannot
         // execute it. Maven and Gradle ship both scripts, so the POSIX sibling is used for the image.
-        Assert.Contains("sh ./mvnw ", content);
-        Assert.DoesNotContain("mvnw.cmd", content);
+        Assert.Contains($"sh ./{posixWrapper} ", content);
+        await Verify(content).UseParameters(tool);
     }
 
     [Fact]

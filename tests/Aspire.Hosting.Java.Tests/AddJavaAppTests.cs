@@ -5,6 +5,7 @@
 
 using System.Diagnostics;
 using System.IO.Compression;
+using System.Text.Json;
 using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Tests.Utils;
 using Aspire.Hosting.Utils;
@@ -1062,6 +1063,28 @@ public class AddJavaAppTests
 
         var annotation = app.Resource.Annotations.OfType<SupportsDebuggingAnnotation>().SingleOrDefault();
         Assert.Null(annotation);
+    }
+
+    [Fact]
+    public async Task WithJvmArgs_IdeDebugLaunchUsesJavaToolOptionsOnly()
+    {
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Run).WithResourceCleanUp(true);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.Write("pom.xml", "<project><artifactId>api</artifactId></project>");
+
+        var app = builder.AddJavaApp("api", tempDir.Path)
+            .WithMavenGoal("spring-boot:run")
+            .WithJvmArgs("-javaagent:/opt/coverage-agent.jar");
+
+        var envVars = await EnvironmentVariableEvaluator.GetEnvironmentVariablesAsync(
+            app.Resource, DistributedApplicationOperation.Run, TestServiceProvider.Instance);
+        var launchConfiguration = await GetLaunchConfigurationAsync(app);
+        var serializedLaunchConfiguration = JsonSerializer.SerializeToElement(launchConfiguration);
+
+        // The IDE-launched JVM inherits the resource environment. Repeating this value as vm_args would
+        // attach single-instance options such as -javaagent twice and either fail or double-instrument.
+        Assert.Equal("-javaagent:/opt/coverage-agent.jar", envVars["JAVA_TOOL_OPTIONS"]);
+        Assert.False(serializedLaunchConfiguration.TryGetProperty("vm_args", out _));
     }
 
     // ---- Chaining multiple methods ------------------------------------------

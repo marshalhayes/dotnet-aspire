@@ -915,7 +915,13 @@ public static partial class JavaHostingExtensions
             return builder;
         }
 
-        return builder.WithEnvironment(context => AppendJavaToolOptions(context.EnvironmentVariables, args));
+        return builder.WithEnvironment(context =>
+        {
+            // Keep JAVA_TOOL_OPTIONS as the single JVM-argument source even when an IDE owns the launch.
+            // DCP passes the resource environment to that JVM, so also emitting vmArgs would apply
+            // single-instance options such as -javaagent twice and can double-instrument the application.
+            AppendJavaToolOptions(context.EnvironmentVariables, args);
+        });
     }
 
     /// <summary>
