@@ -3350,7 +3350,8 @@ var builder = Aspire.Hosting.DistributedApplication.CreateBuilder(args);
         sinon.stub(aspireDebugSession, 'startAndGetDebugSession').resolves(undefined);
 
         // The CLI sends the launcher it would have run itself, so the classpath the build tool staged is
-        // already resolved and the adapter never has to reproduce it.
+        // already resolved and the adapter never has to reproduce it. Those entries are relative to the
+        // AppHost directory, because that is the working directory the CLI runs `java` from.
         const classPath = ['target/classes', 'target/aspire-deps/*'].join(pathDelimiter);
 
         await aspireDebugSession.startAppHost(
@@ -3364,10 +3365,16 @@ var builder = Aspire.Hosting.DistributedApplication.CreateBuilder(args);
         const appHostArgs = createDebugSessionConfiguration.firstCall.args[2];
         const debuggerExtension = createDebugSessionConfiguration.firstCall.args[5];
 
+        // Absolute, not the relative entries the CLI sent: the adapter does not resolve classPaths
+        // against the launch configuration's cwd, so relative entries are looked up somewhere else
+        // entirely and the JVM starts without the AppHost class on its classpath.
         assert.deepStrictEqual(launchConfig, {
             type: 'java',
             main_class: 'AppHost',
-            class_paths: ['target/classes', 'target/aspire-deps/*'],
+            class_paths: [
+                join(dirname(appHostPath), 'target', 'classes'),
+                join(dirname(appHostPath), 'target', 'aspire-deps', '*')
+            ],
             working_directory: dirname(appHostPath),
             vm_args: ['-Xmx512m'],
         });
@@ -3428,7 +3435,7 @@ var builder = Aspire.Hosting.DistributedApplication.CreateBuilder(args);
         assert.deepStrictEqual(launchConfig, {
             type: 'java',
             main_class: 'AppHost',
-            class_paths: ['target/classes'],
+            class_paths: [join(dirname(appHostPath), 'target', 'classes')],
             working_directory: dirname(appHostPath),
         });
     });

@@ -6,7 +6,7 @@ import { getSupportedCapabilities } from '../capabilities';
 import { AspireDebugSession } from '../debugger/AspireDebugSession';
 import * as debuggerExtensionsModule from '../debugger/debuggerExtensions';
 import { getResourceDebuggerExtensions } from '../debugger/debuggerExtensions';
-import { javaDebuggerExtension, parseJavaAppHostCommand } from '../debugger/languages/java';
+import { javaDebuggerExtension, parseJavaAppHostCommand, resolveJavaClassPaths } from '../debugger/languages/java';
 import { javaAppHostCommandNotRecognized, javaDebuggerExtensionNotInstalled } from '../loc/strings';
 import { AspireResourceExtendedDebugConfiguration, GoLaunchConfiguration, JavaLaunchConfiguration } from '../dcp/types';
 
@@ -574,5 +574,26 @@ suite('Java AppHost Command Parsing Tests', () => {
         const parsed = parseJavaAppHostCommand([path.join('/opt', 'jdk', 'bin', 'java'), '-cp', 'out', 'AppHost']);
 
         assert.strictEqual(parsed?.mainClass, 'AppHost');
+    });
+
+    // The CLI writes the classpath relative to the AppHost directory it runs `java` from, and the
+    // debug adapter resolves a relative entry somewhere else, so the JVM it starts has no AppHost
+    // class on its classpath and dies with ClassNotFoundException before Aspire connects to it.
+    test('resolves a relative AppHost classpath against the AppHost directory', () => {
+        const appHostDirectory = path.join(path.sep, 'repo', 'JavaSpringBoot.AppHost.Java');
+
+        assert.deepStrictEqual(
+            resolveJavaClassPaths(['build/classes/java/main', 'build/aspire-deps/*'], appHostDirectory),
+            [
+                path.join(appHostDirectory, 'build', 'classes', 'java', 'main'),
+                path.join(appHostDirectory, 'build', 'aspire-deps', '*')
+            ]);
+    });
+
+    test('leaves an absolute AppHost classpath entry alone', () => {
+        const appHostDirectory = path.join(path.sep, 'repo', 'JavaSpringBoot.AppHost.Java');
+        const absoluteEntry = path.join(path.sep, 'elsewhere', 'classes');
+
+        assert.deepStrictEqual(resolveJavaClassPaths([absoluteEntry], appHostDirectory), [absoluteEntry]);
     });
 });

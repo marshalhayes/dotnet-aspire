@@ -385,3 +385,22 @@ export function parseJavaAppHostCommand(args: string[]): { mainClass: string; cl
 
     return null;
 }
+
+// Turns the AppHost's classpath into absolute entries.
+//
+// The CLI builds that classpath relative to the AppHost directory, because that is the working
+// directory it runs `java` from: ".java-build", "build/classes/java/main", "target/classes",
+// "target/aspire-deps/*". vscjava.vscode-java-debug does not resolve classPaths against the launch
+// configuration's cwd, so those entries are looked up somewhere else entirely, the JVM starts with a
+// classpath that holds no AppHost class, and the process dies before the Aspire server ever connects:
+//
+//   Error: Could not find or load main class AppHost
+//   Caused by: java.lang.ClassNotFoundException: AppHost
+//
+// Resolving here leaves the wire format the CLI already emits alone and makes the launch independent
+// of how the adapter interprets a relative entry. A "dir/*" entry stays intact, because the asterisk
+// is a path segment to path.resolve and is expanded by the JVM rather than by a shell.
+// https://github.com/microsoft/vscode-java-debug/blob/main/Configuration.md#classpaths
+export function resolveJavaClassPaths(classPaths: readonly string[], appHostDirectory: string): string[] {
+    return classPaths.map(entry => path.resolve(appHostDirectory, entry));
+}

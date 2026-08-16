@@ -13,7 +13,7 @@ import { AnsiColors } from "../utils/AspireTerminalProvider";
 import { applyTextStyle } from "../utils/strings";
 import { nodeDebuggerExtension } from "./languages/node";
 import { createDefaultRustDebuggerExtension } from "./languages/rust";
-import { javaDebuggerExtension, parseJavaAppHostCommand } from "./languages/java";
+import { javaDebuggerExtension, parseJavaAppHostCommand, resolveJavaClassPaths } from "./languages/java";
 import { cleanupRun } from "./runCleanupRegistry";
 import { runWithRunStartWrappers } from "./runStartRegistry";
 import AspireRpcServer from "../server/AspireRpcServer";
@@ -1231,7 +1231,7 @@ export class AspireDebugSession implements vscode.DebugAdapter, DashboardLaunche
         launchConfig = {
           type: 'java',
           main_class: javaCommand!.mainClass,
-          class_paths: javaCommand!.classPaths,
+          class_paths: resolveJavaClassPaths(javaCommand!.classPaths, path.dirname(projectFile)),
           working_directory: path.dirname(projectFile),
           // build_tool is deliberately absent: it only drives a language server project reimport,
           // and the classpath is sent explicitly here, so the launch never depends on one.
