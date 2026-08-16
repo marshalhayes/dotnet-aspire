@@ -220,7 +220,14 @@ export async function findCliAtDefaultPath(): Promise<string | undefined> {
  */
 export function getConfiguredCliPath(target: CliPathResolutionTarget = windowCliPathTarget): string {
     const resource = target.kind === 'workspaceFolder' ? target.workspaceFolder.uri : undefined;
-    return vscode.workspace.getConfiguration('aspire', resource).get<string>('aspireCliExecutablePath', '').trim();
+    const configuration = vscode.workspace.getConfiguration('aspire', resource);
+    if (!vscode.workspace.isTrusted) {
+        // Repository settings are untrusted input. Never execute a workspace-provided path
+        // until the user trusts the workspace, but preserve an explicit user-level pin.
+        return configuration.inspect<string>('aspireCliExecutablePath')?.globalValue?.trim() ?? '';
+    }
+
+    return configuration.get<string>('aspireCliExecutablePath', '').trim();
 }
 
 /**

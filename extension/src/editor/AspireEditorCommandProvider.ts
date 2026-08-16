@@ -131,8 +131,8 @@ export class AspireEditorCommandProvider implements vscode.Disposable {
         await this.launchAspireDebugSession('publish', noDebug);
     }
 
-    public async tryExecuteDoAppHost(noDebug: boolean, doStep?: string, appHostPath?: string, target?: CliPathResolutionTarget): Promise<void> {
-        await this.launchAspireDebugSession('do', noDebug, doStep, appHostPath, target);
+    public async tryExecuteDoAppHost(noDebug: boolean, doStep?: string, appHostPath?: string, target?: CliPathResolutionTarget, cliPath?: string): Promise<void> {
+        await this.launchAspireDebugSession('do', noDebug, doStep, appHostPath, target, cliPath);
     }
 
     private async launchAspireDebugSession(
@@ -141,6 +141,7 @@ export class AspireEditorCommandProvider implements vscode.Disposable {
         doStep?: string,
         selectedAppHostPath?: string,
         target?: CliPathResolutionTarget,
+        cliPath?: string,
     ): Promise<void> {
         const appHostToRun = selectedAppHostPath ?? await this.getAppHostPath();
         if (!appHostToRun) {
@@ -148,7 +149,7 @@ export class AspireEditorCommandProvider implements vscode.Disposable {
             return;
         }
 
-        await this._launchService.launch(appHostToRun, aspireCommand, noDebug, doStep, target);
+        await this._launchService.launch(appHostToRun, aspireCommand, noDebug, doStep, target, cliPath);
     }
 
     dispose() {

@@ -1235,6 +1235,32 @@ suite('CliPathResolver scoped tests', () => {
         }
     });
 
+    test('ignores workspace CLI paths in Restricted Mode while preserving the global value', () => {
+        const trustDescriptor = Object.getOwnPropertyDescriptor(vscode.workspace, 'isTrusted');
+        Object.defineProperty(vscode.workspace, 'isTrusted', { value: false, configurable: true });
+        const workspaceConfiguration = {
+            get: sinon.stub().returns('/repo/a/tools/aspire'),
+            inspect: sinon.stub().returns({
+                key: 'aspire.aspireCliExecutablePath',
+                globalValue: '/users/me/aspire',
+                workspaceValue: '/repo/tools/aspire',
+                workspaceFolderValue: '/repo/a/tools/aspire',
+            }),
+        } as unknown as vscode.WorkspaceConfiguration;
+        const getConfigurationStub = sinon.stub(vscode.workspace, 'getConfiguration').returns(workspaceConfiguration);
+
+        try {
+            assert.strictEqual(getConfiguredCliPath(targetA), '/users/me/aspire');
+            assert.strictEqual(getConfiguredCliPath(windowCliPathTarget), '/users/me/aspire');
+        }
+        finally {
+            getConfigurationStub.restore();
+            if (trustDescriptor) {
+                Object.defineProperty(vscode.workspace, 'isTrusted', trustDescriptor);
+            }
+        }
+    });
+
     test('keeps plain absolute configured path behavior unchanged', async () => {
         const configured = '/repo/a/bin/aspire';
         const resolver = new CliPathResolver(createMockDeps({

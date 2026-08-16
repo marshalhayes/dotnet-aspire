@@ -773,6 +773,38 @@ suite('AspireDebugConfigurationProvider', () => {
         assert.strictEqual(config.skipCliAvailabilityCheck, undefined);
     });
 
+    test('removes a resolved CLI path injected by a launch configuration', async () => {
+        const provider = new AspireDebugConfigurationProvider(createAppHostDiscoveryService('/repo/AppHost.csproj'), launchReservation);
+
+        const config = await provider.resolveDebugConfigurationWithSubstitutedVariables(undefined, {
+            name: 'Debug AppHost',
+            type: 'aspire',
+            request: 'launch',
+            program: '/repo/AppHost.csproj',
+            resolvedCliPath: '/untrusted/aspire',
+        } as AspireExtendedDebugConfiguration) as AspireExtendedDebugConfiguration | undefined;
+
+        assert.ok(config);
+        assert.strictEqual(config.resolvedCliPath, undefined);
+    });
+
+    test('preserves the resolved CLI path on an extension-owned launch', async () => {
+        const provider = new AspireDebugConfigurationProvider(createAppHostDiscoveryService('/repo/AppHost.csproj'), launchReservation);
+        const initialConfig = {
+            name: 'Debug AppHost',
+            type: 'aspire',
+            request: 'launch',
+            program: '/repo/AppHost.csproj',
+            resolvedCliPath: '/verified/aspire',
+        } as AspireExtendedDebugConfiguration;
+        markAspireDebugConfigurationAsExtensionOwned(initialConfig);
+
+        const config = await provider.resolveDebugConfigurationWithSubstitutedVariables(undefined, initialConfig) as AspireExtendedDebugConfiguration | undefined;
+
+        assert.ok(config);
+        assert.strictEqual(config.resolvedCliPath, '/verified/aspire');
+    });
+
     function setActiveEditor(filePath: string, folder: vscode.WorkspaceFolder): void {
         sandbox.stub(vscode.window, 'activeTextEditor').value({
             document: {

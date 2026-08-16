@@ -256,6 +256,7 @@ export interface AspireExtendedDebugConfiguration extends vscode.DebugConfigurat
     args?: string[];
     step?: string;
     skipCliAvailabilityCheck?: boolean;
+    resolvedCliPath?: string;
     env?: { [key: string]: string };
     [appHostLaunchTokenConfigKey]?: number;
     [appHostRestartSourceSessionIdConfigKey]?: string;

@@ -14,8 +14,8 @@ import { CliPathResolutionTarget, windowCliPathTarget } from '../utils/cliPathVa
  * in the current workspace. The path is resolved by the CLI via `aspire config info`.
  * Creates the file with an empty JSON object if it doesn't exist.
  */
-export async function openLocalSettingsCommand(terminalProvider: AspireTerminalProvider, target: CliPathResolutionTarget): Promise<void> {
-    const configInfo = await new ConfigInfoProvider(terminalProvider).getConfigInfo({ target });
+export async function openLocalSettingsCommand(terminalProvider: AspireTerminalProvider, target: CliPathResolutionTarget, cliPath: string): Promise<void> {
+    const configInfo = await new ConfigInfoProvider(terminalProvider).getConfigInfo({ target, cliPath });
     if (!configInfo) {
         throw new vscode.CancellationError();
     }

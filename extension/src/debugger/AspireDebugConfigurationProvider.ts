@@ -111,6 +111,9 @@ export class AspireDebugConfigurationProvider implements vscode.DebugConfigurati
         // property. A launch.json can spell `launchedByExtension`, but it cannot know the
         // per-activation value that makes the property authoritative.
         const launchedByExtension = isAspireDebugConfigurationExtensionOwned(config);
+        if (!launchedByExtension) {
+            delete aspireConfig.resolvedCliPath;
+        }
         const existingExternalReservation = getAspireDebugConfigurationExternalLaunchReservation(config);
         if (launchedByExtension) {
             markAspireDebugConfigurationAsExtensionOwned(config);

@@ -1032,7 +1032,8 @@ export class AspireDebugSession implements vscode.DebugAdapter, DashboardLaunche
     const cliPathTarget = cliPathTargetSource !== undefined
       ? getCliPathTargetForUri(vscode.Uri.file(cliPathTargetSource))
       : windowCliPathTarget;
-    const cliPath = await this._terminalProvider.getAspireCliExecutablePath(cliPathTarget);
+    const cliPath = this.configuration.resolvedCliPath
+      ?? await this._terminalProvider.getAspireCliExecutablePath(cliPathTarget);
     if (this.isShuttingDown) {
       // CLI resolution can outlive shutdown. Spawning now would create a detached `aspire run`
       // after every teardown owner has already started or completed its cleanup.

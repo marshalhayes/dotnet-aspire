@@ -189,6 +189,20 @@ suite('AspireDebugSession tests', () => {
         assert.ok(getAspireCliExecutablePath.calledOnceWith(workspaceFolderCliPathTarget(folder)));
     });
 
+    test('spawnAspireCommand uses the CLI path verified by the launch service', async () => {
+        const spawnStub = sinon.stub(cliModule, 'spawnCliProcess').returns(createFakeCliProcess(4334));
+        const getAspireCliExecutablePath = sinon.stub().resolves('/second/aspire');
+        const aspireDebugSession = createSessionWithConfiguration({
+            program: '/workspace/AppHost.csproj',
+            resolvedCliPath: '/verified/aspire',
+        }, getAspireCliExecutablePath);
+
+        await aspireDebugSession.spawnAspireCommand(['run'], '/workspace', false, 'aspire run');
+
+        assert.strictEqual(getAspireCliExecutablePath.called, false);
+        assert.strictEqual(spawnStub.firstCall.args[1], '/verified/aspire');
+    });
+
     test('spawnAspireCommand prefers the resolved AppHost path over the configured program', async () => {
         sinon.stub(cliModule, 'spawnCliProcess').returns(createFakeCliProcess(4331));
         const folder = { name: 'other', index: 0, uri: vscode.Uri.file('/other') } as vscode.WorkspaceFolder;

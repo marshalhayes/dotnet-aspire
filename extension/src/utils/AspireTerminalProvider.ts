@@ -24,12 +24,14 @@ export const enum AnsiColors {
 export interface AspireTerminal {
     terminal: vscode.Terminal;
     dispose: () => void;
+    resolvedCliPath?: string;
 }
 
 export interface SendAspireCommandOptions {
     redactAdditionalArgs?: boolean;
     terminalTarget?: 'shared' | 'editor';
     target: CliPathResolutionTarget;
+    cliPath?: string;
 }
 
 // String parts are fixed CLI syntax and are validated before interpolation.
@@ -164,7 +166,7 @@ export class AspireTerminalProvider implements vscode.Disposable {
 
     async sendAspireCommandToAspireTerminal(subcommand: AspireSubcommand, showTerminal: boolean = true, additionalArgs?: string[], options?: SendAspireCommandOptions) {
         const target = options?.target ?? windowCliPathTarget;
-        const cliPath = await this.getAspireCliExecutablePath(target);
+        const cliPath = options?.cliPath ?? await this.getAspireCliExecutablePath(target);
         const subcommandLine = formatSubcommand(subcommand);
         assertNoTerminalControlCharacters(cliPath);
 
@@ -259,7 +261,11 @@ export class AspireTerminalProvider implements vscode.Disposable {
         resolvedCliPath?: string,
     ): AspireTerminal {
         const terminalKey = this.getTerminalKey(undefined, target);
-        const existingTerminal = this._terminalByDebugSessionId.get(terminalKey);
+        let existingTerminal = this._terminalByDebugSessionId.get(terminalKey);
+        if (existingTerminal && resolvedCliPath !== undefined && !areResolvedCliPathsEqual(existingTerminal.resolvedCliPath, resolvedCliPath)) {
+            this.invalidateSharedAspireTerminal(target);
+            existingTerminal = undefined;
+        }
         if (existingTerminal) {
             if (!forceCreate) {
                 return existingTerminal;
@@ -274,6 +280,7 @@ export class AspireTerminalProvider implements vscode.Disposable {
 
         const aspireTerminal: AspireTerminal = {
             terminal,
+            resolvedCliPath,
             dispose: () => {
                 terminal.dispose();
                 this._terminalByDebugSessionId.delete(terminalKey);
@@ -309,6 +316,7 @@ export class AspireTerminalProvider implements vscode.Disposable {
         const terminal = this.createTerminal(vscode.TerminalLocation.Editor, target, resolvedCliPath);
         return {
             terminal,
+            resolvedCliPath,
             dispose: () => terminal.dispose(),
         };
     }
@@ -504,6 +512,16 @@ export class AspireTerminalProvider implements vscode.Disposable {
 
         return this._windowsPowerShellPath;
     }
+}
+
+function areResolvedCliPathsEqual(left: string | undefined, right: string): boolean {
+    if (left === undefined) {
+        return false;
+    }
+
+    return process.platform === 'win32'
+        ? path.win32.normalize(left).toLowerCase() === path.win32.normalize(right).toLowerCase()
+        : left === right;
 }
 
 function isPowerShell7Available(): boolean {

@@ -129,7 +129,20 @@ suite('AppHostLaunchService', () => {
         assert.strictEqual(config.noDebug, false);
         assert.strictEqual(config.step, undefined);
         assert.strictEqual(config.skipCliAvailabilityCheck, true);
+        assert.strictEqual(config.resolvedCliPath, 'aspire');
         assert.strictEqual(config.__aspireAppHostSelectionOrigin, 'user-selection');
+    });
+
+    test('launch reuses an already-verified CLI path', async () => {
+        const folder = { name: 'a', index: 0, uri: vscode.Uri.file('/repo') } as vscode.WorkspaceFolder;
+        const target = workspaceFolderCliPathTarget(folder);
+
+        await service.launch('/repo/AppHost.csproj', 'do', false, undefined, target, '/repo/bin/aspire');
+
+        const config = startDebuggingStub.firstCall.args[1] as AspireExtendedDebugConfiguration;
+        assert.strictEqual(resolveCliPathStub.called, false);
+        assert.strictEqual(config.resolvedCliPath, '/repo/bin/aspire');
+        assert.strictEqual(config.skipCliAvailabilityCheck, true);
     });
 
     test('lifecycle-owned launch does not replace an existing workspace default', async () => {

@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getCommandInvocationCount, getTerminalCommandCount, waitForCommandOutcome, waitForTerminalCommand } from './helpers/assertions';
 import { executeE2eControlCommand, restoreE2eCliPathForE2E, setE2eCliPathForE2E, setTerminalCommandExecutionSuppressedForE2E } from './helpers/fixtures';
-import { getCliPath, getWorkspaceRoot } from './helpers/paths';
+import { getWorkspaceRoot } from './helpers/paths';
 import { InputBox, VSBrowser, Workbench } from './helpers/extester';
 import { cancelActiveInput, chooseActiveQuickPick, executeCommandFromPalette, openAspireView } from './helpers/vscode';
 
@@ -49,7 +49,7 @@ suite('Workspace target proof E2E', function () {
             'window-scoped update self command',
             60000,
             beforeUpdateTerminal);
-        assert.ok(updateCommand.commandLine.includes(getCliPath()), updateCommand.commandLine);
+        assert.strictEqual(updateCommand.commandLine, 'aspire update --self');
         assert.ok(!updateCommand.commandLine.includes(folderA.wrapperPath), updateCommand.commandLine);
         assert.ok(!updateCommand.commandLine.includes(folderB.wrapperPath), updateCommand.commandLine);
 

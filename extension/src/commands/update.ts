@@ -8,8 +8,9 @@ export async function updateCommand(
     _editorCommandProvider: AspireEditorCommandProvider,
     appHost: AppHostCommandTarget,
     target: CliPathResolutionTarget,
+    cliPath: string,
 ) {
-    await terminalProvider.sendAspireCommandToAspireTerminal('update', true, appHost.args, { target });
+    await terminalProvider.sendAspireCommandToAspireTerminal('update', true, appHost.args, { target, cliPath });
 }
 
 export async function updateSelfCommand(terminalProvider: AspireTerminalProvider) {

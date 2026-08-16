@@ -8,6 +8,7 @@ export async function addCommand(
     _editorCommandProvider: AspireEditorCommandProvider,
     appHost: AppHostCommandTarget,
     target: CliPathResolutionTarget,
+    cliPath: string,
 ) {
-    await terminalProvider.sendAspireCommandToAspireTerminal('add', true, appHost.args, { target });
+    await terminalProvider.sendAspireCommandToAspireTerminal('add', true, appHost.args, { target, cliPath });
 }
