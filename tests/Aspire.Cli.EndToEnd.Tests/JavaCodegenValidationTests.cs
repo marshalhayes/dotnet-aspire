@@ -60,18 +60,21 @@ public sealed class JavaCodegenValidationTests(ITestOutputHelper output)
             throw new InvalidOperationException($".aspire/modules directory was not created at {modulesDir}");
         }
 
+        // Generated sources are laid out by package: every file declares `package aspire;`, so javac
+        // expects them under a matching `aspire/` directory. Only sources.txt sits at the modules root,
+        // because the compiler is driven as `javac @.aspire/modules/sources.txt` from the AppHost directory.
         var expectedFiles = new[]
         {
-            "Aspire.java",
-            "AspireClient.java",
-            "DistributedApplication.java",
-            "IDistributedApplicationBuilder.java",
+            "aspire/Aspire.java",
+            "aspire/AspireClient.java",
+            "aspire/DistributedApplication.java",
+            "aspire/IDistributedApplicationBuilder.java",
             "sources.txt"
         };
 
         foreach (var file in expectedFiles)
         {
-            var filePath = Path.Combine(modulesDir, file);
+            var filePath = Path.Combine(modulesDir, Path.Combine(file.Split('/')));
             if (!File.Exists(filePath))
             {
                 throw new InvalidOperationException($"Expected generated file not found: {filePath}");
@@ -84,7 +87,7 @@ public sealed class JavaCodegenValidationTests(ITestOutputHelper output)
             }
         }
 
-        var builderJava = File.ReadAllText(Path.Combine(modulesDir, "IDistributedApplicationBuilder.java"));
+        var builderJava = File.ReadAllText(Path.Combine(modulesDir, "aspire", "IDistributedApplicationBuilder.java"));
         if (!builderJava.Contains("addRedis"))
         {
             throw new InvalidOperationException("IDistributedApplicationBuilder.java does not contain addRedis from Aspire.Hosting.Redis");
