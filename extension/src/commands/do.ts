@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { AspireEditorCommandProvider } from '../editor/AspireEditorCommandProvider';
 import { AspireTerminalProvider } from '../utils/AspireTerminalProvider';
 import { ConfigInfoProvider } from '../utils/configInfoProvider';
-import { enterPipelineStep } from '../loc/strings';
+import { enterPipelineStep, noAppHostInWorkspace } from '../loc/strings';
 import { CliPathResolutionTarget } from '../utils/cliPathVariables';
 
 export async function doCommand(
@@ -14,6 +14,10 @@ export async function doCommand(
     const step = await resolveStep(terminalProvider, target);
     if (step === undefined) {
         throw new vscode.CancellationError();
+    }
+    if (!appHostPath) {
+        vscode.window.showErrorMessage(noAppHostInWorkspace);
+        return;
     }
     await editorCommandProvider.tryExecuteDoAppHost(false, step ?? undefined, appHostPath, target);
 }

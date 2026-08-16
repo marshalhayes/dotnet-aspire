@@ -281,6 +281,14 @@ jobs:
             useXvfb: true
             installJava: true
           - name: Linux
+            shardName: workspace-target-proof
+            spec: out/test-e2e/test-e2e/workspaceTargetProof.e2e.test.js
+            runner: ubuntu-latest
+            rid: linux-x64
+            archivePattern: aspire-cli-linux-x64*.tar.gz
+            cliBinary: aspire
+            useXvfb: true
+          - name: Linux
             shardName: edge-cases
             spec: out/test-e2e/test-e2e/edgeCases.e2e.test.js
             runner: ubuntu-latest
