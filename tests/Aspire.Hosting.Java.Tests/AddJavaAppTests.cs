@@ -931,7 +931,7 @@ public class AddJavaAppTests
             .WithMavenBuild();
 
         Assert.Contains(builder.Resources, r => r.Name == "api-maven-build");
-        Assert.IsType<MavenBuildResource>(builder.Resources.First(r => r.Name == "api-maven-build"));
+        Assert.Equal(JavaBuildTool.Maven, Assert.IsType<JavaBuildResource>(builder.Resources.First(r => r.Name == "api-maven-build")).Tool);
     }
 
     [Fact]
@@ -944,7 +944,7 @@ public class AddJavaAppTests
             .WithMavenBuild("clean", "install", "-DskipTests");
 
         var buildResource = builder.Resources.First(r => r.Name == "api-maven-build");
-        Assert.IsType<MavenBuildResource>(buildResource);
+        Assert.Equal(JavaBuildTool.Maven, Assert.IsType<JavaBuildResource>(buildResource).Tool);
     }
 
     [Fact]
@@ -957,7 +957,7 @@ public class AddJavaAppTests
             .WithGradleBuild();
 
         Assert.Contains(builder.Resources, r => r.Name == "api-gradle-build");
-        Assert.IsType<GradleBuildResource>(builder.Resources.First(r => r.Name == "api-gradle-build"));
+        Assert.Equal(JavaBuildTool.Gradle, Assert.IsType<JavaBuildResource>(builder.Resources.First(r => r.Name == "api-gradle-build")).Tool);
     }
 
     [Fact]
@@ -970,7 +970,7 @@ public class AddJavaAppTests
             .WithGradleBuild("clean", "assemble", "--info");
 
         var buildResource = builder.Resources.First(r => r.Name == "api-gradle-build");
-        Assert.IsType<GradleBuildResource>(buildResource);
+        Assert.Equal(JavaBuildTool.Gradle, Assert.IsType<JavaBuildResource>(buildResource).Tool);
     }
 
     [Fact]

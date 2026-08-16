@@ -745,7 +745,6 @@ public static partial class JavaHostingExtensions
         return builder.WithJavaBuildStep(
             JavaBuildTool.Maven,
             buildResourceName: $"{builder.Resource.Name}-maven-build",
-            createResource: static (name, wrapperPath, workingDirectory) => new MavenBuildResource(name, wrapperPath, workingDirectory),
             buildArgs: args.Length > 0 ? args : ["clean", "package"]);
     }
 
@@ -779,18 +778,15 @@ public static partial class JavaHostingExtensions
         return builder.WithJavaBuildStep(
             JavaBuildTool.Gradle,
             buildResourceName: $"{builder.Resource.Name}-gradle-build",
-            createResource: static (name, wrapperPath, workingDirectory) => new GradleBuildResource(name, wrapperPath, workingDirectory),
             buildArgs: args.Length > 0 ? args : ["clean", "build"]);
     }
 
-    private static IResourceBuilder<T> WithJavaBuildStep<T, TBuildResource>(
+    private static IResourceBuilder<T> WithJavaBuildStep<T>(
         this IResourceBuilder<T> builder,
         JavaBuildTool tool,
         string buildResourceName,
-        Func<string, string, string, TBuildResource> createResource,
         string[] buildArgs)
         where T : JavaAppResource
-        where TBuildResource : ExecutableResource
     {
         // Building with both tools would produce two artifacts and leave the container build with no way
         // to choose between them, so it is rejected the same way conflicting launch modes are.
@@ -835,7 +831,7 @@ public static partial class JavaHostingExtensions
 
         var resource = builder.Resource;
         var wrapperInvocation = ResolveWrapperInvocation(resource, tool);
-        var buildResource = createResource(buildResourceName, wrapperInvocation.Command, resource.WorkingDirectory);
+        var buildResource = new JavaBuildResource(buildResourceName, wrapperInvocation.Command, resource.WorkingDirectory, tool);
 
         var buildBuilder = builder.ApplicationBuilder.AddResource(buildResource)
             .WithArgs(ctx =>
