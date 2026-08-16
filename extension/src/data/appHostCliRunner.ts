@@ -7,6 +7,7 @@ import { aspireCliCommandTimedOut, aspireCommandOutputTruncated } from '../loc/s
 import { isNoLogoUnsupportedOutput, noLogoOption, removeRootNoLogoOption } from '../utils/cliCompatibility';
 import { AspireCliFailedError, AspireCliNotInstalledError } from './appHostCliContracts';
 import { normalizeResourceCommandStatusLine } from './resourceCommandStatusOutput';
+import { CliPathResolutionTarget, windowCliPathTarget } from '../utils/cliPathVariables';
 
 export const oneShotOutputBufferLimit = 64 * 1024;
 
@@ -15,6 +16,7 @@ export interface RunCliCommandOptions {
     stdoutBufferLimit?: number | null;
     cancellationToken?: vscode.CancellationToken;
     env?: { name: string; value: string }[];
+    target?: CliPathResolutionTarget;
 }
 
 export class AppHostCliRunner implements vscode.Disposable {
@@ -66,7 +68,7 @@ export class AppHostCliRunner implements vscode.Disposable {
     }
 
     async runCliCommand(command: string, args: string[], options: RunCliCommandOptions = {}): Promise<{ stdout: string; stderr: string }> {
-        const cliPath = await this._terminalProvider.getAspireCliExecutablePath().catch(error => {
+        const cliPath = await this._terminalProvider.getAspireCliExecutablePath(options.target ?? windowCliPathTarget).catch(error => {
             throw new AspireCliNotInstalledError(String(error));
         });
 

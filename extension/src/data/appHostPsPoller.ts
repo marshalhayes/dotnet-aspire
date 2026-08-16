@@ -5,6 +5,7 @@ import { AspireTerminalProvider } from '../utils/AspireTerminalProvider';
 import { extensionLogOutputChannel } from '../utils/logging';
 import { errorFetchingAppHosts } from '../loc/strings';
 import { AppHostCliRunner, LimitedOutputBuffer, oneShotOutputBufferLimit } from './appHostCliRunner';
+import { windowCliPathTarget } from '../utils/cliPathVariables';
 
 export interface PsOutput {
     readonly stdout: string;
@@ -141,7 +142,7 @@ export class AppHostPsPoller implements vscode.Disposable {
         this._psFollowStartPending = true;
         let cliPath: string;
         try {
-            cliPath = await this._terminalProvider.getAspireCliExecutablePath();
+            cliPath = await this._terminalProvider.getAspireCliExecutablePath(windowCliPathTarget);
         } catch (error) {
             if (this._isCurrentPsFetch(fetchVersion)) {
                 this._psFollowStartPending = false;
@@ -329,7 +330,7 @@ export class AppHostPsPoller implements vscode.Disposable {
 
         let cliPath: string;
         try {
-            cliPath = await this._terminalProvider.getAspireCliExecutablePath();
+            cliPath = await this._terminalProvider.getAspireCliExecutablePath(windowCliPathTarget);
         } catch (error) {
             if (isCurrentPsCommand()) {
                 const rawErrorMessage = String(error);

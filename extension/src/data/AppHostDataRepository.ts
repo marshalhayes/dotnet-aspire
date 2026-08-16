@@ -17,6 +17,7 @@ import { AppHostCliRunner, isDescribeUnsupportedOutput, isIncludeDisabledCommand
 import { isMatchingAppHostInstance, isMatchingAppHostPath, isPathInWorkspace } from './appHostPathMatching';
 import { AppHostPsPoller } from './appHostPsPoller';
 import { filterResourceCommandStatusOutput } from './resourceCommandStatusOutput';
+import { getCliPathTargetForUri } from '../utils/cliPathVariables';
 
 export * from './appHostCliContracts';
 export { shortenPath, shortenPaths };
@@ -93,13 +94,6 @@ export class AppHostDataRepository {
     private _openAppHostPaths: readonly string[] = [];
     private _hasEverBeenDataActive = false;
 
-    // ── Workspace mode state (describe --follow) ──
-    // Whether `aspire describe` accepts the hidden `--include-disabled-commands` flag. Resolved
-    // lazily from the CLI's advertised capabilities (`aspire config info --json`) so we don't pass
-    // the flag to an older CLI that would reject it and emit no resource data. Starts optimistic so
-    // that, if capability resolution fails (e.g. a CLI too old to support `config info`), we still
-    // attempt the flag and rely on the locale-independent no-data fallback below.
-    private _includeDisabledCommandsSupported = true;
     private readonly _configInfoProvider: ConfigInfoProvider;
 
     // ── Running AppHost state (ps polling) ──
@@ -198,12 +192,6 @@ export class AppHostDataRepository {
                 this._psPoller.startPsPolling();
             }
         });
-        // Kick off the CLI capability probe eagerly (fire-and-forget) so the cached describe gate is
-        // ready by the time a describe stream starts. We must NOT await capabilities on the describe
-        // start path: an await there would reorder the describe spawn after other streams (e.g. ps)
-        // and change observable process ordering. Until the probe resolves we use the optimistic
-        // default and the per-stream no-data fallback corrects a stale CLI.
-        void this._resolveDescribeCapability();
     }
 
     // ── Public accessors ──
@@ -963,21 +951,6 @@ export class AppHostDataRepository {
     // ── describe --follow ──
 
     /**
-     * Reads the CLI's advertised capabilities and maps the describe `--include-disabled-commands`
-     * capability onto {@link _includeDisabledCommandsSupported}. Best-effort: on a missing/older CLI
-     * the optimistic default and per-stream no-data fallback still cover us.
-     */
-    private async _resolveDescribeCapability(): Promise<void> {
-        const configInfo = await this._configInfoProvider.getConfigInfo({ suppressErrors: true });
-        if (this._disposed || !configInfo) {
-            return;
-        }
-
-        this._includeDisabledCommandsSupported = configInfo.capabilities?.includes(describeIncludeDisabledCommandsCapability) ?? false;
-        extensionLogOutputChannel.info(`CLI capability '${describeIncludeDisabledCommandsCapability}' ${this._includeDisabledCommandsSupported ? 'advertised' : 'not advertised'}; describe --include-disabled-commands ${this._includeDisabledCommandsSupported ? 'enabled' : 'disabled'}.`);
-    }
-
-    /**
      * Starts a single `aspire describe --follow --apphost <path>` stream, held in
      * {@link _describeStreams} keyed by `appHostPath`. Every stream is an equal peer for resource
      * population: it merges its resources into `appHost.resources` and, while its host remains in
@@ -1014,144 +987,38 @@ export class AppHostDataRepository {
         };
         this._describeStreams.set(appHostPath, stream);
         const startVersion = ++stream.version;
+        const target = getCliPathTargetForUri(vscode.Uri.file(appHostPath));
 
-        this._terminalProvider.getAspireCliExecutablePath().then(cliPath => {
+        this._terminalProvider.getAspireCliExecutablePath(target).then(async cliPath => {
             if (this._disposed || this._describeStreams.get(appHostPath) !== stream || startVersion !== stream.version) {
                 return;
             }
 
-            // Read the cached capability synchronously — see constructor for why we don't await here.
-            const includeDisabledCommands = forceIncludeDisabledCommands ?? this._includeDisabledCommandsSupported;
+            // The capability is a property of the CLI this AppHost resolves to, not of the window: a
+            // multi-root workspace can point each folder at a different aspire.cliPath, so a single
+            // eagerly-probed flag would describe the wrong CLI. Probing per stream is safe to await
+            // because the resolved value now travels with the stream — the retry paths below pass the
+            // decision they already made rather than re-reading shared state that another stream
+            // could have changed underneath them.
+            const configInfo = await this._configInfoProvider.getConfigInfo({
+                suppressErrors: true,
+                cliPath,
+                target,
+            });
+            if (this._disposed || this._describeStreams.get(appHostPath) !== stream || startVersion !== stream.version) {
+                return;
+            }
+
+            const includeDisabledCommands = forceIncludeDisabledCommands
+                ?? configInfo?.capabilities?.includes(describeIncludeDisabledCommandsCapability)
+                ?? false;
             const args = this._cliRunner.withNoLogo(['describe', '--follow', '--format', 'json']);
             if (includeDisabledCommands) {
                 args.push('--include-disabled-commands');
             }
             args.push('--apphost', appHostPath);
 
-            extensionLogOutputChannel.info(`Starting aspire describe --follow (--apphost ${appHostPath})`);
-
-            stream.receivedData = false;
-            const describeProcess = spawnCliProcess(this._terminalProvider, cliPath, args, {
-                createProcessGroup: true,
-                noExtensionVariables: true,
-                lineCallback: (line) => {
-                    if (this._describeStreams.get(appHostPath) !== stream || stream.process !== describeProcess) {
-                        return;
-                    }
-                    const handled = this._handleDescribeLine(stream, line);
-                    if (!handled && stream.nonJsonLines.length < 20) {
-                        stream.nonJsonLines.push(line);
-                    }
-                },
-                stderrCallback: (data) => {
-                    if (this._describeStreams.get(appHostPath) !== stream || stream.process !== describeProcess) {
-                        return;
-                    }
-                    extensionLogOutputChannel.warn(`aspire describe --follow (--apphost ${appHostPath}) stderr: ${data}`);
-                    if (stream.stderr.length < 4000) {
-                        stream.stderr += data;
-                    }
-                },
-                exitCallback: (code) => {
-                    if (this._describeStreams.get(appHostPath) !== stream || stream.process !== describeProcess) {
-                        return;
-                    }
-
-                    extensionLogOutputChannel.info(`aspire describe --follow (--apphost ${appHostPath}) exited with code ${code}`);
-                    stream.process = undefined;
-
-                    if (this._disposed) {
-                        return;
-                    }
-
-                    if (code !== 0 && this._cliRunner.disableNoLogoForRetry(args, stream.nonJsonLines.join('\n'), stream.stderr, `aspire describe --follow --apphost ${appHostPath}`)) {
-                        this._describeStreams.delete(appHostPath);
-                        this._startDescribe(appHostPath, forceIncludeDisabledCommands);
-                        return;
-                    }
-
-                    // Capability fallback: a CLI too old to accept `--include-disabled-commands` exits
-                    // without data. Retry once without the flag.
-                    if (includeDisabledCommands && !stream.receivedData && isIncludeDisabledCommandsUnsupportedOutput(stream.nonJsonLines, stream.stderr)) {
-                        this._includeDisabledCommandsSupported = false;
-                        this._describeStreams.delete(appHostPath);
-                        this._startDescribe(appHostPath, false);
-                        return;
-                    }
-
-                    // Host no longer running: drop the stream silently (the app stopped — not an error).
-                    if (!this._appHosts.some(appHost => isMatchingAppHostPath(appHost.appHostPath, appHostPath))) {
-                        stream.resources.clear();
-                        this._describeStreams.delete(appHostPath);
-                        this._attachResourcesToAppHosts();
-                        this._onDidChangeData.fire();
-                        return;
-                    }
-
-                    // ps is the authority on whether the host stopped, so a describe stream exiting
-                    // does not necessarily indicate the host has stopped.
-                    if (stream.receivedData) {
-                        extensionLogOutputChannel.info(`aspire describe --follow (--apphost ${appHostPath}) exited (code ${code}) after producing data; restarting.`);
-                    } else {
-                        // A stream that never produced resources and exits (cleanly or with an error) means
-                        // the CLI cannot describe the host. A CLI-wide compatibility problem (the installed
-                        // CLI is too old to `describe` at all) may be surfaced by any peer, since it's a fact
-                        // about the CLI. A host-scoped no-data error belongs to the selected workspace
-                        // AppHost, so a non-selected peer never surfaces one and can't masquerade as the
-                        // selected host's error.
-                        extensionLogOutputChannel.warn(`aspire describe --follow (--apphost ${appHostPath}) exited (code ${code}) without producing data.`);
-                        if (isMatchingAppHostPath(appHostPath, this._workspaceAppHostPath) || isDescribeUnsupportedOutput(stream.nonJsonLines, stream.stderr)) {
-                            const noDataError = this._getDescribeNoDataError(code, stream.nonJsonLines, stream.stderr);
-                            if (noDataError.message) {
-                                this._setDescribeError(noDataError.message, {
-                                    compatibility: noDataError.isCompatibilityError,
-                                    cliWide: noDataError.isCliWideError,
-                                    appHostPath: noDataError.isCliWideError ? undefined : appHostPath,
-                                });
-                            }
-                        }
-                    }
-
-                    stream.resources.clear();
-                    this._attachResourcesToAppHosts();
-                    this._onDidChangeData.fire();
-                    this._scheduleDescribeRestart(appHostPath, stream);
-                    this._psPoller.refreshAppHostsFromAuthoritativeSnapshot();
-                },
-                errorCallback: (error) => {
-                    if (this._describeStreams.get(appHostPath) !== stream || stream.process !== describeProcess) {
-                        return;
-                    }
-
-                    if (this._disposed) {
-                        return;
-                    }
-
-                    // Spawn/stream error (as opposed to a clean exit). Only the selected workspace AppHost
-                    // surfaces it through the shared describe banner; a non-selected peer is logged only so it
-                    // can't masquerade as the selected host's error.
-                    extensionLogOutputChannel.warn(`aspire describe --follow --apphost ${appHostPath} error: ${error.message}`);
-                    stream.process = undefined;
-                    stream.resources.clear();
-                    if (isMatchingAppHostPath(appHostPath, this._workspaceAppHostPath)) {
-                        this._setDescribeError(errorFetchingAppHosts(error.message), { appHostPath });
-                    }
-
-                    // Host no longer running: drop the stream silently
-                    if (!this._appHosts.some(appHost => isMatchingAppHostPath(appHost.appHostPath, appHostPath))) {
-                        this._describeStreams.delete(appHostPath);
-                        this._attachResourcesToAppHosts();
-                        this._onDidChangeData.fire();
-                        return;
-                    }
-
-                    this._attachResourcesToAppHosts();
-                    this._onDidChangeData.fire();
-                    this._scheduleDescribeRestart(appHostPath, stream);
-                    this._psPoller.refreshAppHostsFromAuthoritativeSnapshot();
-                }
-            });
-            stream.process = describeProcess;
+            this._startResolvedDescribeProcess(stream, startVersion, cliPath, args);
         }).catch(error => {
             if (this._disposed || this._describeStreams.get(appHostPath) !== stream || startVersion !== stream.version) {
                 return;
@@ -1165,6 +1032,139 @@ export class AppHostDataRepository {
                 this._setDescribeError(errorFetchingAppHosts(String(error)), { appHostPath });
             }
         });
+    }
+
+    private _startResolvedDescribeProcess(stream: DescribeStream, startVersion: number, cliPath: string, args: string[]): void {
+        const appHostPath = stream.appHostPath;
+        if (this._disposed || this._describeStreams.get(appHostPath) !== stream || startVersion !== stream.version) {
+            return;
+        }
+
+        const includeDisabledCommands = args.includes('--include-disabled-commands');
+
+        extensionLogOutputChannel.info(`Starting aspire describe --follow (--apphost ${appHostPath})`);
+
+        stream.receivedData = false;
+        const describeProcess = spawnCliProcess(this._terminalProvider, cliPath, args, {
+            createProcessGroup: true,
+            noExtensionVariables: true,
+            lineCallback: (line) => {
+                if (this._describeStreams.get(appHostPath) !== stream || stream.process !== describeProcess) {
+                    return;
+                }
+                const handled = this._handleDescribeLine(stream, line);
+                if (!handled && stream.nonJsonLines.length < 20) {
+                    stream.nonJsonLines.push(line);
+                }
+            },
+            stderrCallback: (data) => {
+                if (this._describeStreams.get(appHostPath) !== stream || stream.process !== describeProcess) {
+                    return;
+                }
+                extensionLogOutputChannel.warn(`aspire describe --follow (--apphost ${appHostPath}) stderr: ${data}`);
+                if (stream.stderr.length < 4000) {
+                    stream.stderr += data;
+                }
+            },
+            exitCallback: (code) => {
+                if (this._describeStreams.get(appHostPath) !== stream || stream.process !== describeProcess) {
+                    return;
+                }
+
+                extensionLogOutputChannel.info(`aspire describe --follow (--apphost ${appHostPath}) exited with code ${code}`);
+                stream.process = undefined;
+
+                if (this._disposed) {
+                    return;
+                }
+
+                if (code !== 0 && this._cliRunner.disableNoLogoForRetry(args, stream.nonJsonLines.join('\n'), stream.stderr, `aspire describe --follow --apphost ${appHostPath}`)) {
+                    this._describeStreams.delete(appHostPath);
+                    this._startDescribe(appHostPath, includeDisabledCommands);
+                    return;
+                }
+
+                // Capability fallback: a CLI too old to accept `--include-disabled-commands` exits
+                // without data. Retry once without the flag.
+                if (includeDisabledCommands && !stream.receivedData && isIncludeDisabledCommandsUnsupportedOutput(stream.nonJsonLines, stream.stderr)) {
+                    this._describeStreams.delete(appHostPath);
+                    this._startDescribe(appHostPath, false);
+                    return;
+                }
+
+                // Host no longer running: drop the stream silently (the app stopped — not an error).
+                if (!this._appHosts.some(appHost => isMatchingAppHostPath(appHost.appHostPath, appHostPath))) {
+                    stream.resources.clear();
+                    this._describeStreams.delete(appHostPath);
+                    this._attachResourcesToAppHosts();
+                    this._onDidChangeData.fire();
+                    return;
+                }
+
+                // ps is the authority on whether the host stopped, so a describe stream exiting
+                // does not necessarily indicate the host has stopped.
+                if (stream.receivedData) {
+                    extensionLogOutputChannel.info(`aspire describe --follow (--apphost ${appHostPath}) exited (code ${code}) after producing data; restarting.`);
+                } else {
+                    // A stream that never produced resources and exits (cleanly or with an error) means
+                    // the CLI cannot describe the host. A CLI-wide compatibility problem (the installed
+                    // CLI is too old to `describe` at all) may be surfaced by any peer, since it's a fact
+                    // about the CLI. A host-scoped no-data error belongs to the selected workspace
+                    // AppHost, so a non-selected peer never surfaces one and can't masquerade as the
+                    // selected host's error.
+                    extensionLogOutputChannel.warn(`aspire describe --follow (--apphost ${appHostPath}) exited (code ${code}) without producing data.`);
+                    if (isMatchingAppHostPath(appHostPath, this._workspaceAppHostPath) || isDescribeUnsupportedOutput(stream.nonJsonLines, stream.stderr)) {
+                        const noDataError = this._getDescribeNoDataError(code, stream.nonJsonLines, stream.stderr);
+                        if (noDataError.message) {
+                            this._setDescribeError(noDataError.message, {
+                                compatibility: noDataError.isCompatibilityError,
+                                cliWide: noDataError.isCliWideError,
+                                appHostPath: noDataError.isCliWideError ? undefined : appHostPath,
+                            });
+                        }
+                    }
+                }
+
+                stream.resources.clear();
+                this._attachResourcesToAppHosts();
+                this._onDidChangeData.fire();
+                this._scheduleDescribeRestart(appHostPath, stream);
+                this._psPoller.refreshAppHostsFromAuthoritativeSnapshot();
+            },
+            errorCallback: (error) => {
+                if (this._describeStreams.get(appHostPath) !== stream || stream.process !== describeProcess) {
+                    return;
+                }
+
+                if (this._disposed) {
+                    return;
+                }
+
+                // Spawn/stream error (as opposed to a clean exit). Only the selected workspace AppHost
+                // surfaces it through the shared describe banner; a non-selected peer is logged only so it
+                // can't masquerade as the selected host's error.
+                extensionLogOutputChannel.warn(`aspire describe --follow --apphost ${appHostPath} error: ${error.message}`);
+                stream.process = undefined;
+                stream.resources.clear();
+                if (isMatchingAppHostPath(appHostPath, this._workspaceAppHostPath)) {
+                    this._setDescribeError(errorFetchingAppHosts(error.message), { appHostPath });
+                }
+
+                // Host no longer running: drop the stream silently
+                if (!this._appHosts.some(appHost => isMatchingAppHostPath(appHost.appHostPath, appHostPath))) {
+                    this._describeStreams.delete(appHostPath);
+                    this._attachResourcesToAppHosts();
+                    this._onDidChangeData.fire();
+                    return;
+                }
+
+                this._attachResourcesToAppHosts();
+                this._onDidChangeData.fire();
+                this._scheduleDescribeRestart(appHostPath, stream);
+                this._psPoller.refreshAppHostsFromAuthoritativeSnapshot();
+            }
+        });
+        stream.process = describeProcess;
     }
 
     private _scheduleDescribeRestart(appHostPath: string, stream: DescribeStream): void {

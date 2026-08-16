@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import { EventEmitter } from 'events';
 import { AppHostCliRunner, isDescribeUnsupportedOutput } from '../data/appHostCliRunner';
 import { AspireTerminalProvider } from '../utils/AspireTerminalProvider';
+import { workspaceFolderCliPathTarget } from '../utils/cliPathVariables';
 import * as cliModule from '../utils/process/cliProcess';
 
 class TestChildProcess extends EventEmitter {
@@ -66,6 +67,31 @@ suite('data/appHostCliRunner tests', () => {
 
             assert.strictEqual(terminateStub.callCount, 0, 'disposing the runner must not terminate an already-completed process');
             assert.strictEqual(cliProcess.killed, false);
+        });
+
+        test('resolves a one-shot command with its supplied workspace target', async () => {
+            const folder: vscode.WorkspaceFolder = {
+                uri: vscode.Uri.file('/workspace'),
+                name: 'workspace',
+                index: 0,
+            };
+            const target = workspaceFolderCliPathTarget(folder);
+            const cliProcess = new TestChildProcess();
+            spawnStub.callsFake((_provider: unknown, _cliPath: string, _args: string[], options: cliModule.SpawnProcessOptions) => {
+                cliProcess.exitCode = 0;
+                options.exitCallback?.(0);
+                return cliProcess;
+            });
+
+            const runner = new AppHostCliRunner(terminalProvider);
+            try {
+                const options = { timeoutMs: undefined, target };
+                await runner.runCliCommand('describe', ['describe'], options);
+
+                assert.strictEqual(getCliPathStub.calledOnceWithExactly(target), true);
+            } finally {
+                runner.dispose();
+            }
         });
 
         test('tracks a one-shot process that is still running so it can be stopped', async () => {

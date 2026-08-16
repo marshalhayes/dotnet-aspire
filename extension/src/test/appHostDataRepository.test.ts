@@ -14,6 +14,7 @@ import * as cliModule from '../utils/process/cliProcess';
 import * as configInfoProvider from '../utils/configInfoProvider';
 import { describeIncludeDisabledCommandsCapability, lsJsonStreamCapability } from '../types/configInfo';
 import { errorFetchingAppHosts } from '../loc/strings';
+import { windowCliPathTarget, workspaceFolderCliPathTarget } from '../utils/cliPathVariables';
 
 class TestChildProcess extends EventEmitter {
     stdout = new PassThrough();
@@ -1000,6 +1001,104 @@ suite('AppHostDataRepository', () => {
         repository.dispose();
     });
 
+    test('describe resolves the CLI and capabilities from the AppHost URI owner', async () => {
+        const folder: vscode.WorkspaceFolder = {
+            uri: vscode.Uri.file('/workspace'),
+            name: 'workspace',
+            index: 0,
+        };
+        const target = workspaceFolderCliPathTarget(folder);
+        const getWorkspaceFolderStub = sinon.stub(vscode.workspace, 'getWorkspaceFolder')
+            .callsFake(uri => uri.fsPath.startsWith(folder.uri.fsPath) ? folder : undefined);
+        getCliPathStub.callsFake(async resolutionTarget => resolutionTarget?.kind === 'workspaceFolder'
+            ? '/workspace/bin/aspire'
+            : '/global/bin/aspire');
+
+        const repository = new AppHostDataRepository(terminalProvider);
+
+        try {
+            repository.activate();
+            repository.setPanelVisible(true);
+            repository.setAppHostFilesOpen(['/workspace/AppHost.csproj']);
+            await waitForMicrotasks();
+            const describeCall = await startDescribeForRunningAppHost('/workspace/AppHost.csproj');
+
+            assert.strictEqual(getCliPathStub.calledWithExactly(target), true);
+            assert.strictEqual(describeCall.args[1], '/workspace/bin/aspire');
+            assert.strictEqual(getConfigInfoStub.calledWithMatch({
+                suppressErrors: true,
+                cliPath: '/workspace/bin/aspire',
+                target,
+            }), true);
+        } finally {
+            repository.dispose();
+            getWorkspaceFolderStub.restore();
+        }
+    });
+
+    test('describe capabilities are isolated by each AppHost concrete CLI', async () => {
+        const folderA: vscode.WorkspaceFolder = {
+            uri: vscode.Uri.file('/workspace/a'),
+            name: 'a',
+            index: 0,
+        };
+        const folderB: vscode.WorkspaceFolder = {
+            uri: vscode.Uri.file('/workspace/b'),
+            name: 'b',
+            index: 1,
+        };
+        const appHostA = path.join(folderA.uri.fsPath, 'AppHost.csproj');
+        const appHostB = path.join(folderB.uri.fsPath, 'AppHost.csproj');
+        const getWorkspaceFolderStub = sinon.stub(vscode.workspace, 'getWorkspaceFolder').callsFake(uri => {
+            if (uri.fsPath.startsWith(folderA.uri.fsPath)) {
+                return folderA;
+            }
+            if (uri.fsPath.startsWith(folderB.uri.fsPath)) {
+                return folderB;
+            }
+            return undefined;
+        });
+        getCliPathStub.callsFake(async target => target?.kind === 'workspaceFolder'
+            ? `/cli/${target.workspaceFolder.name}/aspire`
+            : '/cli/global/aspire');
+        getConfigInfoStub.callsFake(async options => ({
+            capabilities: options?.cliPath === '/cli/a/aspire'
+                ? [describeIncludeDisabledCommandsCapability]
+                : [],
+        } as any));
+        const repository = new AppHostDataRepository(terminalProvider);
+
+        try {
+            repository.activate();
+            repository.setViewMode('global');
+            repository.setPanelVisible(true);
+            await waitForMicrotasks();
+            const psCall = spawnStub.getCalls().find(call => {
+                const args = call.args[2] as string[];
+                return args[0] === 'ps' && args.includes('--follow');
+            });
+            assert.ok(psCall, 'expected an aspire ps --follow watch to be running');
+
+            psCall.args[3].lineCallback(JSON.stringify({ appHostPath: appHostA, appHostPid: 1 }));
+            psCall.args[3].lineCallback(JSON.stringify({ appHostPath: appHostB, appHostPid: 2 }));
+            await waitForCondition(() => spawnStub.getCalls().filter(call => (call.args[2] as string[])[0] === 'describe').length === 2,
+                'expected a describe stream for each AppHost');
+
+            const describeCalls = spawnStub.getCalls().filter(call => (call.args[2] as string[])[0] === 'describe');
+            const describeA = describeCalls.find(call => (call.args[2] as string[]).includes(appHostA));
+            const describeB = describeCalls.find(call => (call.args[2] as string[]).includes(appHostB));
+            assert.ok(describeA);
+            assert.ok(describeB);
+            assert.strictEqual(describeA.args[1], '/cli/a/aspire');
+            assert.strictEqual((describeA.args[2] as string[]).includes('--include-disabled-commands'), true);
+            assert.strictEqual(describeB.args[1], '/cli/b/aspire');
+            assert.strictEqual((describeB.args[2] as string[]).includes('--include-disabled-commands'), false);
+        } finally {
+            repository.dispose();
+            getWorkspaceFolderStub.restore();
+        }
+    });
+
     test('describe omits disabled command flag when CLI does not advertise the capability', async () => {
         // A CLI that responds to `config info` but doesn't list the capability is authoritative:
         // we must not pass the flag at all (no optimistic attempt, no error-text parsing).
@@ -1670,9 +1769,9 @@ suite('AppHostDataRepository', () => {
         }
     });
 
-    test('describe optimistically sends disabled command flag when capabilities cannot be read', async () => {
-        // If `config info` can't be read (e.g. a CLI too old to support it) we keep the optimistic
-        // default so newer-but-unprobeable CLIs still get the flag; the no-data fallback protects us.
+    test('describe omits disabled command flag when capabilities cannot be read', async () => {
+        // Only an advertised capability enables the hidden flag. A missing config-info response
+        // cannot establish support for the concrete CLI used by this stream.
         getConfigInfoStub.resolves(null);
 
         const repository = new AppHostDataRepository(terminalProvider);
@@ -1698,7 +1797,7 @@ suite('AppHostDataRepository', () => {
             describeCall = spawnStub.getCalls().find(call => (call.args[2] as string[])[0] === 'describe');
             return describeCall !== undefined;
         }, 'expected a describe stream to start');
-        assert.deepStrictEqual(describeCall!.args[2], ['describe', '--follow', '--format', 'json', '--nologo', '--include-disabled-commands', '--apphost', '/workspace/AppHost.csproj']);
+        assert.deepStrictEqual(describeCall!.args[2], ['describe', '--follow', '--format', 'json', '--nologo', '--apphost', '/workspace/AppHost.csproj']);
 
         repository.dispose();
     });
@@ -5891,6 +5990,25 @@ suite('AppHostDataRepository global polling', () => {
         assert.strictEqual(childProcess.killed, true);
 
         repository.dispose();
+    });
+
+    test('global ps follow and one-shot refresh resolve with the window target', async () => {
+        const repository = new AppHostDataRepository(terminalProvider);
+
+        try {
+            repository.activate();
+            repository.setViewMode('global');
+            repository.setPanelVisible(true);
+            await waitForCondition(() => getCliPathStub.callCount >= 1, 'global ps follow did not resolve the CLI');
+
+            repository.refresh();
+            await waitForCondition(() => getCliPathStub.callCount >= 2, 'global one-shot ps did not resolve the CLI');
+
+            assert.deepStrictEqual(getCliPathStub.firstCall.args, [windowCliPathTarget]);
+            assert.deepStrictEqual(getCliPathStub.secondCall.args, [windowCliPathTarget]);
+        } finally {
+            repository.dispose();
+        }
     });
 
     test('switching into global view while ps is already polling clears the loading spinner', async () => {
