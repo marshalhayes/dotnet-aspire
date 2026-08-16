@@ -75,7 +75,9 @@ jobs:
     name: VS Code extension E2E (${{ matrix.name }}, ${{ matrix.shardName }})
     needs: verify_extester_feed
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 75
+    # The Java AppHost shard imports a multi-project Gradle build and then runs the whole
+    # application under a debugger, so it needs more than the shared budget.
+    timeout-minutes: ${{ matrix.timeoutMinutes || 75 }}
     env:
       NPM_REGISTRY: https://pkgs.dev.azure.com/dnceng/public/_packaging/dotnet-public-npm/npm/registry/
       COREPACK_ENABLE_DOWNLOAD_PROMPT: 0
@@ -256,6 +258,8 @@ jobs:
             archivePattern: aspire-cli-linux-x64*.tar.gz
             cliBinary: aspire
             useXvfb: true
+            installJava: true
+            timeoutMinutes: 110
           - name: Linux
             shardName: java-codelens
             spec: out/test-e2e/test-e2e/javaCodeLens.e2e.test.js
@@ -264,6 +268,7 @@ jobs:
             archivePattern: aspire-cli-linux-x64*.tar.gz
             cliBinary: aspire
             useXvfb: true
+            installJava: true
           - name: Linux
             shardName: edge-cases
             spec: out/test-e2e/test-e2e/edgeCases.e2e.test.js
@@ -433,6 +438,56 @@ jobs:
             echo "ASPIRE_EXTENSION_E2E_AZURE_FUNCTIONS_VSIX=$azure_functions_vsix"
             echo 'FUNCTIONS_CORE_TOOLS_TELEMETRY_OPTOUT=1'
           } >> "$GITHUB_ENV"
+
+      - name: Set up the JDK for the Java E2E specs
+        if: ${{ matrix.installJava }}
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          # The CLI compiles a scaffolded Java AppHost with `javac --release 25`, because the AppHost
+          # uses an instance main method in an implicitly declared class (JEP 512, finalized in 25).
+          # Hosted runner images ship 17 and 21, so neither the AppHost nor the playground's Gradle
+          # toolchain resolves without this.
+          java-version: '25'
+
+      - name: Install Java E2E prerequisites
+        if: ${{ matrix.installJava }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # The E2E VS Code instance runs offline, and the extension only advertises the `java`
+          # capability - which is what makes the CLI hand a Java AppHost back to the extension to
+          # launch and debug, instead of spawning `java` itself - when redhat.java and
+          # vscjava.vscode-java-debug are both installed. vscode-java-dependency is a hard activation
+          # dependency of the debug extension. Versions and digests are pinned so a marketplace
+          # release cannot change what these shards are testing.
+          #
+          # redhat.java also publishes platform-specific builds that embed a JRE; the universal build
+          # is a third of the size and runs on the JDK installed above.
+          java_language_vsix="$RUNNER_TEMP/redhat-java-1.55.0.vsix"
+          curl --fail --location --compressed --retry 3 --retry-all-errors \
+            --output "$java_language_vsix" \
+            'https://marketplace.visualstudio.com/_apis/public/gallery/publishers/redhat/vsextensions/java/1.55.0/vspackage'
+          echo '011639c3ee347b9591895bfc77d8cf28f836c053d0a49ae4a83efe9dc473a603  '"$java_language_vsix" | sha256sum --check -
+
+          java_debug_vsix="$RUNNER_TEMP/vscjava-vscode-java-debug-0.59.0.vsix"
+          curl --fail --location --compressed --retry 3 --retry-all-errors \
+            --output "$java_debug_vsix" \
+            'https://marketplace.visualstudio.com/_apis/public/gallery/publishers/vscjava/vsextensions/vscode-java-debug/0.59.0/vspackage'
+          echo 'e5973fcd763a984ea4d6e57644ccf8f5fe6caa80c0e589f29403f00c9ace3920  '"$java_debug_vsix" | sha256sum --check -
+
+          java_dependency_vsix="$RUNNER_TEMP/vscjava-vscode-java-dependency-0.27.6.vsix"
+          curl --fail --location --compressed --retry 3 --retry-all-errors \
+            --output "$java_dependency_vsix" \
+            'https://marketplace.visualstudio.com/_apis/public/gallery/publishers/vscjava/vsextensions/vscode-java-dependency/0.27.6/vspackage'
+          echo 'e4e7c8b90953e62c8ebcedaaafb88b3c42ddec3fcc9e37f268ac3203427d9fa0  '"$java_dependency_vsix" | sha256sum --check -
+
+          {
+            echo "ASPIRE_EXTENSION_E2E_JAVA_VSIX=$java_language_vsix:$java_debug_vsix:$java_dependency_vsix"
+          } >> "$GITHUB_ENV"
+
+          java -version
 
       - name: Prepare Aspire CLI and package hive
         id: prepare_cli

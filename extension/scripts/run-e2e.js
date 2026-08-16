@@ -36,6 +36,23 @@ const requestedTempRoot = verifyExtesterFeedOnly ? '' : process.env.ASPIRE_EXTEN
 // why `prepareRunDirectories` is a function rather than a module-scope block.
 const testSpec = process.env.ASPIRE_EXTENSION_E2E_SPEC || 'out/test-e2e/**/*.e2e.test.js';
 const matchedTestSpecs = verifyExtesterFeedOnly ? [] : findSpecMatches(testSpec);
+// Java specs need the Java language server and the Java debug adapter (neither of which Aspire
+// ships) and a Java workspace in place of the scaffolded C# one, so they cannot share a run with
+// the other specs. Which specs are running is the whole requirement, so it is read off them rather
+// than from an opt-in variable: as an opt-in, both Java shards ran in CI with nothing setting it,
+// skipped every test, and reported green.
+//
+// ASPIRE_EXTENSION_E2E_ENABLE_JAVA remains as an explicit override for running a Java spec through
+// a glob, or for forcing the Java workspace off while debugging the runner.
+const enableJavaE2E = process.env.ASPIRE_EXTENSION_E2E_ENABLE_JAVA
+  ? process.env.ASPIRE_EXTENSION_E2E_ENABLE_JAVA === 'true'
+  : matchedTestSpecs.length > 0 && matchedTestSpecs.every(isJavaSpecPath);
+// redhat.java supplies the language server, which is what produces workspace diagnostics and the
+// classpath the debug adapter launches against. vscjava.vscode-java-debug supplies the `java` debug
+// adapter the Aspire debugger delegates to, and vscjava.vscode-java-dependency is a hard activation
+// dependency of it. capabilities.ts only advertises the `java` capability - which is what makes the
+// CLI hand the AppHost launch back to the extension - when the first two are both installed.
+const REQUIRED_JAVA_EXTENSION_IDS = ['redhat.java', 'vscjava.vscode-java-debug', 'vscjava.vscode-java-dependency'];
 const extesterVersion = extensionPackageJson.devDependencies?.['vscode-extension-tester'];
 if (!extesterVersion) {
   throw new Error('vscode-extension-tester must be pinned in extension/package.json devDependencies.');
@@ -71,7 +88,7 @@ const extensionsDir = path.join(shortRunRoot, 'extensions');
 const javaScratchWorkspaceRoot = path.join(extensionRoot, 'java-e2e-workspace');
 const workspaceRoot = process.env.ASPIRE_EXTENSION_E2E_WORKSPACE_ROOT
   ? path.resolve(process.env.ASPIRE_EXTENSION_E2E_WORKSPACE_ROOT)
-  : process.env.ASPIRE_EXTENSION_E2E_ENABLE_JAVA === 'true'
+  : enableJavaE2E
     ? javaScratchWorkspaceRoot
     : path.join(shortRunRoot, 'workspace');
 const workspaceMarkerFile = path.join(workspaceRoot, '.aspire-extension-e2e-workspace');
@@ -108,9 +125,6 @@ const COMMAND_INERT_PATH_ALPHABET = isWindows ? '._-+@~:\\/' : '._-+,=:@%/';
 const primaryAppHostProject = path.join(workspaceRoot, 'AspireE2E.AppHost', 'AspireE2E.AppHost.csproj');
 const workspaceNuGetConfigPath = path.join(workspaceRoot, 'NuGet.config');
 const enableAzureFunctionsE2E = process.env.ASPIRE_EXTENSION_E2E_ENABLE_AZURE_FUNCTIONS === 'true';
-// Java specs need the Java language server and the Java debug adapter, neither of which Aspire
-// ships. They are opt-in because they add a multi-minute workspace import to every run.
-const enableJavaE2E = process.env.ASPIRE_EXTENSION_E2E_ENABLE_JAVA === 'true';
 const advisoryIssue = process.env.ASPIRE_EXTENSION_E2E_ADVISORY_ISSUE || '';
 let cliPathForCleanup;
 const csharpFileHeader = `// Licensed to the .NET Foundation under one or more agreements.
@@ -292,9 +306,21 @@ function logE2eConfiguration() {
   console.log(`  download cache: ${downloadCacheRoot}`);
   console.log(`  current CLI regressions: ${process.env.ASPIRE_EXTENSION_E2E_SKIP_CURRENT_CLI_REGRESSIONS === 'true' ? 'skipped' : 'included'}`);
   console.log(`  Azure Functions: ${enableAzureFunctionsE2E ? 'enabled' : 'disabled'}`);
+  console.log(`  Java: ${enableJavaE2E ? 'enabled' : 'disabled'}`);
   console.log(`  results: ${path.relative(extensionRoot, resultsDir)}`);
   console.log(`  storage diagnostics: ${path.relative(extensionRoot, storageDiagnosticsDir)}`);
   console.log(`  workspace diagnostics: ${path.relative(extensionRoot, workspaceDiagnosticsDir)}`);
+}
+
+/**
+ * Reports whether a compiled spec file belongs to the Java suites.
+ *
+ * Naming is the contract: every Java spec is `java*.e2e.test.js`, which is also what the workflow's
+ * `java-*` shards point at. Matching on the file name rather than a hard-coded list means a new
+ * Java spec is picked up by adding the shard, with nothing else to remember.
+ */
+function isJavaSpecPath(specPath) {
+  return path.basename(specPath).toLowerCase().startsWith('java');
 }
 
 function logStep(name) {
@@ -607,7 +633,6 @@ async function main() {
       ASPIRE_EXTENSION_E2E_APPHOST_SDK_VERSION: appHostSdkVersion,
       ASPIRE_EXTENSION_E2E_EXTESTER_MODULE: extesterModule,
       ASPIRE_EXTENSION_E2E_ENABLE_AZURE_FUNCTIONS: enableAzureFunctionsE2E ? 'true' : 'false',
-      ASPIRE_EXTENSION_E2E_ENABLE_JAVA: enableJavaE2E ? 'true' : 'false',
       VSCODE_NLS_CONFIG: JSON.stringify({ locale: 'en', availableLanguages: {} }),
       LANG: 'C.UTF-8',
       LC_ALL: 'C.UTF-8',
@@ -644,13 +669,19 @@ async function main() {
     console.log(`Extension E2E download cache ${downloadCache.cacheHit ? 'hit' : 'populated'}: ${downloadCache.cacheDirectory}`);
     projectDownloadCache(downloadCache, storageDir);
 
+    // Installed before any VSIX because the fallback path copies unpacked extension directories in.
+    // VS Code only scans the extensions directory while extensions.json is absent; once install-vsix
+    // has written that file it is the authoritative list, and a directory that is not in it is
+    // ignored and then removed. Copying after the first install therefore silently installs nothing.
+    installJavaExtensions(extestEnv);
+
     logStep('Installing VSIX');
     run(process.execPath, [extesterCli, 'install-vsix', '--storage', storageDir, '--extensions_dir', extensionsDir, '--vsix_file', vsixPath], extestEnv, { timeout: 300000 });
     for (const azureFunctionsVsix of azureFunctionsVsixPaths) {
       logStep(`Installing ${azureFunctionsVsix.displayName} VSIX`);
       run(process.execPath, [extesterCli, 'install-vsix', '--storage', storageDir, '--extensions_dir', extensionsDir, '--vsix_file', azureFunctionsVsix.path], extestEnv, { timeout: 300000 });
     }
-    installJavaExtensions();
+    assertJavaExtensionsRegistered();
 
     recording = startRecording();
     try {
@@ -827,7 +858,7 @@ function copyJavaPlaygroundIntoWorkspace(bundledCliPath) {
 
   const source = path.join(repoRoot, 'playground', 'JavaSpringBoot');
   if (!fs.existsSync(source)) {
-    throw new Error(`ASPIRE_EXTENSION_E2E_ENABLE_JAVA=true requires the Java playground at ${source}.`);
+    throw new Error(`The Java E2E specs require the Java playground at ${source}.`);
   }
 
   // `.aspire/` is generated rather than checked in, so it has to exist before the copy: it is what
@@ -854,6 +885,12 @@ function copyJavaPlaygroundIntoWorkspace(bundledCliPath) {
   // Aspire import as unresolved.
   settings['java.import.gradle.wrapper.enabled'] = true;
   settings['java.configuration.updateBuildConfiguration'] = 'automatic';
+  // The language server keeps its project metadata, and therefore its compiler output, in its own
+  // workspace storage by default. That hides the directories the "does not copy build inputs" spec
+  // asserts about: with nothing under the project's own bin/, the spec passes without ever
+  // observing what the build produced. Putting the metadata back at the project root is what makes
+  // that assertion able to fail.
+  settings['java.import.generatesMetadataFilesAtProjectRoot'] = true;
   fs.writeFileSync(settingsPath, JSON.stringify(settings, undefined, 2));
 
   // The scaffolded C# fixture cannot coexist with a repository-internal workspace: it inherits the
@@ -897,28 +934,77 @@ function ensureJavaAppHostSdkGenerated(bundledCliPath, playgroundRoot) {
   }
 }
 
-function installJavaExtensions() {  if (!enableJavaE2E) {
+/**
+ * Puts the Java language server and debug adapter into the run's extensions directory.
+ *
+ * The extension advertises the `java` capability only when both are installed, and the CLI only
+ * hands a Java AppHost back to the extension to launch when that capability is advertised, so
+ * without these the AppHost still runs and no breakpoint in it can ever bind.
+ */
+function installJavaExtensions(extestEnv) {
+  if (!enableJavaE2E) {
     return;
   }
 
-  // These are installed as already-unpacked directories rather than VSIXes. VS Code treats every
-  // immediate subdirectory of --extensions-dir that has a package.json as an installed extension, so
-  // copying is equivalent to `install-vsix` and avoids a marketplace download in a run that is
-  // otherwise offline. ASPIRE_EXTENSION_E2E_JAVA_EXTENSIONS_DIR names the directory holding them.
-  //
-  // Without that variable both the stable and Insiders extension directories are searched, and the
-  // first one holding every required extension wins. A developer with the Extension Pack for Java in
-  // Insiders only would otherwise be told the extensions are missing while they are plainly
-  // installed, which is a confusing way to fail a run that has already spent minutes downloading.
+  const configuredVsixPaths = resolveJavaVsixPaths();
+  if (configuredVsixPaths.length > 0) {
+    for (const vsixPath of configuredVsixPaths) {
+      logStep(`Installing ${path.basename(vsixPath)}`);
+      run(process.execPath, [extesterCli, 'install-vsix', '--storage', storageDir, '--extensions_dir', extensionsDir, '--vsix_file', vsixPath], extestEnv, { timeout: 600000 });
+    }
+  }
+  else {
+    copyLocallyInstalledJavaExtensions();
+  }
+}
+
+/**
+ * Resolves the Java extension VSIXes the run was given, if any.
+ *
+ * CI downloads them from the marketplace and passes them here, because a hosted runner has no VS
+ * Code profile to borrow them from. The value is a list rather than one variable per extension
+ * because the set is an implementation detail of what redhat.java and the debug adapter need from
+ * each other, and that set has changed before.
+ */
+function resolveJavaVsixPaths() {
+  const configured = process.env.ASPIRE_EXTENSION_E2E_JAVA_VSIX;
+  if (!configured) {
+    return [];
+  }
+
+  return configured
+    .split(path.delimiter)
+    .map(entry => entry.trim())
+    .filter(entry => entry.length > 0)
+    .map(entry => {
+      const resolvedPath = path.resolve(entry);
+      if (!fs.existsSync(resolvedPath)) {
+        throw new Error(`ASPIRE_EXTENSION_E2E_JAVA_VSIX points to a missing file: ${resolvedPath}`);
+      }
+
+      validateVsix(resolvedPath);
+      return resolvedPath;
+    });
+}
+
+/**
+ * Falls back to the Java extensions already installed in a developer's VS Code.
+ *
+ * They are installed as already-unpacked directories rather than VSIXes. VS Code treats every
+ * immediate subdirectory of --extensions-dir that has a package.json as an installed extension, so
+ * copying is equivalent to `install-vsix` and avoids a marketplace download in a run that is
+ * otherwise offline. ASPIRE_EXTENSION_E2E_JAVA_EXTENSIONS_DIR names the directory holding them.
+ *
+ * Without that variable both the stable and Insiders extension directories are searched, and the
+ * first one holding every required extension wins. A developer with the Extension Pack for Java in
+ * Insiders only would otherwise be told the extensions are missing while they are plainly
+ * installed, which is a confusing way to fail a run that has already spent minutes downloading.
+ */
+function copyLocallyInstalledJavaExtensions() {
   const configuredRoot = process.env.ASPIRE_EXTENSION_E2E_JAVA_EXTENSIONS_DIR;
   const candidateRoots = configuredRoot
     ? [path.resolve(configuredRoot)]
     : [path.join(os.homedir(), '.vscode', 'extensions'), path.join(os.homedir(), '.vscode-insiders', 'extensions')];
-
-  // redhat.java supplies the language server, which is what produces workspace diagnostics.
-  // vscjava.vscode-java-debug supplies the `java` debug adapter the Aspire debugger delegates to.
-  // vscjava.vscode-java-dependency is a hard activation dependency of the debug extension.
-  const requiredPublisherAndName = ['redhat.java', 'vscjava.vscode-java-debug', 'vscjava.vscode-java-dependency'];
 
   const searched = [];
   let sourceRoot;
@@ -934,25 +1020,25 @@ function installJavaExtensions() {  if (!enableJavaE2E) {
       .map(entry => entry.name);
     // Directory names carry a version, and platform-specific builds add a target triple, so match
     // on the `<publisher>.<name>-` prefix rather than an exact name.
-    if (requiredPublisherAndName.every(identifier => entries.some(name => name.startsWith(`${identifier}-`)))) {
+    if (REQUIRED_JAVA_EXTENSION_IDS.every(identifier => entries.some(name => name.startsWith(`${identifier}-`)))) {
       sourceRoot = candidateRoot;
       available = entries;
       break;
     }
 
-    searched.push(`${candidateRoot} (missing ${requiredPublisherAndName.filter(identifier => !entries.some(name => name.startsWith(`${identifier}-`))).join(', ')})`);
+    searched.push(`${candidateRoot} (missing ${REQUIRED_JAVA_EXTENSION_IDS.filter(identifier => !entries.some(name => name.startsWith(`${identifier}-`))).join(', ')})`);
   }
 
   if (!sourceRoot) {
-    throw new Error(`ASPIRE_EXTENSION_E2E_ENABLE_JAVA=true requires ${requiredPublisherAndName.join(', ')} to be installed. Searched: ${searched.join('; ')}. Install the Extension Pack for Java, or set ASPIRE_EXTENSION_E2E_JAVA_EXTENSIONS_DIR to a directory that has them.`);
+    throw new Error(`The Java E2E specs require ${REQUIRED_JAVA_EXTENSION_IDS.join(', ')} to be installed. Searched: ${searched.join('; ')}. Install the Extension Pack for Java, set ASPIRE_EXTENSION_E2E_JAVA_EXTENSIONS_DIR to a directory that has them, or pass VSIXes through ASPIRE_EXTENSION_E2E_JAVA_VSIX.`);
   }
 
-  for (const identifier of requiredPublisherAndName) {
+  for (const identifier of REQUIRED_JAVA_EXTENSION_IDS) {
     // Directory names carry a version, and platform-specific builds add a target triple, so match
     // on the `<publisher>.<name>-` prefix rather than an exact name.
     const directoryName = available.find(name => name.startsWith(`${identifier}-`));
     if (!directoryName) {
-      throw new Error(`ASPIRE_EXTENSION_E2E_ENABLE_JAVA=true requires ${identifier} to be installed under ${sourceRoot}. Found: ${available.join(', ') || '(none)'}`);
+      throw new Error(`The Java E2E specs require ${identifier} to be installed under ${sourceRoot}. Found: ${available.join(', ') || '(none)'}`);
     }
 
     const source = path.join(sourceRoot, directoryName);
@@ -961,6 +1047,51 @@ function installJavaExtensions() {  if (!enableJavaE2E) {
     logStep(`Installing ${directoryName}`);
     fs.cpSync(source, path.join(extensionsDir, directoryName), { recursive: true, verbatimSymlinks: true });
   }
+}
+
+/**
+ * Fails the run when the extensions directory does not end up holding every Java extension.
+ *
+ * Both install paths can appear to succeed without producing what the specs need: a VSIX for the
+ * wrong extension installs cleanly, and a copied directory is ignored outright unless VS Code scans
+ * it before extensions.json exists. Either way the specs would launch, find no `java` capability,
+ * and fail minutes later with a timeout that says nothing about the missing extension.
+ *
+ * extensions.json is what VS Code loads from, so it is the only check that distinguishes an
+ * extension that is present on disk from one that will actually activate.
+ */
+function assertJavaExtensionsRegistered() {
+  if (!enableJavaE2E) {
+    return;
+  }
+
+  const manifestPath = path.join(extensionsDir, 'extensions.json');
+  if (!fs.existsSync(manifestPath)) {
+    throw new Error(`VS Code did not write ${manifestPath}, so no extension is registered for the run.`);
+  }
+
+  let registered;
+  try {
+    registered = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  }
+  catch (error) {
+    throw new Error(`Unable to read the installed extension list at ${manifestPath}: ${error.message}`);
+  }
+
+  const registeredIds = registered
+    .map(entry => entry?.identifier?.id)
+    .filter(Boolean);
+
+  for (const identifier of REQUIRED_JAVA_EXTENSION_IDS) {
+    const entry = registered.find(candidate => candidate?.identifier?.id?.toLowerCase() === identifier.toLowerCase());
+    if (!entry) {
+      throw new Error(`${identifier} is not registered in ${manifestPath}, so VS Code will not load it. Registered: ${registeredIds.join(', ') || '(none)'}`);
+    }
+
+    assertExtensionSupportsVsCodeVersion(path.join(extensionsDir, entry.relativeLocation), entry.relativeLocation);
+  }
+
+  console.log(`Java extensions registered for the run: ${REQUIRED_JAVA_EXTENSION_IDS.join(', ')}.`);
 }
 
 /**

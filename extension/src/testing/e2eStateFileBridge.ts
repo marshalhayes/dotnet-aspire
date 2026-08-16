@@ -19,7 +19,7 @@ import { extensionLogOutputChannel } from '../utils/logging';
 import { onDidInvokeCommand } from '../utils/telemetry';
 import { AspireAppHostTreeProvider } from '../views/AspireAppHostTreeProvider';
 import { AppHostDataRepository } from '../data/AppHostDataRepository';
-import { getSupportedCapabilities } from '../capabilities';
+import { getSupportedCapabilities, javaLanguageExtensionId } from '../capabilities';
 
 let atomicWriteSequence = 0;
 
@@ -643,6 +643,16 @@ async function executeE2eControlCommand(
         extensionId: extension.extensionId,
         supportedFileTypes: extension.getSupportedFileTypes(),
       }));
+    }
+    case 'getSupportedCapabilities': {
+      markStarted();
+      // The capability list is what the CLI asks for before it hands an AppHost to the extension to
+      // launch, so a spec that needs the extension to debug an AppHost has to be able to see it.
+      return getSupportedCapabilities();
+    }
+    case 'waitForJavaLanguageServer': {
+      markStarted();
+      return await waitForJavaLanguageServer(command.timeoutMs ?? 900000);
     }
     case 'createResourceDebugConfiguration': {
       markStarted();
@@ -1823,6 +1833,55 @@ function cloneDebugConsoleOutputEvent(event: AspireDebugConsoleOutputEvent, sequ
     category: event.category,
     output: event.output,
   };
+}
+
+/**
+ * Java language server API surface the E2E bridge depends on.
+ *
+ * redhat.java's own typings are not a dependency of this extension, so only the two members that
+ * describe readiness are declared here.
+ * https://github.com/redhat-developer/vscode-java/blob/master/src/extension.api.ts
+ */
+interface JavaLanguageServerApi {
+  serverMode?: string;
+  serverReady?: () => Promise<boolean>;
+}
+
+/**
+ * Waits until the Java language server has finished importing the workspace.
+ *
+ * redhat.java reports no diagnostics both before it has looked at a file and after it has declared
+ * that file clean, so a spec that reads diagnostics without waiting cannot tell a healthy workspace
+ * from a language server that was never installed. That is precisely how the Java specs reported
+ * green while no Java extension was present in the run at all.
+ */
+async function waitForJavaLanguageServer(timeoutMs: number): Promise<{ serverMode?: string }> {
+  const extension = vscode.extensions.getExtension<JavaLanguageServerApi>(javaLanguageExtensionId);
+  if (!extension) {
+    throw new Error(`${javaLanguageExtensionId} is not installed, so nothing will import the Java workspace. Installed extensions: ${vscode.extensions.all.map(candidate => candidate.id).join(', ')}`);
+  }
+
+  const api = await extension.activate();
+  if (typeof api?.serverReady !== 'function') {
+    throw new Error(`${javaLanguageExtensionId} did not export serverReady(), so language server readiness cannot be observed.`);
+  }
+
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      api.serverReady(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`The Java language server was not ready within ${timeoutMs}ms. Server mode: ${api.serverMode ?? '<unknown>'}.`)), timeoutMs);
+      }),
+    ]);
+  }
+  finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+
+  return { serverMode: api.serverMode };
 }
 
 function getUnknownCommandName(command: unknown): string {

@@ -1,19 +1,13 @@
 import * as assert from 'assert';
-import * as path from 'path';
 import { EditorView, TextEditor, VSBrowser } from 'vscode-extension-tester';
-import { waitForWorkspaceAppHostCandidate } from './helpers/assertions';
-import { getWorkspaceRoot } from './helpers/paths';
+import { getJavaAppHostSourcePath, prepareJavaWorkspace } from './helpers/java';
 import { closeAllEditors } from './helpers/vscode';
 
-const APP_HOST_SOURCE = path.join('JavaSpringBoot.AppHost.Java', 'AppHost.java');
-
 suite('Java AppHost CodeLens E2E', function () {
-    this.timeout(180000);
+    this.timeout(300000);
 
-    suiteSetup(function () {
-        if (process.env.ASPIRE_EXTENSION_E2E_ENABLE_JAVA !== 'true') {
-            this.skip();
-        }
+    suiteSetup(async () => {
+        await prepareJavaWorkspace();
     });
 
     suiteTeardown(async () => {
@@ -21,9 +15,8 @@ suite('Java AppHost CodeLens E2E', function () {
     });
 
     test('shows the entry point warning on a Java AppHost', async () => {
-        const appHostPath = path.join(getWorkspaceRoot(), APP_HOST_SOURCE);
+        const appHostPath = getJavaAppHostSourcePath();
 
-        await waitForWorkspaceAppHostCandidate(appHostPath, 180000);
         await VSBrowser.instance.openResources(appHostPath);
         const editor = await new EditorView().openEditor('AppHost.java') as TextEditor;
 
