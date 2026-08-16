@@ -48,6 +48,28 @@ public class AddSpringBootAppTests
     }
 
     [Theory]
+    [InlineData("build.gradle")]
+    [InlineData("build.gradle.kts")]
+    [InlineData("settings.gradle")]
+    [InlineData("settings.gradle.kts")]
+    public void BuildToolDetection_GradleMarkersAgreeBetweenRunAndPublish(string marker)
+    {
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.Write(marker, "");
+
+        using var runBuilder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+        var runApp = runBuilder.AddSpringBootApp("catalog", tempDir.Path);
+        var runTool = Assert.Single(runApp.Resource.Annotations.OfType<JavaBuildToolAnnotation>()).Tool;
+
+        using var publishBuilder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish);
+        var publishApp = publishBuilder.AddJavaApp("catalog", tempDir.Path, "build/libs/catalog.jar");
+        var (publishTool, _) = JavaDockerfileGenerator.ResolveBuildTool(publishApp.Resource, tempDir.Path);
+
+        Assert.Equal(JavaBuildTool.Gradle, runTool);
+        Assert.Equal(runTool, publishTool);
+    }
+
+    [Theory]
     [InlineData("pom.xml", "-B", "-ntp", "-DskipTests", "package")]
     [InlineData("build.gradle", "build", "-x", "test")]
     public async Task AddSpringBootApp_BuildsBeforeStartingAndSkipsTests(string buildFile, params string[] expectedArgs)
@@ -113,20 +135,33 @@ public class AddSpringBootAppTests
 
         var ex = Assert.Throws<InvalidOperationException>(() => builder.AddSpringBootApp("catalog", tempDir.Path));
 
-        Assert.Contains("no pom.xml, build.gradle, or build.gradle.kts", ex.Message, StringComparison.Ordinal);
+        Assert.Equal(
+            $"Directory '{tempDir.Path}' contains no pom.xml, build.gradle, build.gradle.kts, settings.gradle, or settings.gradle.kts, " +
+            "so the build tool for resource 'catalog' cannot be detected. Check the path, or use AddJavaApp for an application laid out differently.",
+            ex.Message);
     }
 
     [Fact]
-    public void AddSpringBootApp_BothBuildFiles_Throws()
+    public void BuildToolDetection_BothBuildToolsAreRejectedInRunAndPublish()
     {
-        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
         using var tempDir = new TempJavaAppDirectory();
         tempDir.Write("pom.xml", "<project/>");
         tempDir.Write("build.gradle", "");
 
-        var ex = Assert.Throws<InvalidOperationException>(() => builder.AddSpringBootApp("catalog", tempDir.Path));
+        using var runBuilder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+        var runException = Assert.Throws<InvalidOperationException>(
+            () => runBuilder.AddSpringBootApp("catalog", tempDir.Path));
 
-        Assert.Contains("both a Maven and a Gradle build file", ex.Message, StringComparison.Ordinal);
+        using var publishBuilder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish);
+        var publishApp = publishBuilder.AddJavaApp("catalog", tempDir.Path, "target/catalog.jar");
+        var publishException = Assert.Throws<InvalidOperationException>(
+            () => JavaDockerfileGenerator.ResolveBuildTool(publishApp.Resource, tempDir.Path));
+
+        Assert.Equal(
+            $"Directory '{tempDir.Path}' contains both Maven and Gradle build files, so the build tool for resource 'catalog' is ambiguous. " +
+            "Use AddJavaApp and call WithMavenBuild, WithGradleBuild, WithMavenGoal, or WithGradleTask to choose one explicitly.",
+            runException.Message);
+        Assert.Equal(runException.Message, publishException.Message);
     }
 
     [Theory]

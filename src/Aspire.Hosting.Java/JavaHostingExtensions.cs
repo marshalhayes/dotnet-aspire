@@ -329,7 +329,7 @@ public static partial class JavaHostingExtensions
 
         // WorkingDirectory rather than appDirectory because AddJavaApp has already resolved it against the
         // AppHost directory.
-        resourceBuilder = DetectBuildTool(resourceBuilder.Resource.WorkingDirectory, name) is JavaBuildTool.Maven
+        resourceBuilder = RequireBuildTool(resourceBuilder.Resource.WorkingDirectory, name) is JavaBuildTool.Maven
             ? resourceBuilder
                 .WithMavenBuild("-B", "-ntp", "-DskipTests", "package")
                 .WithMavenGoal("spring-boot:run")
@@ -411,7 +411,7 @@ public static partial class JavaHostingExtensions
         var resourceBuilder = builder.AddJavaApp(name, appDirectory)
             .WithAnnotation(new JavaQuarkusAnnotation(), ResourceAnnotationMutationBehavior.Replace);
 
-        resourceBuilder = DetectBuildTool(resourceBuilder.Resource.WorkingDirectory, name) is JavaBuildTool.Maven
+        resourceBuilder = RequireBuildTool(resourceBuilder.Resource.WorkingDirectory, name) is JavaBuildTool.Maven
             ? resourceBuilder
                 .WithMavenBuild("-B", "-ntp", "-DskipTests", "package")
                 .WithMavenGoal("quarkus:dev")
@@ -516,34 +516,23 @@ public static partial class JavaHostingExtensions
     }
 
     /// <summary>
-    /// Determines whether an application directory is a Maven or a Gradle project.
+    /// Requires an application directory to declare a Maven or Gradle project.
     /// </summary>
     /// <remarks>
-    /// Detected from the build file rather than taken as a parameter: a directory that has a <c>pom.xml</c> is a
-    /// Maven project, and asking the author to restate that only invites the mismatch these helpers exist to avoid.
+    /// Detection is shared with publishing so the same project files cannot select different tools in each path.
     /// </remarks>
-    /// <exception cref="InvalidOperationException">The directory has no build file, or has one of each.</exception>
-    private static JavaBuildTool DetectBuildTool(string workingDirectory, string resourceName)
+    /// <exception cref="InvalidOperationException">The directory has no build file, or has both Maven and Gradle files.</exception>
+    private static JavaBuildTool RequireBuildTool(string workingDirectory, string resourceName)
     {
-        var hasMaven = File.Exists(Path.Combine(workingDirectory, "pom.xml"));
-        var hasGradle = File.Exists(Path.Combine(workingDirectory, "build.gradle"))
-            || File.Exists(Path.Combine(workingDirectory, "build.gradle.kts"));
-
-        if (hasMaven && hasGradle)
+        if (JavaBuildToolResolver.Detect(workingDirectory, resourceName) is not { } tool)
         {
             throw new InvalidOperationException(
-                $"Directory '{workingDirectory}' contains both a Maven and a Gradle build file, so the build tool for resource '{resourceName}' is ambiguous. " +
-                $"Use AddJavaApp and call either WithMavenGoal or WithGradleTask to choose one.");
-        }
-
-        if (!hasMaven && !hasGradle)
-        {
-            throw new InvalidOperationException(
-                $"Directory '{workingDirectory}' contains no pom.xml, build.gradle, or build.gradle.kts, so the build tool for resource '{resourceName}' cannot be detected. " +
+                $"Directory '{workingDirectory}' contains no pom.xml, build.gradle, build.gradle.kts, settings.gradle, or settings.gradle.kts, " +
+                $"so the build tool for resource '{resourceName}' cannot be detected. " +
                 $"Check the path, or use AddJavaApp for an application laid out differently.");
         }
 
-        return hasMaven ? JavaBuildTool.Maven : JavaBuildTool.Gradle;
+        return tool;
     }
 
     /// <summary>

@@ -1127,23 +1127,18 @@ internal static partial class JavaDockerfileGenerator
             }
 
             // Left for an application added with a prebuilt JAR path and no build configuration: the
-            // container still has to produce that JAR, so the tool comes from what is on disk.
-            if (File.Exists(Path.Combine(appDirectory, "pom.xml")))
+            // container still has to produce that JAR, so the tool comes from what is on disk. This uses
+            // the same detector as run mode so publish cannot silently choose Maven for an ambiguous
+            // directory that run mode rejects.
+            if (JavaBuildToolResolver.Detect(appDirectory, resource.Name) is { } detectedTool)
             {
-                return (JavaBuildTool.Maven, DefaultPackageArgs(JavaBuildTool.Maven));
-            }
-
-            if (File.Exists(Path.Combine(appDirectory, "build.gradle"))
-                || File.Exists(Path.Combine(appDirectory, "build.gradle.kts"))
-                || File.Exists(Path.Combine(appDirectory, "settings.gradle"))
-                || File.Exists(Path.Combine(appDirectory, "settings.gradle.kts")))
-            {
-                return (JavaBuildTool.Gradle, DefaultPackageArgs(JavaBuildTool.Gradle));
+                return (detectedTool, DefaultPackageArgs(detectedTool));
             }
 
             throw new DistributedApplicationException(
                 $"The Java application '{resource.Name}' cannot be published because no build tool was found. " +
-                $"Add a pom.xml or build.gradle to '{appDirectory}', or call WithMavenBuild or WithGradleBuild " +
+                $"Add a pom.xml, build.gradle, build.gradle.kts, settings.gradle, or settings.gradle.kts to '{appDirectory}', " +
+                "or call WithMavenBuild or WithGradleBuild " +
                 "to state how the deployable JAR is produced.");
         }
 
