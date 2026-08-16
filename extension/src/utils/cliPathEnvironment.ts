@@ -166,6 +166,7 @@ export function createResolvedAspireCliPathProcessEnvironment(
         return env;
     }
 
+    deleteEnvVarCaseInsensitive(env, ASPIRE_CLI_PATH_ENV_VAR);
     env[ASPIRE_CLI_PATH_ENV_VAR] = forwardablePath;
     return env;
 }

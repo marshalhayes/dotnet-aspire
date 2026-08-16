@@ -698,6 +698,51 @@ suite('AspireDebugConfigurationProvider', () => {
         assert.ok(resolveCliPathStub.calledOnceWith(workspaceFolderCliPathTarget(folder)));
     });
 
+    test('resolveDebugConfiguration resolves CLI availability from a concrete program owner instead of the supplied folder', async () => {
+        const folderA = createWorkspaceFolder(path.join(tempDir, 'workspace-a'));
+        const folderB = createWorkspaceFolder(path.join(tempDir, 'workspace-b'));
+        const programPath = path.join(folderB.uri.fsPath, 'AppHost.csproj');
+        const provider = new AspireDebugConfigurationProvider(createAppHostDiscoveryService(programPath), launchReservation);
+        sandbox.stub(vscode.workspace, 'getWorkspaceFolder').callsFake(uri => {
+            if (uri.fsPath.startsWith(folderA.uri.fsPath)) {
+                return folderA;
+            }
+            if (uri.fsPath.startsWith(folderB.uri.fsPath)) {
+                return folderB;
+            }
+            return undefined;
+        });
+        const resolveCliPathStub = sandbox.stub(cliPathModule, 'resolveCliPath').resolves({ cliPath: '/workspace-b/bin/aspire', available: true, source: 'configured' });
+
+        const config = await provider.resolveDebugConfiguration(folderA, {
+            name: 'Debug AppHost',
+            type: 'aspire',
+            request: 'launch',
+            program: programPath,
+        } as AspireExtendedDebugConfiguration) as AspireExtendedDebugConfiguration | undefined;
+
+        assert.ok(config);
+        assert.ok(resolveCliPathStub.calledOnceWith(workspaceFolderCliPathTarget(folderB)));
+    });
+
+    test('resolveDebugConfiguration uses the supplied folder while program variables are unresolved', async () => {
+        const folder = createWorkspaceFolder(path.join(tempDir, 'workspace'));
+        const provider = new AspireDebugConfigurationProvider(createAppHostDiscoveryService('/repo/AppHost.csproj'), launchReservation);
+        const getWorkspaceFolderStub = sandbox.stub(vscode.workspace, 'getWorkspaceFolder');
+        const resolveCliPathStub = sandbox.stub(cliPathModule, 'resolveCliPath').resolves({ cliPath: '/workspace/bin/aspire', available: true, source: 'configured' });
+
+        const config = await provider.resolveDebugConfiguration(folder, {
+            name: 'Debug AppHost',
+            type: 'aspire',
+            request: 'launch',
+            program: '${workspaceFolder}/AppHost.csproj',
+        } as AspireExtendedDebugConfiguration) as AspireExtendedDebugConfiguration | undefined;
+
+        assert.ok(config);
+        assert.ok(resolveCliPathStub.calledOnceWith(workspaceFolderCliPathTarget(folder)));
+        assert.ok(getWorkspaceFolderStub.notCalled);
+    });
+
     test('resolveDebugConfiguration resolves CLI availability with the window target when no folder is supplied', async () => {
         const provider = new AspireDebugConfigurationProvider(createAppHostDiscoveryService('/repo/AppHost.csproj'), launchReservation);
         const resolveCliPathStub = sandbox.stub(cliPathModule, 'resolveCliPath').resolves({ cliPath: 'aspire', available: true, source: 'path' });

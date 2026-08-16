@@ -7,6 +7,7 @@ import {
     CliPathEnvironmentDependencies,
     ResolvedCliPathDependencies,
     createAspireCliPathProcessEnvironment,
+    createResolvedAspireCliPathProcessEnvironment,
     getForwardableAspireCliPath,
     getForwardableResolvedAspireCliPath,
     initializeCliPathEnvironmentSync,
@@ -238,6 +239,54 @@ suite('cliPathEnvironment.createAspireCliPathProcessEnvironment tests', () => {
         );
 
         assert.strictEqual(env, baseEnv);
+    });
+});
+
+suite('cliPathEnvironment.createResolvedAspireCliPathProcessEnvironment tests', () => {
+    teardown(() => sinon.restore());
+
+    test('sets AspireCliPath to the supplied valid concrete path', () => {
+        const env = createResolvedAspireCliPathProcessEnvironment(
+            '/repo/a/bin/aspire',
+            { PATH: '/usr/bin', AspireCliPath: '/old/aspire' },
+            makeResolvedDeps());
+
+        assert.deepStrictEqual(env, {
+            PATH: '/usr/bin',
+            AspireCliPath: '/repo/a/bin/aspire',
+        });
+    });
+
+    test('removes a stale AspireCliPath when the resolved command is relative', () => {
+        const env = createResolvedAspireCliPathProcessEnvironment(
+            'aspire',
+            { PATH: '/usr/bin', AspireCliPath: '/old/aspire' },
+            makeResolvedDeps());
+
+        assert.deepStrictEqual(env, { PATH: '/usr/bin' });
+    });
+
+    test('removes a stale AspireCliPath when the resolved executable is missing', () => {
+        const env = createResolvedAspireCliPathProcessEnvironment(
+            '/repo/a/bin/missing-aspire',
+            { PATH: '/usr/bin', AspireCliPath: '/old/aspire' },
+            makeResolvedDeps({ fileExists: () => false }));
+
+        assert.deepStrictEqual(env, { PATH: '/usr/bin' });
+    });
+
+    test('replaces Windows casing variants with the canonical AspireCliPath key', () => {
+        sinon.stub(process, 'platform').value('win32');
+
+        const env = createResolvedAspireCliPathProcessEnvironment(
+            'C:\\repo\\a\\bin\\aspire.exe',
+            { PATH: 'C:\\Windows', ASPIRECLIPATH: 'C:\\old\\aspire.exe' },
+            makeResolvedDeps());
+
+        assert.deepStrictEqual(env, {
+            PATH: 'C:\\Windows',
+            AspireCliPath: 'C:\\repo\\a\\bin\\aspire.exe',
+        });
     });
 });
 

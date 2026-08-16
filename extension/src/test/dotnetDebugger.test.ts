@@ -4,7 +4,7 @@ import { EventEmitter } from 'events';
 import * as nodePath from 'path';
 import * as sinon from 'sinon';
 import * as vscode from 'vscode';
-import { createProjectDebuggerExtension, projectDebuggerExtension, quoteCommandLineArgument } from '../debugger/languages/dotnet';
+import { createProjectDebuggerExtension, DotNetService, projectDebuggerExtension, quoteCommandLineArgument } from '../debugger/languages/dotnet';
 import { AspireExtendedDebugConfiguration, AspireResourceExtendedDebugConfiguration, ExecutableLaunchConfiguration, ProjectLaunchConfiguration } from '../dcp/types';
 import * as io from '../utils/io';
 import { createDebugSessionConfiguration, ResourceDebuggerExtension } from '../debugger/debuggerExtensions';
@@ -478,6 +478,48 @@ suite('Dotnet Debugger Extension Tests', () => {
         assert.ok(createResolvedEnvStub.calledWith('/resolved/aspire'));
         assert.strictEqual(execFileStub.firstCall.args[2]?.env, resolvedEnv);
         assert.strictEqual(spawnStub.firstCall.args[2]?.env, resolvedEnv);
+    });
+
+    test('dotnet run-api preserves CLI resolution errors without spawning', async () => {
+        const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
+        const resolutionError = new Error('CLI resolution failed');
+        sinon.stub(cliPathModule, 'resolveCliPath').rejects(resolutionError);
+        const spawnStub = sinon.stub(childProcess, 'spawn');
+        const service = new DotNetService({} as AspireDebugSession);
+
+        await assert.rejects(
+            service.getDotNetRunApiOutput('/workspace/apphost.cs'),
+            error => error === resolutionError);
+
+        assert.ok(spawnStub.notCalled);
+        assert.strictEqual(clock.countTimers(), 0);
+    });
+
+    test('dotnet run-api does not time out or spawn while CLI resolution is pending', async () => {
+        const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
+        let rejectResolution!: (reason?: unknown) => void;
+        const pendingResolution = new Promise<Awaited<ReturnType<typeof cliPathModule.resolveCliPath>>>((_, reject) => {
+            rejectResolution = reject;
+        });
+        sinon.stub(cliPathModule, 'resolveCliPath').returns(pendingResolution);
+        const spawnStub = sinon.stub(childProcess, 'spawn');
+        const service = new DotNetService({} as AspireDebugSession);
+        let outcome: { value?: string; error?: unknown } | undefined;
+        const observed = service.getDotNetRunApiOutput('/workspace/apphost.cs').then(
+            value => { outcome = { value }; },
+            error => { outcome = { error }; });
+
+        await clock.tickAsync(10_001);
+        const outcomeAfterTimeout = outcome;
+        const spawnCalledAfterTimeout = spawnStub.called;
+        const resolutionError = new Error('CLI resolution failed');
+        rejectResolution(resolutionError);
+        await observed;
+
+        assert.strictEqual(outcomeAfterTimeout, undefined);
+        assert.strictEqual(spawnCalledAfterTimeout, false);
+        assert.strictEqual(outcome?.error, resolutionError);
+        assert.ok(spawnStub.notCalled);
     });
 
     test('project is not built when C# dev kit is installed and executable found', async () => {

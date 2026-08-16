@@ -145,18 +145,18 @@ export class DotNetService implements IDotNetService {
     }
 
     async getDotNetRunApiOutput(projectPath: string, environment?: NodeJS.ProcessEnv): Promise<string> {
-        let childProcess: ChildProcessWithoutNullStreams;
+        const { cliPath } = await resolveCliPath(getCliPathTargetForUri(vscode.Uri.file(projectPath)));
+        let childProcess: ChildProcessWithoutNullStreams | undefined;
 
-        return new Promise<string>(async (resolve, reject) => {
+        return new Promise<string>((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                childProcess?.kill();
+                reject(new Error('Timeout while waiting for dotnet run-api response'));
+            }, 10_000);
+
             try {
-                const timeout = setTimeout(() => {
-                    childProcess?.kill();
-                    reject(new Error('Timeout while waiting for dotnet run-api response'));
-                }, 10_000);
-
                 extensionLogOutputChannel.info('dotnet run-api - starting process');
 
-                const { cliPath } = await resolveCliPath(getCliPathTargetForUri(vscode.Uri.file(projectPath)));
                 childProcess = spawn('dotnet', ['run-api'], {
                     cwd: path.dirname(projectPath),
                     env: createResolvedAspireCliPathProcessEnvironment(cliPath, { ...process.env, ...environment }),
@@ -183,9 +183,10 @@ export class DotNetService implements IDotNetService {
                 childProcess.stdin.write(message + os.EOL);
                 childProcess.stdin.end();
             } catch (e) {
+                clearTimeout(timeout);
                 reject(e);
             }
-        }).finally(() => childProcess.removeAllListeners());
+        }).finally(() => childProcess?.removeAllListeners());
     }
 }
 

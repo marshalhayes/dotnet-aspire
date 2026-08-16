@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { appHostLifecycleLaunchAlreadyClaimed, defaultConfigurationName } from '../loc/strings';
 import type { AspireExtendedDebugConfiguration } from '../dcp/types';
 import { AppHostDiscoveryService, getDebugTargetForCandidate, isSamePath } from '../utils/appHostDiscovery';
@@ -63,7 +64,13 @@ export class AspireDebugConfigurationProvider implements vscode.DebugConfigurati
         const aspireConfig = config as AspireExtendedDebugConfiguration;
         this.ensureAppHostSelectionOrigin(aspireConfig);
         if (!aspireConfig.skipCliAvailabilityCheck) {
-            const target = folder ? workspaceFolderCliPathTarget(folder) : windowCliPathTarget;
+            const program = typeof config.program === 'string' ? config.program : undefined;
+            const programFolder = program && path.isAbsolute(program) && !program.includes('${')
+                ? vscode.workspace.getWorkspaceFolder(vscode.Uri.file(program))
+                : undefined;
+            const target = programFolder
+                ? workspaceFolderCliPathTarget(programFolder)
+                : folder ? workspaceFolderCliPathTarget(folder) : windowCliPathTarget;
             const result = await checkCliAvailableOrRedirect('debug_gate', target);
             if (!result.available) {
                 return undefined; // Cancel the debug session
