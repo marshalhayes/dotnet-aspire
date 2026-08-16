@@ -1056,8 +1056,16 @@ suite('utils/cliPath tests', () => {
 });
 
 suite('CliPathResolver scoped tests', () => {
-    const folderA = createWorkspaceFolder('a', '/repo/a', 0);
-    const folderB = createWorkspaceFolder('b', '/repo/b', 1);
+    // Folder paths for the ${workspaceFolder} cases have to be shaped like the host's, because
+    // expandConfiguredCliPath normalizes its expansion with the host's path library: a POSIX literal
+    // becomes a backslash path on Windows and stops matching what the test configured. path.resolve
+    // supplies the drive letter Windows needs for the result to be fully qualified.
+    const folderAPath = path.resolve('/repo/a');
+    const folderBPath = path.resolve('/repo/b');
+    const folderACli = path.join(folderAPath, 'bin', 'aspire');
+    const folderBCli = path.join(folderBPath, 'bin', 'aspire');
+    const folderA = createWorkspaceFolder('a', folderAPath, 0);
+    const folderB = createWorkspaceFolder('b', folderBPath, 1);
     const targetA = workspaceFolderCliPathTarget(folderA);
     const targetB = workspaceFolderCliPathTarget(folderB);
 
@@ -1068,7 +1076,7 @@ suite('CliPathResolver scoped tests', () => {
             getWorkspaceFolders: () => [folderA, folderB],
             tryExecute: async candidate => {
                 attempted.push(candidate);
-                return candidate === '/repo/a/bin/aspire' || candidate === '/repo/b/bin/aspire';
+                return candidate === folderACli || candidate === folderBCli;
             },
         }));
 
@@ -1077,11 +1085,11 @@ suite('CliPathResolver scoped tests', () => {
             resolver.resolve(targetB),
         ]);
 
-        assert.strictEqual(resultA.cliPath, '/repo/a/bin/aspire');
+        assert.strictEqual(resultA.cliPath, folderACli);
         assert.strictEqual(resultA.source, 'configured');
-        assert.strictEqual(resultB.cliPath, '/repo/b/bin/aspire');
+        assert.strictEqual(resultB.cliPath, folderBCli);
         assert.strictEqual(resultB.source, 'configured');
-        assert.deepStrictEqual(attempted.sort(), ['/repo/a/bin/aspire', '/repo/b/bin/aspire']);
+        assert.deepStrictEqual(attempted.sort(), [folderACli, folderBCli].sort());
     });
 
     test('never passes a tokenized configured value to setConfiguredPath', async () => {
@@ -1089,13 +1097,13 @@ suite('CliPathResolver scoped tests', () => {
         const resolver = new CliPathResolver(createMockDeps({
             getConfiguredPath: () => '${workspaceFolder}/bin/aspire',
             getWorkspaceFolders: () => [folderA],
-            tryExecute: async candidate => candidate === '/repo/a/bin/aspire',
+            tryExecute: async candidate => candidate === folderACli,
             setConfiguredPath,
         }));
 
         const result = await resolver.resolve(targetA);
 
-        assert.strictEqual(result.cliPath, '/repo/a/bin/aspire');
+        assert.strictEqual(result.cliPath, folderACli);
         assert.strictEqual(result.source, 'configured');
         assert.ok(setConfiguredPath.notCalled);
     });
