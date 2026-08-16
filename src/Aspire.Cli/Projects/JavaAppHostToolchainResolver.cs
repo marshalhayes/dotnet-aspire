@@ -166,19 +166,6 @@ internal static class JavaAppHostToolchainResolver
     private static StringComparison PathComparison =>
         OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
 
-    public static string[] GetRequiredCommands(JavaAppHostToolchain toolchain)
-    {
-        return toolchain switch
-        {
-            // javac is required for every toolchain: a Maven or Gradle AppHost resolves its dependencies
-            // with the build tool but is still compiled with javac. See CreateCompileCommand.
-            JavaAppHostToolchain.Javac => ["javac", "java"],
-            JavaAppHostToolchain.Maven => ["mvn", "javac", "java"],
-            JavaAppHostToolchain.Gradle => ["gradle", "javac", "java"],
-            _ => throw new ArgumentOutOfRangeException(nameof(toolchain), toolchain, null)
-        };
-    }
-
     public static string GetDisplayName(JavaAppHostToolchain toolchain)
     {
         return toolchain switch
