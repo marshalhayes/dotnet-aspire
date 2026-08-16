@@ -278,6 +278,52 @@ public class AddSpringBootAppTests
         Assert.Equal($"-javaagent:{expected}", envVars["JAVA_TOOL_OPTIONS"]);
     }
 
+    [Theory]
+    [InlineData("pom.xml", "maven")]
+    [InlineData("build.gradle", "gradle")]
+    public async Task WithOtelAgent_BuildProducedAgent_AddsABuildTheApplicationWaitsFor(string buildFile, string toolName)
+    {
+        // spring-boot:run and bootRun compile the application themselves, so a Spring Boot resource
+        // normally has no separate build resource. A build-produced agent makes one mandatory anyway:
+        // JAVA_TOOL_OPTIONS is read by the wrapper's own JVM, so without a build that has already
+        // written the agent, that JVM dies at VM initialization before the launch goal ever runs.
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.Write(buildFile, "");
+
+        var app = builder.AddSpringBootApp("catalog", tempDir.Path).WithOtelAgent();
+
+        var buildResource = Assert.Single(
+            builder.Resources.OfType<JavaBuildResource>(),
+            resource => resource.Name == $"catalog-{toolName}-build");
+
+        Assert.Contains(
+            app.Resource.Annotations.OfType<WaitAnnotation>(),
+            wait => ReferenceEquals(wait.Resource, buildResource));
+
+        // The build resource is the one that produces the agent, so it must not be asked to load it.
+        var buildEnv = await EnvironmentVariableEvaluator.GetEnvironmentVariablesAsync(
+            buildResource, DistributedApplicationOperation.Run, TestServiceProvider.Instance);
+
+        Assert.DoesNotContain("JAVA_TOOL_OPTIONS", buildEnv.Keys);
+    }
+
+    [Fact]
+    public async Task WithOtelAgent_AbsoluteAgentPath_AddsNoBuild()
+    {
+        // An absolute path is supplied by the machine rather than produced by the build, so there is
+        // nothing to build first and adding a resource would just slow the application down.
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.Write("pom.xml", "");
+
+        var app = builder.AddSpringBootApp("catalog", tempDir.Path)
+            .WithOtelAgent(Path.Combine(Path.GetTempPath(), "opentelemetry-javaagent.jar"));
+
+        Assert.Empty(builder.Resources.OfType<JavaBuildResource>());
+        Assert.Empty(app.Resource.Annotations.OfType<WaitAnnotation>());
+    }
+
     [Fact]
     public async Task WithOtelAgent_NoPath_WithoutABuild_Throws()
     {

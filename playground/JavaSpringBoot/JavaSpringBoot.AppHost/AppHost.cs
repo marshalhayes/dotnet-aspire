@@ -11,9 +11,10 @@ builder.AddDockerComposeEnvironment("compose");
 // through spring-boot:run, and declares an HTTP endpoint through SERVER_PORT.
 var catalog = builder.AddSpringBootApp("catalog", "../catalog")
     // Reads target/agent/opentelemetry-javaagent.jar, which the POM copies there during the build. The
-    // agent is not committed, so this only resolves because a build step runs first — and it has to be a
-    // separate resource, since JAVA_TOOL_OPTIONS applies to the wrapper JVM itself and that JVM would try
-    // to load an agent the build has not produced yet.
+    // agent is ~25 MB and is not committed, so it does not exist on a fresh clone. Asking for a
+    // build-produced agent is therefore what makes Aspire add the catalog-maven-build resource this
+    // waits for: JAVA_TOOL_OPTIONS reaches the wrapper's own JVM, so without a build that has already
+    // written the agent, that JVM dies at VM initialization before spring-boot:run ever starts.
     .WithOtelAgent()
     .WithHttpHealthCheck("/actuator/health")
     .WithExternalHttpEndpoints();

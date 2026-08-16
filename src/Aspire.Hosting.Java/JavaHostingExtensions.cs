@@ -292,6 +292,9 @@ public static partial class JavaHostingExtensions
     /// it. Publishing still packages the application with tests skipped (<c>-DskipTests</c> for Maven,
     /// <c>-x test</c> for Gradle). Call <see cref="WithMavenBuild{T}(IResourceBuilder{T}, string[])"/> or
     /// <see cref="WithGradleBuild{T}(IResourceBuilder{T}, string[])"/> afterwards to customize those package arguments.
+    /// The one thing that does add a build resource is
+    /// <see cref="WithOtelAgent{T}(IResourceBuilder{T})"/> with a build-produced agent, which cannot be
+    /// loaded until a build has written it.
     /// </para>
     /// <para>
     /// No health check is added. <c>/actuator/health</c> only exists when the application depends on
@@ -357,6 +360,8 @@ public static partial class JavaHostingExtensions
     /// <c>QUARKUS_HTTP_PORT</c>, the environment variable Quarkus reads for its listening port. Everything else
     /// behaves like <see cref="AddJavaApp(IDistributedApplicationBuilder, string, string)"/>.
     /// The dev-mode goal compiles the application itself, so Aspire does not add a separate build resource before it.
+    /// The one exception is <see cref="WithOtelAgent{T}(IResourceBuilder{T})"/> with a build-produced agent,
+    /// which cannot be loaded until a build has written it.
     /// <para>
     /// Quarkus Dev Services are left enabled but do not activate for anything Aspire supplies: Dev Services only
     /// start a container when the corresponding configuration is missing, and a <c>WithReference</c> to a database
@@ -702,7 +707,11 @@ public static partial class JavaHostingExtensions
             new JavaBuildToolAnnotation(tool, args.Length > 0 ? [goalOrTask, .. args] : [goalOrTask]),
             ResourceAnnotationMutationBehavior.Replace);
 
-        if (buildStep is not null && builder.ApplicationBuilder.ExecutionContext.IsRunMode)
+        // The launch goal now compiles the application, so the build resource is redundant — unless a
+        // build-produced agent is configured, which the application cannot start without.
+        if (buildStep is not null
+            && builder.ApplicationBuilder.ExecutionContext.IsRunMode
+            && !HasBuildProducedOtelAgent(builder.Resource))
         {
             RemoveRunBuildResource(builder, buildStep);
         }
@@ -726,7 +735,7 @@ public static partial class JavaHostingExtensions
     /// <exception cref="InvalidOperationException">The application is already configured to build with Gradle.</exception>
     /// <remarks>
     /// When the application launches with <see cref="WithMavenGoal{T}(IResourceBuilder{T}, string, string[])"/>,
-    /// that goal performs the local compilation, so these arguments configure publishing without adding a
+    /// that goal performs the local compilation, so these arguments normally configure publishing without adding a
     /// second run-mode build. Otherwise, the build step is a child resource that the application waits for.
     /// No child is created when publishing because the generated container image performs the build.
     /// <para>
@@ -759,7 +768,7 @@ public static partial class JavaHostingExtensions
     /// <exception cref="InvalidOperationException">The application is already configured to build with Maven.</exception>
     /// <remarks>
     /// When the application launches with <see cref="WithGradleTask{T}(IResourceBuilder{T}, string, string[])"/>,
-    /// that task performs the local compilation, so these arguments configure publishing without adding a
+    /// that task performs the local compilation, so these arguments normally configure publishing without adding a
     /// second run-mode build. Otherwise, the build step is a child resource that the application waits for.
     /// No child is created when publishing because the generated container image performs the build.
     /// <para>
@@ -804,9 +813,12 @@ public static partial class JavaHostingExtensions
                 "A Java application is built and launched by a single build tool.");
         }
 
+        // A launch goal such as spring-boot:run or bootRun compiles the application on its way to running
+        // it, so a build resource in front of it would only repeat work. A build-produced agent overrides
+        // that: the agent has to exist before the resource starts, and only a build writes it.
         var createRunResource = builder.ApplicationBuilder.ExecutionContext.IsRunMode
-            && launchTool is null
-            && !builder.Resource.HasAnnotationOfType<JavaDetectedBuildToolAnnotation>();
+            && (HasBuildProducedOtelAgent(builder.Resource)
+                || launchTool is null && !builder.Resource.HasAnnotationOfType<JavaDetectedBuildToolAnnotation>());
 
         // Recorded in every execution context: in publish mode there is no build-step resource, but the
         // generated Dockerfile still runs this tool and these arguments to produce the deployable JAR.
@@ -1077,6 +1089,14 @@ public static partial class JavaHostingExtensions
     /// decided when the application model is built, so the result does not depend on the order of builder calls.
     /// </para>
     /// <para>
+    /// Because the build writes the agent, Aspire runs that build as its own resource in run mode and holds
+    /// the application until it finishes — including for Spring Boot and Quarkus, whose launch goals would
+    /// otherwise be the only build. This is required rather than an optimization: <c>JAVA_TOOL_OPTIONS</c> is
+    /// read by every JVM started beneath the resource, and the first of those is the wrapper's own, so an
+    /// agent the build has not written yet kills that JVM during VM initialization with "Error opening zip
+    /// file or JAR manifest missing" before the launch goal runs.
+    /// </para>
+    /// <para>
     /// Use <see cref="WithOtelAgent{T}(IResourceBuilder{T}, string)"/> when the agent lives anywhere else, including
     /// when it is committed to the repository or supplied by the container base image.
     /// </para>
@@ -1153,6 +1173,11 @@ public static partial class JavaHostingExtensions
     /// "Error opening zip file or JAR manifest missing".
     /// </para>
     /// <para>
+    /// A relative path names a file the build produces, so Aspire runs that build as its own resource in run
+    /// mode and holds the application until it finishes. An absolute path names a file that exists
+    /// independently of the build, so no build resource is added.
+    /// </para>
+    /// <para>
     /// In publish mode a relative path is rewritten to the location the generated Dockerfile copies the
     /// agent to, because the path has to be interpreted inside the container rather than on the build
     /// machine. An absolute path is emitted unchanged, since it cannot have come from the build context
@@ -1178,6 +1203,8 @@ public static partial class JavaHostingExtensions
         // would leave a published image pointing at a JAR that is not in it.
         var isFirstCall = !builder.Resource.HasAnnotationOfType<JavaOtelAgentAnnotation>();
         builder.WithAnnotation(new JavaOtelAgentAnnotation(agentPath), ResourceAnnotationMutationBehavior.Replace);
+
+        EnsureBuildProducesOtelAgent(builder);
 
         // Callbacks accumulate even though the annotation replaces, so registering one per call would
         // put a -javaagent: entry per call into JAVA_TOOL_OPTIONS and start the JVM with several agents.
@@ -1213,6 +1240,72 @@ public static partial class JavaHostingExtensions
 
             AppendJavaToolOptions(context.EnvironmentVariables, [$"-javaagent:{resolved}"]);
         });
+    }
+
+    /// <summary>
+    /// Adds the build that writes the agent, when the configured agent is one the build produces.
+    /// </summary>
+    /// <remarks>
+    /// <c>JAVA_TOOL_OPTIONS</c> is read by every JVM started beneath the resource, and for a Maven or
+    /// Gradle launch the first of those is the wrapper's own. A <c>-javaagent:</c> naming a file the build
+    /// has not written yet therefore kills that JVM during VM initialization with "Error opening zip file
+    /// or JAR manifest missing", before the launch goal that would have produced the agent ever runs. The
+    /// build has to be a resource of its own so it runs in a JVM that is not carrying the agent.
+    /// </remarks>
+    private static void EnsureBuildProducesOtelAgent<T>(IResourceBuilder<T> builder)
+        where T : JavaAppResource
+    {
+        // Publish resolves the agent to the path the generated Dockerfile copies it to, and the image
+        // build runs the packaging command itself, so there is no resource to add.
+        if (!builder.ApplicationBuilder.ExecutionContext.IsRunMode
+            || !HasBuildProducedOtelAgent(builder.Resource))
+        {
+            return;
+        }
+
+        // Naming the resource and resolving its wrapper both need the tool, which is unknown when the
+        // agent is configured before the build tool is. That ordering stays supported: the later
+        // WithMavenBuild, WithGradleBuild, WithMavenGoal, or WithGradleTask call reaches
+        // WithJavaBuildStep, which adds the resource once HasBuildProducedOtelAgent is true.
+        if (!TryResolveConfiguredBuildTool(builder.Resource, out var tool))
+        {
+            return;
+        }
+
+        var buildArgs = builder.Resource.TryGetLastAnnotation<JavaBuildStepAnnotation>(out var buildStep)
+            ? buildStep.Args
+            : builder.Resource.HasAnnotationOfType<JavaDetectedBuildToolAnnotation>()
+                ? ResolveDetectedBuildTool(builder.Resource).Configuration.BuildArgs
+                : DefaultBuildArgs(tool);
+
+        builder.WithJavaBuildStep(
+            tool,
+            buildResourceName: $"{builder.Resource.Name}-{(tool is JavaBuildTool.Gradle ? "gradle" : "maven")}-build",
+            buildArgs: buildArgs);
+    }
+
+    /// <summary>
+    /// The packaging arguments <see cref="WithMavenBuild{T}(IResourceBuilder{T}, string[])"/> and
+    /// <see cref="WithGradleBuild{T}(IResourceBuilder{T}, string[])"/> default to.
+    /// </summary>
+    private static string[] DefaultBuildArgs(JavaBuildTool tool) =>
+        tool is JavaBuildTool.Gradle ? ["clean", "build"] : ["clean", "package"];
+
+    /// <summary>
+    /// Whether the resource's OpenTelemetry agent is one its own build writes, rather than one the machine
+    /// or the base image already provides.
+    /// </summary>
+    private static bool HasBuildProducedOtelAgent(JavaAppResource resource)
+    {
+        if (!resource.TryGetLastAnnotation<JavaOtelAgentAnnotation>(out var agent))
+        {
+            return false;
+        }
+
+        // The default location is under the build tool's output directory, so it is always build-produced.
+        // An authored absolute path names a file that exists independently of the build; a relative one is
+        // resolved against the application directory, which is where the build writes.
+        return agent.AgentPath is not { } authored || !JavaDockerfileGenerator.IsPathRootedOnAnyPlatform(authored);
     }
 
     /// <summary>

@@ -403,7 +403,7 @@ internal static partial class JavaDockerfileGenerator
     /// colon, which is not a name any build tool produces.
     /// </para>
     /// </remarks>
-    private static bool IsPathRootedOnAnyPlatform(string path)
+    internal static bool IsPathRootedOnAnyPlatform(string path)
         => Path.IsPathRooted(path)
             || path.StartsWith('/')
             || path.StartsWith('\\')

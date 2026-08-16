@@ -43,9 +43,10 @@
 				OTLP spans without touching application code, so the AppHost points -javaagent at it. It is
 				fetched here instead of being committed because the agent is ~25 MB.
 
-				Bound to initialize so it is present before spring-boot:run forks the application JVM: the
-				fork happens as soon as classes are compiled, which is later than initialize but earlier
-				than package.
+				Bound to initialize so the earliest phase any build reaches already writes it. That
+				matters because the AppHost runs this build as its own resource before the application:
+				JAVA_TOOL_OPTIONS names the agent for every JVM under the application resource, including
+				the wrapper's, so the agent has to exist before that resource starts at all.
 				https://opentelemetry.io/docs/zero-code/java/agent/
 			-->
 			<plugin>
