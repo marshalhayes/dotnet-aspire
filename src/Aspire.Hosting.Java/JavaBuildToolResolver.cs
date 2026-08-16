@@ -23,7 +23,10 @@ internal static class JavaBuildToolResolver
     /// Returns the build tool declared by files in <paramref name="appDirectory"/>, or
     /// <see langword="null"/> when none is declared.
     /// </summary>
-    internal static JavaBuildTool? Detect(string appDirectory, string resourceName)
+    internal static JavaBuildTool? Detect(
+        string appDirectory,
+        string resourceName,
+        Func<string, Exception> createAmbiguityException)
     {
         var hasMaven = File.Exists(Path.Combine(appDirectory, "pom.xml"));
         var hasGradle = s_gradleBuildFileNames.Any(fileName => File.Exists(Path.Combine(appDirectory, fileName)));
@@ -33,7 +36,7 @@ internal static class JavaBuildToolResolver
         // records the author's choice for both paths.
         if (hasMaven && hasGradle)
         {
-            throw new InvalidOperationException(
+            throw createAmbiguityException(
                 $"Directory '{appDirectory}' contains both Maven and Gradle build files, so the build tool for resource '{resourceName}' is ambiguous. " +
                 "Use AddJavaApp and call WithMavenBuild, WithGradleBuild, WithMavenGoal, or WithGradleTask to choose one explicitly.");
         }

@@ -154,7 +154,7 @@ public class AddSpringBootAppTests
 
         using var publishBuilder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Publish);
         var publishApp = publishBuilder.AddJavaApp("catalog", tempDir.Path, "target/catalog.jar");
-        var publishException = Assert.Throws<InvalidOperationException>(
+        var publishException = Assert.Throws<DistributedApplicationException>(
             () => JavaDockerfileGenerator.ResolveBuildTool(publishApp.Resource, tempDir.Path));
 
         Assert.Equal(

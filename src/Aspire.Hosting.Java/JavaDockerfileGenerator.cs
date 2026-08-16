@@ -293,7 +293,7 @@ internal static partial class JavaDockerfileGenerator
         if (!resource.TryGetLastAnnotation<JavaJarPathAnnotation>(out var annotation)
             || resource.HasAnnotationOfType<JavaBuildStepAnnotation>()
             || resource.HasAnnotationOfType<JavaBuildToolAnnotation>()
-            || HasBuildFile(appDirectory))
+            || DetectBuildToolForPublish(resource, appDirectory) is not null)
         {
             return false;
         }
@@ -446,12 +446,11 @@ internal static partial class JavaDockerfileGenerator
         return normalized;
     }
 
-    private static bool HasBuildFile(string appDirectory)
-        => File.Exists(Path.Combine(appDirectory, "pom.xml"))
-        || File.Exists(Path.Combine(appDirectory, "build.gradle"))
-        || File.Exists(Path.Combine(appDirectory, "build.gradle.kts"))
-        || File.Exists(Path.Combine(appDirectory, "settings.gradle"))
-        || File.Exists(Path.Combine(appDirectory, "settings.gradle.kts"));
+    private static JavaBuildTool? DetectBuildToolForPublish(JavaAppResource resource, string appDirectory)
+        => JavaBuildToolResolver.Detect(
+            appDirectory,
+            resource.Name,
+            static message => new DistributedApplicationException(message));
 
     /// <summary>
     /// The JDK the build stage runs on, which is not necessarily the JDK the application targets.
@@ -1120,7 +1119,7 @@ internal static partial class JavaDockerfileGenerator
             // container still has to produce that JAR, so the tool comes from what is on disk. This uses
             // the same detector as run mode so publish cannot silently choose Maven for an ambiguous
             // directory that run mode rejects.
-            if (JavaBuildToolResolver.Detect(appDirectory, resource.Name) is { } detectedTool)
+            if (DetectBuildToolForPublish(resource, appDirectory) is { } detectedTool)
             {
                 return (detectedTool, DefaultPackageArgs(detectedTool));
             }

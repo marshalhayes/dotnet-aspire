@@ -526,7 +526,10 @@ public static partial class JavaHostingExtensions
     /// <exception cref="InvalidOperationException">The directory has no build file, or has both Maven and Gradle files.</exception>
     private static JavaBuildTool RequireBuildTool(string workingDirectory, string resourceName)
     {
-        if (JavaBuildToolResolver.Detect(workingDirectory, resourceName) is not { } tool)
+        if (JavaBuildToolResolver.Detect(
+                workingDirectory,
+                resourceName,
+                static message => new InvalidOperationException(message)) is not { } tool)
         {
             throw new InvalidOperationException(
                 $"Directory '{workingDirectory}' contains no pom.xml, build.gradle, build.gradle.kts, settings.gradle, or settings.gradle.kts, " +
