@@ -1,4 +1,6 @@
 import * as assert from 'assert';
+import * as fs from 'fs/promises';
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { getParserForDocument } from '../editor/parsers/AppHostResourceParser';
 import '../editor/parsers/javaAppHostParser';
@@ -37,6 +39,14 @@ const explicitClassAppHost = [
 function javaDoc(content: string): vscode.TextDocument {
     return createMockDocument(content, '/repo/AppHost.java');
 }
+
+// Tests run from out/test, so the repository root is four levels up (out/test -> out -> extension -> repo).
+const repositoryRoot = path.resolve(__dirname, '..', '..', '..');
+
+const playgroundAppHostPaths = [
+    path.join(repositoryRoot, 'playground', 'JavaAppHost', 'AppHost.java'),
+    path.join(repositoryRoot, 'playground', 'JavaSpringBoot', 'JavaSpringBoot.AppHost.Java', 'AppHost.java'),
+];
 
 suite('Java AppHost parser', () => {
     test('recognises an implicitly declared AppHost', async () => {
@@ -160,6 +170,29 @@ suite('Java AppHost parser', () => {
         assert.strictEqual(await (await getParserForDocument(implicitDoc))!.findAppHostEntryPointLine!(implicitDoc), 2);
         assert.strictEqual(await (await getParserForDocument(explicitDoc))!.findAppHostEntryPointLine!(explicitDoc), 3);
     });
+
+    // The tests above parse hand-written approximations of the playground AppHosts. Those stay
+    // readable, but they drift: they do not exercise array initializers, `new Options().path(...)`
+    // arguments, or comments interleaved through a builder chain. When the real files stop being
+    // recognised, every editor feature keyed off the parser disappears silently — the entry point
+    // warning, the resource lenses, and the dashboard links — because a missing parser is
+    // indistinguishable from an ordinary Java file. So parse the files we actually ship.
+    for (const appHostPath of playgroundAppHostPaths) {
+        test(`recognises the ${path.basename(path.dirname(appHostPath))} playground AppHost`, async () => {
+            const document = createMockDocument(await fs.readFile(appHostPath, 'utf8'), appHostPath);
+            const parser = await getParserForDocument(document);
+
+            assert.ok(parser, `expected ${appHostPath} to be recognised as a Java AppHost`);
+            assert.notStrictEqual(
+                await parser.findBuilderStatementLine!(document),
+                undefined,
+                'the builder statement anchors the dashboard and log lenses');
+            assert.notStrictEqual(
+                await parser.findAppHostEntryPointLine!(document),
+                undefined,
+                'the entry point anchors the warning that the Java Run and Debug actions bypass Aspire');
+        });
+    }
 
     test('filters offsets that fall inside comments and strings', async () => {
         const content = 'void main() {\n    var builder = DistributedApplication.CreateBuilder();\n    // addRedis\n    builder.addRedis("real");\n}';

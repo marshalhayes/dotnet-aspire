@@ -308,7 +308,10 @@ suite('AspireTerminalProvider tests', () => {
                 await terminalProvider.sendAspireCommandToAspireTerminal('logs', false, undefined, { target });
 
                 assert.ok(resolveCliPathStub.calledOnceWith(target));
-                assert.strictEqual(executedCommand, `${cliPath} logs`);
+                // The shell decides how the path is quoted: PowerShell needs the call operator and
+                // quotes, POSIX shells do not. Asserting containment keeps this about which CLI ran.
+                assert.ok(executedCommand?.includes(cliPath), executedCommand);
+                assert.ok(executedCommand?.endsWith(' logs'), executedCommand);
                 assert.ok(createEnvironmentStub.calledOnceWith(undefined, undefined, undefined, cliPath));
             }
             finally {

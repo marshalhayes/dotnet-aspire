@@ -2644,7 +2644,7 @@ suite('AspireAppHostTreeProvider.findAppHostElement', () => {
             name: 'samples',
             index: 1,
         };
-        const getWorkspaceFolderStub = sinon.stub(vscode.workspace, 'getWorkspaceFolder').callsFake((uri: vscode.Uri) => uri.fsPath.startsWith('/repo/samples/') ? otherFolder : undefined);
+        const getWorkspaceFolderStub = sinon.stub(vscode.workspace, 'getWorkspaceFolder').callsFake((uri: vscode.Uri) => uri.fsPath.startsWith(`${otherFolder.uri.fsPath}${path.sep}`) ? otherFolder : undefined);
         const otherTarget = workspaceFolderCliPathTarget(otherFolder);
         const onDidChangeData: vscode.Event<void> = () => ({ dispose: () => { } });
         const repository = {

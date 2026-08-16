@@ -7,6 +7,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { delimiter as pathDelimiter, dirname, join } from 'node:path';
 import * as sinon from 'sinon';
 import * as vscode from 'vscode';
+import { createWorkspaceFolder, fsPathOf } from './testHelpers';
 import * as cliModule from '../utils/process/cliProcess';
 import * as debuggerExtensionsModule from '../debugger/debuggerExtensions';
 import { AspireDebugSession, buildAspireCommandArgs, getLoggableDebugConfiguration, markDebugConfigurationEnvironmentSensitive } from '../debugger/AspireDebugSession';
@@ -178,9 +179,9 @@ suite('AspireDebugSession tests', () => {
 
     test('spawnAspireCommand resolves the CLI using the target derived from the AppHost path', async () => {
         sinon.stub(cliModule, 'spawnCliProcess').returns(createFakeCliProcess(4330));
-        const folder = { name: 'workspace', index: 0, uri: vscode.Uri.file('/workspace') } as vscode.WorkspaceFolder;
+        const folder = createWorkspaceFolder('workspace', '/workspace');
         sinon.stub(vscode.workspace, 'getWorkspaceFolder').callsFake((uri: vscode.Uri) =>
-            uri.fsPath === '/workspace/AppHost.csproj' ? folder : undefined);
+            uri.fsPath === fsPathOf('/workspace/AppHost.csproj') ? folder : undefined);
         const getAspireCliExecutablePath = sinon.stub().resolves('/workspace/aspire');
         const aspireDebugSession = createSessionWithConfiguration({ program: '/workspace/AppHost.csproj' }, getAspireCliExecutablePath);
 
@@ -205,9 +206,9 @@ suite('AspireDebugSession tests', () => {
 
     test('spawnAspireCommand prefers the resolved AppHost path over the configured program', async () => {
         sinon.stub(cliModule, 'spawnCliProcess').returns(createFakeCliProcess(4331));
-        const folder = { name: 'other', index: 0, uri: vscode.Uri.file('/other') } as vscode.WorkspaceFolder;
+        const folder = createWorkspaceFolder('other', '/other');
         sinon.stub(vscode.workspace, 'getWorkspaceFolder').callsFake((uri: vscode.Uri) =>
-            uri.fsPath === '/other/Program.cs' ? folder : undefined);
+            uri.fsPath === fsPathOf('/other/Program.cs') ? folder : undefined);
         const getAspireCliExecutablePath = sinon.stub().resolves('/other/aspire');
         const aspireDebugSession = createSessionWithConfiguration({
             program: '/workspace',
@@ -221,9 +222,9 @@ suite('AspireDebugSession tests', () => {
 
     test('spawnAspireCommand falls back to the working directory target when no AppHost path is configured', async () => {
         sinon.stub(cliModule, 'spawnCliProcess').returns(createFakeCliProcess(4332));
-        const folder = { name: 'workspace', index: 0, uri: vscode.Uri.file('/workspace') } as vscode.WorkspaceFolder;
+        const folder = createWorkspaceFolder('workspace', '/workspace');
         sinon.stub(vscode.workspace, 'getWorkspaceFolder').callsFake((uri: vscode.Uri) =>
-            uri.fsPath === '/workspace' ? folder : undefined);
+            uri.fsPath === fsPathOf('/workspace') ? folder : undefined);
         const getAspireCliExecutablePath = sinon.stub().resolves('/workspace/aspire');
         const aspireDebugSession = createSessionWithConfiguration({}, getAspireCliExecutablePath);
 

@@ -446,8 +446,11 @@ suite('Dotnet Debugger Extension Tests', () => {
             return buildProcess as unknown as childProcess.ChildProcessWithoutNullStreams;
         });
         const folder = { name: 'workspace', index: 0, uri: vscode.Uri.file(projectDirectory) } as vscode.WorkspaceFolder;
+        // Compare against the folder's own fsPath rather than projectDirectory: VS Code lowercases
+        // the drive letter, so 'd:\...'.startsWith('D:\...') is false on Windows and the stub would
+        // report no owning folder instead of the one this test is about.
         sinon.stub(vscode.workspace, 'getWorkspaceFolder').callsFake((uri: vscode.Uri) =>
-            uri.fsPath.startsWith(projectDirectory) ? folder : undefined);
+            uri.fsPath.startsWith(folder.uri.fsPath) ? folder : undefined);
         const resolveCliPathStub = sinon.stub(cliPathModule, 'resolveCliPath').resolves({ cliPath: '/resolved/aspire', available: true, source: 'configured' });
         const resolvedEnv = { MARKER: 'resolved-env' } as unknown as NodeJS.ProcessEnv;
         const createResolvedEnvStub = sinon.stub(cliPathEnvironmentModule, 'createResolvedAspireCliPathProcessEnvironment').returns(resolvedEnv);

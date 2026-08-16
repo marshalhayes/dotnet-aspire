@@ -69,6 +69,19 @@ export function createMockDocument(content: string, filePath: string): vscode.Te
 }
 
 /**
+ * Returns the platform-native path VS Code produces for a POSIX-style fixture path.
+ *
+ * Fixtures spell paths as '/workspace/AppHost.csproj' because they read well, but the code under
+ * test hands `getWorkspaceFolder` a `vscode.Uri`, whose `fsPath` is '\\workspace\\AppHost.csproj'
+ * on Windows. Comparing that against the raw literal never matches there, so the stub returns
+ * undefined and the code silently takes its no-owning-folder fallback instead of failing on the
+ * comparison itself. Normalising the expected side the same way keeps the two comparable.
+ */
+export function fsPathOf(posixPath: string): string {
+    return vscode.Uri.file(posixPath).fsPath;
+}
+
+/**
  * Builds a workspace folder whose `fsPath` is exactly `fsPath`, whatever host the tests run on.
  *
  * `vscode.Uri.file('/repo/a').fsPath` renders with the host's separators, so on Windows it comes back

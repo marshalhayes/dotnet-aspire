@@ -25,8 +25,10 @@ public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
         if (OperatingSystem.IsWindows())
         {
             Assert.Equal(Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe", actual.Command);
+            // "call" precedes the wrapper so the first token on the command line is never a quote,
+            // which is what stops cmd.exe from stripping quotes around a path containing a space.
             Assert.Equal(
-                ["/c", Path.GetRelativePath(appHostDirectory, wrapperPath), .. toolArgs],
+                ["/c", "call", Path.GetRelativePath(appHostDirectory, wrapperPath), .. toolArgs],
                 actual.Args);
 
             return;

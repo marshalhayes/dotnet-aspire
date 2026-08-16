@@ -41,7 +41,9 @@ suite('AspireEditorCommandProvider', () => {
         activeEditorStub = sinon.stub(vscode.window, 'activeTextEditor').get(() => activeEditor);
         workspaceFoldersStub = sinon.stub(vscode.workspace, 'workspaceFolders').value(undefined);
         getWorkspaceFolderStub = sinon.stub(vscode.workspace, 'getWorkspaceFolder').callsFake((uri: vscode.Uri) => {
-            if (uri.fsPath.startsWith(tempDir)) {
+            // VS Code lowercases the drive letter in fsPath, so the raw mkdtemp path does not
+            // prefix-match its own URI on Windows. Normalise both sides through Uri.file.
+            if (uri.fsPath.startsWith(vscode.Uri.file(tempDir).fsPath)) {
                 return { uri: vscode.Uri.file(tempDir), name: 'test', index: 0 };
             }
 
