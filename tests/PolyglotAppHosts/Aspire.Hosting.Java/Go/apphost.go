@@ -24,9 +24,7 @@ func main() {
 	}
 
 	// Prebuilt JAR produced by a Maven build, instrumented with the OpenTelemetry Java agent
-	worker := builder.AddJavaAppWithJar("worker", "../java-worker", "target/worker.jar", &aspire.AddJavaAppWithJarOptions{
-		Args: []string{"--spring.profiles.active=ci"},
-	}).
+	worker := builder.AddJavaAppWithJar("worker", "../java-worker", "target/worker.jar", []string{"--spring.profiles.active=ci"}).
 		WithMavenBuild([]string{"clean", "package", "-DskipTests"}).
 		WithJarArtifact("target/worker.jar").
 		WithOtelAgent("../agents/opentelemetry-javaagent.jar")
@@ -43,7 +41,7 @@ func main() {
 	}
 
 	// Prebuilt JAR produced by a Gradle build, so the task only has to assemble it
-	reports := builder.AddJavaAppWithJar("reports", "../java-reports", "build/libs/reports.jar").
+	reports := builder.AddJavaAppWithJar("reports", "../java-reports", "build/libs/reports.jar", []string{}).
 		WithGradleBuild([]string{"clean", "bootJar"})
 	if err = reports.Err(); err != nil {
 		log.Fatal(aspire.FormatError(err))

@@ -12,9 +12,7 @@ await catalog.withMainClass('com.example.catalog.CatalogApplication');
 await catalog.withJvmArgs(['-Xmx512m', '-XX:+UseZGC']);
 
 // Prebuilt JAR produced by a Maven build, instrumented with the OpenTelemetry Java agent
-const worker = await builder.addJavaAppWithJar('worker', '../java-worker', 'target/worker.jar', {
-    args: ['--spring.profiles.active=ci'],
-});
+const worker = await builder.addJavaAppWithJar('worker', '../java-worker', 'target/worker.jar', ['--spring.profiles.active=ci']);
 await worker.withMavenBuild(['clean', 'package', '-DskipTests']);
 await worker.withJarArtifact('target/worker.jar');
 await worker.withOtelAgent('../agents/opentelemetry-javaagent.jar');
@@ -25,7 +23,7 @@ await gateway.withGradleTask('bootRun', ['--args=--server.port=0']);
 await gateway.withWrapperPath('../gradlew');
 
 // Prebuilt JAR produced by a Gradle build, so the task only has to assemble it
-const reports = await builder.addJavaAppWithJar('reports', '../java-reports', 'build/libs/reports.jar');
+const reports = await builder.addJavaAppWithJar('reports', '../java-reports', 'build/libs/reports.jar', []);
 await reports.withGradleBuild(['clean', 'bootJar']);
 
 await builder.build().run();

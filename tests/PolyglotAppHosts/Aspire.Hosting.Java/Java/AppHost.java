@@ -24,7 +24,7 @@ void main() throws Exception {
             .withWrapperPath("../gradlew");
 
         // Prebuilt JAR produced by a Gradle build, so the task only has to assemble it
-        var reports = builder.addJavaAppWithJar("reports", "../java-reports", "build/libs/reports.jar")
+        var reports = builder.addJavaAppWithJar("reports", "../java-reports", "build/libs/reports.jar", new String[0])
             .withGradleBuild(new String[] { "clean", "bootJar" });
 
         builder.build().run();
