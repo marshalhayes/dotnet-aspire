@@ -368,6 +368,37 @@ export async function waitForEditorTitle(expectedText: string, timeoutMs = 60000
     }
 }
 
+/**
+ * Opens a file's editor and waits for a CodeLens matching <paramref name="expectedText"/>.
+ *
+ * Both steps race the editor: `openResources` returns before VS Code has created the tab, so
+ * `openEditor` throws until it exists, and the lenses are produced asynchronously by the provider
+ * afterwards, so the first successful read is routinely empty. Polling the pair together is what makes
+ * the assertion about the lens rather than about how quickly the editor settled.
+ */
+export async function waitForCodeLensText(fileName: string, expectedText: string, timeoutMs = 60000): Promise<string[]> {
+    let lastTexts: string[] = [];
+
+    try {
+        return await VSBrowser.instance.driver.wait(async () => {
+            try {
+                const editor = await new EditorView().openEditor(fileName);
+                const lenses = await editor.getCodeLenses();
+                lastTexts = await Promise.all(lenses.map(lens => lens.getText()));
+            }
+            catch (error) {
+                throwIfWebDriverSessionFailure(error);
+                return false;
+            }
+
+            return lastTexts.some(text => text.includes(expectedText)) ? lastTexts : false;
+        }, timeoutMs, `Timed out waiting for a CodeLens containing '${expectedText}' in '${fileName}'.`);
+    }
+    catch (error) {
+        throw withWaitDiagnostics(error, [`CodeLenses: ${formatDiagnosticList(lastTexts)}`]);
+    }
+}
+
 export async function waitForWorkbenchText(expectedText: string, timeoutMs = 30000): Promise<string> {
     let lastText = '';
 

@@ -5,6 +5,7 @@ interface NotificationLike {
 
 const state: {
     editorPolls: Array<string[] | Error>;
+    codeLensPolls: Array<string[] | Error>;
     notificationPolls: Array<NotificationLike[] | Error>;
     terminalPolls: Array<string | Error>;
     pollResults: Array<NotificationLike | false>;
@@ -12,6 +13,7 @@ const state: {
     notificationPollCount: number;
 } = {
     editorPolls: [],
+    codeLensPolls: [],
     notificationPolls: [],
     terminalPolls: [],
     pollResults: [],
@@ -38,8 +40,19 @@ export function setEditorPolls(editorPolls: Array<string[] | Error>): void {
     state.waitMessages = [];
 }
 
+/**
+ * Each entry is one `getCodeLenses()` result. An `Error` entry stands for the tab not being open yet,
+ * which is what `openEditor` throws before VS Code has created it.
+ */
+export function setCodeLensPolls(codeLensPolls: Array<string[] | Error>): void {
+    state.codeLensPolls = [...codeLensPolls];
+    state.pollResults = [];
+    state.waitMessages = [];
+}
+
 export function resetNotificationWaitState(): void {
     setEditorPolls([]);
+    setCodeLensPolls([]);
     setNotificationPolls([]);
     setTerminalPolls([]);
 }
@@ -82,7 +95,7 @@ export const VSBrowser = {
         driver: {
             wait: async (condition: () => Promise<NotificationLike | false>, _timeout: number | undefined, message?: string): Promise<NotificationLike | false> => {
                 state.waitMessages.push(message ?? '');
-                const maxAttempts = Math.max(state.editorPolls.length, state.notificationPolls.length, state.terminalPolls.length, 1) + 1;
+                const maxAttempts = Math.max(state.editorPolls.length, state.codeLensPolls.length, state.notificationPolls.length, state.terminalPolls.length, 1) + 1;
 
                 for (let attempt = 0; attempt < maxAttempts; attempt++) {
                     const result = await condition();
@@ -133,6 +146,17 @@ export class EditorView {
         }
 
         return nextPoll;
+    }
+
+    async openEditor(_title: string): Promise<{ getCodeLenses(): Promise<Array<{ getText(): Promise<string> }>> }> {
+        const nextPoll = state.codeLensPolls.shift() ?? [];
+        if (nextPoll instanceof Error) {
+            throw nextPoll;
+        }
+
+        return {
+            getCodeLenses: async () => nextPoll.map(text => ({ getText: async () => text })),
+        };
     }
 }
 

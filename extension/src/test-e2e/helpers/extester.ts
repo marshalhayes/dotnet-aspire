@@ -101,9 +101,18 @@ export interface TerminalView {
     getText(): Promise<string>;
 }
 
+export interface CodeLens {
+    getText(): Promise<string>;
+}
+
+export interface TextEditor {
+    getCodeLenses(): Promise<CodeLens[]>;
+}
+
 export interface EditorView {
     getOpenEditorTitles(): Promise<string[]>;
     closeAllEditors(): Promise<void>;
+    openEditor(title: string): Promise<TextEditor>;
 }
 
 export interface WebView {
