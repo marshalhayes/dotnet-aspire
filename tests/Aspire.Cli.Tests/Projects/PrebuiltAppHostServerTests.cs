@@ -8,6 +8,7 @@ using Aspire.Cli.Layout;
 using Aspire.Cli.NuGet;
 using Aspire.Cli.Packaging;
 using Aspire.Cli.Projects;
+using Aspire.Cli.Resources;
 using Aspire.Cli.Tests.Mcp;
 using Aspire.Cli.Tests.TestServices;
 using Aspire.Cli.Tests.Utils;
@@ -21,6 +22,7 @@ namespace Aspire.Cli.Tests.Projects;
 
 public class PrebuiltAppHostServerTests(ITestOutputHelper outputHelper)
 {
+    private const string NuGetOrgSource = "https://api.nuget.org/v3/index.json";
 
     [Fact]
     public async Task WriteIfChangedAsync_LeavesAnIdenticalFileAlone()
@@ -30,7 +32,7 @@ public class PrebuiltAppHostServerTests(ITestOutputHelper outputHelper)
         await PrebuiltAppHostServer.WriteIfChangedAsync(path, "<Project />", CancellationToken.None);
         var firstWrite = File.GetLastWriteTimeUtc(path);
 
-        // The restore skip compares timestamps, so an identical rewrite must not touch the file.
+        // MSBuild rebuilds when an input timestamp moves, so an identical rewrite must not touch the file.
         File.SetLastWriteTimeUtc(path, firstWrite.AddMinutes(-5));
         var backdated = File.GetLastWriteTimeUtc(path);
         await PrebuiltAppHostServer.WriteIfChangedAsync(path, "<Project />", CancellationToken.None);
@@ -54,40 +56,196 @@ public class PrebuiltAppHostServerTests(ITestOutputHelper outputHelper)
     public void CanSkipIntegrationRestore_RestoresWhenNothingHasBeenRestoredYet()
     {
         using var workspace = TemporaryWorkspace.CreateForCli(outputHelper);
-        var projectFilePath = Path.Combine(workspace.WorkspaceRoot.FullName, "IntegrationRestore.csproj");
-        File.WriteAllText(projectFilePath, "<Project />");
 
-        Assert.False(PrebuiltAppHostServer.CanSkipIntegrationRestore(workspace.WorkspaceRoot.FullName, projectFilePath));
+        Assert.False(PrebuiltAppHostServer.CanSkipIntegrationRestore(workspace.WorkspaceRoot.FullName, "fingerprint", NullLogger.Instance));
     }
 
     [Fact]
-    public void CanSkipIntegrationRestore_RestoresWhenTheProjectIsNewerThanTheAssets()
+    public void CanSkipIntegrationRestore_RestoresWhenTheAssetsAreMissing()
     {
         using var workspace = TemporaryWorkspace.CreateForCli(outputHelper);
-        var projectFilePath = Path.Combine(workspace.WorkspaceRoot.FullName, "IntegrationRestore.csproj");
-        var assetsPath = Path.Combine(workspace.WorkspaceRoot.FullName, "obj", "project.assets.json");
-        Directory.CreateDirectory(Path.GetDirectoryName(assetsPath)!);
-        File.WriteAllText(assetsPath, "{}");
-        File.WriteAllText(projectFilePath, "<Project />");
-        File.SetLastWriteTimeUtc(projectFilePath, File.GetLastWriteTimeUtc(assetsPath).AddSeconds(1));
+        WriteRestoreState(workspace.WorkspaceRoot.FullName, fingerprint: "fingerprint", writeAssets: false);
 
-        Assert.False(PrebuiltAppHostServer.CanSkipIntegrationRestore(workspace.WorkspaceRoot.FullName, projectFilePath));
+        Assert.False(PrebuiltAppHostServer.CanSkipIntegrationRestore(workspace.WorkspaceRoot.FullName, "fingerprint", NullLogger.Instance));
     }
 
     [Fact]
-    public void CanSkipIntegrationRestore_SkipsWhenTheAssetsAreNotOlderThanTheProject()
+    public void CanSkipIntegrationRestore_RestoresWhenTheFingerprintChanged()
     {
         using var workspace = TemporaryWorkspace.CreateForCli(outputHelper);
-        var projectFilePath = Path.Combine(workspace.WorkspaceRoot.FullName, "IntegrationRestore.csproj");
-        var assetsPath = Path.Combine(workspace.WorkspaceRoot.FullName, "obj", "project.assets.json");
-        Directory.CreateDirectory(Path.GetDirectoryName(assetsPath)!);
-        File.WriteAllText(projectFilePath, "<Project />");
-        File.WriteAllText(assetsPath, "{}");
-        File.SetLastWriteTimeUtc(assetsPath, File.GetLastWriteTimeUtc(projectFilePath).AddSeconds(1));
+        WriteRestoreState(workspace.WorkspaceRoot.FullName, fingerprint: "old-fingerprint");
 
-        Assert.True(PrebuiltAppHostServer.CanSkipIntegrationRestore(workspace.WorkspaceRoot.FullName, projectFilePath));
+        Assert.False(PrebuiltAppHostServer.CanSkipIntegrationRestore(workspace.WorkspaceRoot.FullName, "new-fingerprint", NullLogger.Instance));
     }
-    private const string NuGetOrgSource = "https://api.nuget.org/v3/index.json";
+
+    [Fact]
+    public void CanSkipIntegrationRestore_SkipsWhenTheFingerprintMatches()
+    {
+        using var workspace = TemporaryWorkspace.CreateForCli(outputHelper);
+        WriteRestoreState(workspace.WorkspaceRoot.FullName, fingerprint: "fingerprint");
+
+        Assert.True(PrebuiltAppHostServer.CanSkipIntegrationRestore(workspace.WorkspaceRoot.FullName, "fingerprint", NullLogger.Instance));
+    }
+
+    [Fact]
+    public async Task ComputeRestoreInputsAsync_FingerprintChangesWhenAReferencedProjectChanges()
+    {
+        using var workspace = TemporaryWorkspace.CreateForCli(outputHelper);
+        var referencedProject = Path.Combine(workspace.WorkspaceRoot.FullName, "Aspire.Hosting.Java.csproj");
+        await File.WriteAllTextAsync(referencedProject, """<Project><ItemGroup><PackageReference Include="Aspire.Hosting" Version="13.5.0" /></ItemGroup></Project>""");
+        var projectRefs = new List<IntegrationReference> { IntegrationReference.FromProject("Aspire.Hosting.Java", referencedProject) };
+
+        var before = await PrebuiltAppHostServer.ComputeRestoreInputsAsync("<Project />", [], projectRefs, CancellationToken.None);
+
+        // A referenced project bumping its own dependency changes the closure that restore resolves
+        // without changing a byte of the generated project file.
+        await File.WriteAllTextAsync(referencedProject, """<Project><ItemGroup><PackageReference Include="Aspire.Hosting" Version="13.6.0-dev" /></ItemGroup></Project>""");
+        var after = await PrebuiltAppHostServer.ComputeRestoreInputsAsync("<Project />", [], projectRefs, CancellationToken.None);
+
+        Assert.NotEqual(before.Fingerprint, after.Fingerprint);
+    }
+
+    [Fact]
+    public async Task ComputeRestoreInputsAsync_FingerprintIsStableForUnchangedInputs()
+    {
+        using var workspace = TemporaryWorkspace.CreateForCli(outputHelper);
+        var referencedProject = Path.Combine(workspace.WorkspaceRoot.FullName, "Aspire.Hosting.Java.csproj");
+        await File.WriteAllTextAsync(referencedProject, "<Project />");
+        var projectRefs = new List<IntegrationReference> { IntegrationReference.FromProject("Aspire.Hosting.Java", referencedProject) };
+
+        var first = await PrebuiltAppHostServer.ComputeRestoreInputsAsync("<Project />", [], projectRefs, CancellationToken.None);
+        var second = await PrebuiltAppHostServer.ComputeRestoreInputsAsync("<Project />", [], projectRefs, CancellationToken.None);
+
+        Assert.Equal(first, second);
+    }
+
+    [Fact]
+    public async Task ComputeRestoreInputsAsync_IsNotEligibleForSkipWhenAReferencedProjectFloats()
+    {
+        using var workspace = TemporaryWorkspace.CreateForCli(outputHelper);
+        var referencedProject = Path.Combine(workspace.WorkspaceRoot.FullName, "Aspire.Hosting.Java.csproj");
+        // The generated project pins exact versions, so the only float is inside the referenced
+        // project. Restore must still run because the feed can resolve it to a different package.
+        await File.WriteAllTextAsync(referencedProject, """<Project><ItemGroup><PackageReference Include="Some.Package" Version="13.4.*" /></ItemGroup></Project>""");
+        var projectRefs = new List<IntegrationReference> { IntegrationReference.FromProject("Aspire.Hosting.Java", referencedProject) };
+
+        var inputs = await PrebuiltAppHostServer.ComputeRestoreInputsAsync("<Project />", [], projectRefs, CancellationToken.None);
+
+        Assert.False(inputs.IsEligibleForSkip);
+    }
+
+    [Fact]
+    public async Task ComputeRestoreInputsAsync_IsEligibleForSkipWhenEveryVersionIsExact()
+    {
+        using var workspace = TemporaryWorkspace.CreateForCli(outputHelper);
+        var referencedProject = Path.Combine(workspace.WorkspaceRoot.FullName, "Aspire.Hosting.Java.csproj");
+        await File.WriteAllTextAsync(referencedProject, """<Project ToolsVersion="4.0"><ItemGroup><PackageReference Include="Some.Package" Version="13.5.0" /></ItemGroup></Project>""");
+        var projectRefs = new List<IntegrationReference> { IntegrationReference.FromProject("Aspire.Hosting.Java", referencedProject) };
+        var packageRefs = new List<IntegrationReference> { IntegrationReference.FromPackage("Aspire.Hosting.Redis", "13.5.0") };
+
+        var inputs = await PrebuiltAppHostServer.ComputeRestoreInputsAsync("<Project />", packageRefs, projectRefs, CancellationToken.None);
+
+        Assert.True(inputs.IsEligibleForSkip);
+    }
+
+    [Theory]
+    [InlineData("""<PackageReference Include="A" Version="13.4.*" />""")]
+    [InlineData("""<PackageReference Include="A" Version="[13.4,14)" />""")]
+    [InlineData("""<PackageReference Include="A" Version="(13.4,)" />""")]
+    [InlineData("""<PackageReference Include="A" VersionOverride="13.4.*" />""")]
+    [InlineData("""<PackageReference Include="A" Version = "13.4.*" />""")]
+    public void HasFloatingVersionAttribute_DetectsVersionsThatCanResolveDifferently(string projectText)
+    {
+        Assert.True(PrebuiltAppHostServer.HasFloatingVersionAttribute(projectText));
+    }
+
+    [Theory]
+    [InlineData("""<PackageReference Include="A" Version="13.5.0" />""")]
+    [InlineData("""<PackageReference Include="A" Version="13.5.0-preview.1.25000.1" />""")]
+    // ToolsVersion ends in "Version" but is not a package version; the word boundary must exclude it.
+    [InlineData("""<Project ToolsVersion="4.0,x" />""")]
+    [InlineData("<Project />")]
+    public void HasFloatingVersionAttribute_IsFalseForExactVersions(string projectText)
+    {
+        Assert.False(PrebuiltAppHostServer.HasFloatingVersionAttribute(projectText));
+    }
+
+    [Theory]
+    [InlineData("13.4.*")]
+    [InlineData("[13.4,14)")]
+    [InlineData("(13.4,)")]
+    public void HasFloatingPackageVersion_DetectsVersionsThatCanResolveDifferently(string version)
+    {
+        var packageRefs = new List<IntegrationReference> { IntegrationReference.FromPackage("Aspire.Hosting.Redis", version) };
+
+        Assert.True(PrebuiltAppHostServer.HasFloatingPackageVersion(packageRefs));
+    }
+
+    [Fact]
+    public void HasFloatingPackageVersion_IsFalseForExactVersions()
+    {
+        var packageRefs = new List<IntegrationReference>
+        {
+            IntegrationReference.FromPackage("Aspire.Hosting.Redis", "13.5.0"),
+            IntegrationReference.FromPackage("Aspire.Hosting.Java", "13.5.0-preview.1.25000.1")
+        };
+
+        Assert.False(PrebuiltAppHostServer.HasFloatingPackageVersion(packageRefs));
+    }
+
+    [Theory]
+    [InlineData("error NETSDK1004: Assets file '/tmp/obj/project.assets.json' not found. Run a NuGet package restore.")]
+    [InlineData("/tmp/obj/project.assets.json' doesn't have a target for 'net10.0'.")]
+    public void ShouldRetryWithRestore_RetriesWhenTheAssetsAreMissingOrStale(string line)
+    {
+        var output = new OutputCollector();
+        output.AppendOutput(line);
+
+        Assert.True(PrebuiltAppHostServer.ShouldRetryWithRestore(output));
+    }
+
+    [Fact]
+    public void ShouldRetryWithRestore_DoesNotRetryAnOrdinaryCompileFailure()
+    {
+        var output = new OutputCollector();
+        output.AppendOutput("Program.cs(3,1): error CS0103: The name 'Foo' does not exist in the current context");
+
+        Assert.False(PrebuiltAppHostServer.ShouldRetryWithRestore(output));
+    }
+
+    [Fact]
+    public void GetIntegrationBuildFailureMessage_ExplainsAPackageDowngrade()
+    {
+        var output = new OutputCollector();
+        // Localized MSBuild output: the error code is the only stable part to match on.
+        output.AppendOutput("IntegrationRestore.csproj : error NU1605: Advertencia como error: Degradación del paquete detectada: Aspire.Hosting de 13.6.0-dev a 13.5.0.");
+
+        var message = PrebuiltAppHostServer.GetIntegrationBuildFailureMessage(output);
+
+        Assert.Contains("aspire.config.json", message, StringComparison.Ordinal);
+        Assert.Contains(VersionHelper.GetDefaultTemplateVersion(), message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GetIntegrationBuildFailureMessage_FallsBackForOtherFailures()
+    {
+        var output = new OutputCollector();
+        output.AppendOutput("Program.cs(3,1): error CS0103: The name 'Foo' does not exist in the current context");
+
+        Assert.Equal(ErrorStrings.IntegrationBuildFailed, PrebuiltAppHostServer.GetIntegrationBuildFailureMessage(output));
+    }
+
+    private static void WriteRestoreState(string restoreDir, string fingerprint, bool writeAssets = true)
+    {
+        var objDir = Path.Combine(restoreDir, "obj");
+        Directory.CreateDirectory(objDir);
+        if (writeAssets)
+        {
+            File.WriteAllText(Path.Combine(objDir, "project.assets.json"), "{}");
+        }
+
+        File.WriteAllText(Path.Combine(objDir, "aspire-restore.stamp"), fingerprint);
+    }
 
     [Fact]
     public void GenerateIntegrationProjectFile_WithPackagesOnly_ProducesPackageReferences()

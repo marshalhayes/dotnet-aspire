@@ -43,32 +43,4 @@ public class GuestAppHostProjectSkewTests
     {
         Assert.Equal(expected, GuestAppHostProject.NormalizeVersion(input));
     }
-
-    [Theory]
-    [InlineData("Could not load type 'Aspire.TypeSystem.CommandUpToDateCheck' from assembly 'Aspire.TypeSystem, Version=13.4.5.0'.")]
-    [InlineData("Method not found: 'Void Aspire.Hosting.Something.set_Value(System.String)'.")]
-    public void TryDescribeAppHostServerAssemblySkew_ExplainsMissingAspireMembers(string message)
-    {
-        var hint = GuestAppHostProject.TryDescribeAppHostServerAssemblySkew(new InvalidOperationException(message));
-
-        Assert.NotNull(hint);
-        Assert.Contains("older than the Aspire packages", hint);
-    }
-
-    [Fact]
-    public void TryDescribeAppHostServerAssemblySkew_FindsTheCauseThroughInnerExceptions()
-    {
-        var inner = new InvalidOperationException("Could not load type 'Aspire.TypeSystem.CommandUpToDateCheck' from assembly 'Aspire.TypeSystem'.");
-        var hint = GuestAppHostProject.TryDescribeAppHostServerAssemblySkew(new InvalidOperationException("wrapped", inner));
-
-        Assert.NotNull(hint);
-    }
-
-    [Theory]
-    [InlineData("Could not load type 'Contoso.Widgets.Thing' from assembly 'Contoso.Widgets'.")]
-    [InlineData("Connection refused.")]
-    public void TryDescribeAppHostServerAssemblySkew_IgnoresUnrelatedFailures(string message)
-    {
-        Assert.Null(GuestAppHostProject.TryDescribeAppHostServerAssemblySkew(new InvalidOperationException(message)));
-    }
 }

@@ -162,7 +162,9 @@ suite('waitForNotificationMessage', () => {
             vscode.waitForCodeLensText('AppHost.java', 'bypass Aspire', 5000),
             error => error instanceof Error
                 && error.message.includes("Timed out waiting for a CodeLens containing 'bypass Aspire'")
-                && error.message.includes('CodeLenses:'),
+                && error.message.includes('CodeLenses:')
+                && error.message.includes('Run')
+                && error.message.includes('Debug'),
         );
     });
 });

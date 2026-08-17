@@ -6,6 +6,7 @@ interface NotificationLike {
 const state: {
     editorPolls: Array<string[] | Error>;
     codeLensPolls: Array<string[] | Error>;
+    lastCodeLensTexts: string[];
     notificationPolls: Array<NotificationLike[] | Error>;
     terminalPolls: Array<string | Error>;
     pollResults: Array<NotificationLike | false>;
@@ -14,6 +15,7 @@ const state: {
 } = {
     editorPolls: [],
     codeLensPolls: [],
+    lastCodeLensTexts: [],
     notificationPolls: [],
     terminalPolls: [],
     pollResults: [],
@@ -46,6 +48,7 @@ export function setEditorPolls(editorPolls: Array<string[] | Error>): void {
  */
 export function setCodeLensPolls(codeLensPolls: Array<string[] | Error>): void {
     state.codeLensPolls = [...codeLensPolls];
+    state.lastCodeLensTexts = [];
     state.pollResults = [];
     state.waitMessages = [];
 }
@@ -108,7 +111,23 @@ export const VSBrowser = {
 
                 throw new Error(message ?? 'Timed out waiting for notification.');
             },
-            executeScript: async (): Promise<string> => '',
+            executeScript: async (): Promise<string[]> => {
+                // The only script the helpers run reads CodeLens widget text, so drain the queued
+                // code lens polls here. Once the queue is exhausted the last result keeps being
+                // returned, which is how a real editor behaves when its lenses stop changing, and
+                // it lets a wait time out with the lenses it actually saw.
+                const nextPoll = state.codeLensPolls.shift();
+                if (nextPoll === undefined) {
+                    return state.lastCodeLensTexts;
+                }
+
+                if (nextPoll instanceof Error) {
+                    throw nextPoll;
+                }
+
+                state.lastCodeLensTexts = nextPoll;
+                return nextPoll;
+            },
             actions: () => ({
                 sendKeys: () => ({
                     perform: async (): Promise<void> => { },
@@ -148,14 +167,21 @@ export class EditorView {
         return nextPoll;
     }
 
+    /**
+     * Simulates opening the tab. An `Error` at the head of the queue stands for the tab not
+     * existing yet, so it is consumed and thrown. A successful open does not consume the entry:
+     * the lens text it holds is read by `executeScript`, which is how the helper reads lenses.
+     */
     async openEditor(_title: string): Promise<{ getCodeLenses(): Promise<Array<{ getText(): Promise<string> }>> }> {
-        const nextPoll = state.codeLensPolls.shift() ?? [];
+        const nextPoll = state.codeLensPolls[0];
         if (nextPoll instanceof Error) {
+            state.codeLensPolls.shift();
             throw nextPoll;
         }
 
+        const texts = nextPoll ?? [];
         return {
-            getCodeLenses: async () => nextPoll.map(text => ({ getText: async () => text })),
+            getCodeLenses: async () => texts.map(text => ({ getText: async () => text })),
         };
     }
 }

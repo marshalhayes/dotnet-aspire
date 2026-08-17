@@ -163,6 +163,10 @@ suite('cliPathVariables tests', () => {
                 'C:\\tools\\aspire.exe',
                 'C:\\tools\\aspire.cmd',
                 'C:\\tools\\aspire.bat',
+                'C:\\tools\\aspire\\aspire',
+                'C:\\tools\\aspire\\aspire.exe',
+                'C:\\tools\\aspire\\aspire.cmd',
+                'C:\\tools\\aspire\\aspire.bat',
             ]);
         });
 
@@ -172,10 +176,22 @@ suite('cliPathVariables tests', () => {
             assert.deepStrictEqual(candidates, ['C:\\tools\\aspire.exe']);
         });
 
-        test('non-Windows path returns only itself', () => {
+        test('non-Windows path also probes the CLI inside it so a build output directory resolves', () => {
             const candidates = getCliExecutableCandidates('/usr/local/bin/aspire', 'linux');
 
-            assert.deepStrictEqual(candidates, ['/usr/local/bin/aspire']);
+            assert.deepStrictEqual(candidates, [
+                '/usr/local/bin/aspire',
+                '/usr/local/bin/aspire/aspire',
+            ]);
+        });
+
+        test('directory path resolves the CLI executable inside it', () => {
+            const candidates = getCliExecutableCandidates('/repo/artifacts/bin/Aspire.Cli/Debug/net10.0', 'darwin');
+
+            assert.deepStrictEqual(candidates, [
+                '/repo/artifacts/bin/Aspire.Cli/Debug/net10.0',
+                '/repo/artifacts/bin/Aspire.Cli/Debug/net10.0/aspire',
+            ]);
         });
 
     });

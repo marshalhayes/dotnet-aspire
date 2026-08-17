@@ -138,6 +138,9 @@ export function getCliPathTargetForUri(uri: vscode.Uri): CliPathResolutionTarget
     return folder ? workspaceFolderCliPathTarget(folder) : windowCliPathTarget;
 }
 
+/** File name of the Aspire CLI executable, without any platform-specific extension. */
+const cliExecutableFileName = 'aspire';
+
 /**
  * Returns the set of filesystem paths to probe when looking for the CLI
  * executable at `cliPath`.
@@ -145,20 +148,40 @@ export function getCliPathTargetForUri(uri: vscode.Uri): CliPathResolutionTarget
  * On non-Windows platforms, or when the path already carries an extension,
  * only the path itself is returned. On Windows, an extensionless path yields
  * four candidates so that both native executables and command shims are found.
+ *
+ * A directory containing the CLI is also probed, because pointing the setting at a build
+ * output folder such as `artifacts/bin/Aspire.Cli/Debug/net10.0` is a natural mistake that
+ * otherwise fails silently. Probing is a process launch that fails fast when the joined path
+ * does not exist, so the extra candidates cost nothing once an earlier candidate matches.
  */
 export function getCliExecutableCandidates(
     cliPath: string,
     platform: NodeJS.Platform = process.platform
 ): string[] {
-    if (platform !== 'win32') {
-        return [cliPath];
+    const withExtensions = (candidate: string): string[] => {
+        if (platform !== 'win32') {
+            return [candidate];
+        }
+
+        // An existing extension (e.g. .exe, .cmd) means the caller already knows
+        // the exact form; do not append additional extensions.
+        if (path.win32.extname(candidate) !== '') {
+            return [candidate];
+        }
+
+        return [candidate, `${candidate}.exe`, `${candidate}.cmd`, `${candidate}.bat`];
+    };
+
+    const joiner = platform === 'win32' ? path.win32 : path.posix;
+
+    // A path that already carries an extension names a file, so do not also probe inside it.
+    const namesFile = platform === 'win32' && path.win32.extname(cliPath) !== '';
+    if (namesFile) {
+        return withExtensions(cliPath);
     }
 
-    // An existing extension (e.g. .exe, .cmd) means the caller already knows
-    // the exact form; do not append additional extensions.
-    if (path.win32.extname(cliPath) !== '') {
-        return [cliPath];
-    }
-
-    return [cliPath, `${cliPath}.exe`, `${cliPath}.cmd`, `${cliPath}.bat`];
+    return [
+        ...withExtensions(cliPath),
+        ...withExtensions(joiner.join(cliPath, cliExecutableFileName)),
+    ];
 }

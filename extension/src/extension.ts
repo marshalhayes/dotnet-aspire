@@ -30,6 +30,7 @@ import { createE2eStateFileBridge } from './testing/e2eStateFileBridge';
 import type { AspireAppHostState, AspireExtensionApi, AspireExtensionStateSnapshot, WaitForStateOptions } from './types/extensionApi';
 import { AppHostsViewTelemetry } from './views/AppHostsViewTelemetry';
 import { CliPathEnvironmentSynchronizer } from './utils/cliPathEnvironment';
+import { CliPathRejectionNotifier } from './utils/cliPathRejectionNotifier';
 import { cliPathResolver } from './utils/cliPath';
 import { AppHostLifecycleToolService, registerAppHostLifecycleTools } from './lm/appHostLifecycleTools';
 import { registerInstrumentedCommand } from './activation/instrumentedCommand';
@@ -65,6 +66,9 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions,
     target => terminalProvider.invalidateSharedAspireTerminal(target));
   context.subscriptions.push(cliPathEnvironmentSynchronizer);
+  // A rejected configured CLI path otherwise only appears in the output channel, which hides the
+  // fact that commands are running a different CLI than the one the user pinned.
+  context.subscriptions.push(new CliPathRejectionNotifier());
   const cliPathEnvironmentInitialization = cliPathEnvironmentSynchronizer.initialize().catch(error => {
     extensionLogOutputChannel.warn(`Initial Aspire CLI path resolution failed: ${String(error)}`);
   });
