@@ -1234,6 +1234,34 @@ public class AddJavaAppTests
 
     // ---- Chaining multiple methods ------------------------------------------
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void WithMavenBuild_AndWithMavenGoal_ProduceTheSameGraphInEitherOrder(bool goalFirst)
+    {
+        // The launch goal compiles the application, so the build resource is redundant either way.
+        // One order never creates it; the other creates it and then unwinds it by hand. Those two
+        // paths have to converge, or which methods a user happens to chain first decides whether an
+        // extra Maven build runs before every launch.
+        using var builder = TestDistributedApplicationBuilder.Create().WithResourceCleanUp(true);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.Write("pom.xml", "");
+
+        var app = builder.AddJavaApp("api", tempDir.Path);
+        if (goalFirst)
+        {
+            app.WithMavenGoal("spring-boot:run").WithMavenBuild("clean", "package");
+        }
+        else
+        {
+            app.WithMavenBuild("clean", "package").WithMavenGoal("spring-boot:run");
+        }
+
+        Assert.Equal(["api"], builder.Resources.Select(resource => resource.Name).Order());
+        Assert.Empty(app.Resource.Annotations.OfType<WaitAnnotation>());
+        Assert.Null(Assert.Single(app.Resource.Annotations.OfType<JavaBuildStepAnnotation>()).ResourceName);
+    }
+
     [Fact]
     public async Task WithMavenGoal_ThenWithJvmArgs_SetsBothConfigurations()
     {

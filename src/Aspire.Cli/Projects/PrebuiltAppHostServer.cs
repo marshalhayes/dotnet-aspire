@@ -328,19 +328,8 @@ internal sealed partial class PrebuiltAppHostServer : IAppHostServerProject, IDi
     /// input and responds to by rebuilding. Writing only on a real change keeps the incremental
     /// build intact across launches.
     /// </remarks>
-    internal static async Task WriteIfChangedAsync(string path, string content, CancellationToken cancellationToken)
-    {
-        if (File.Exists(path))
-        {
-            var existing = await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false);
-            if (string.Equals(existing, content, StringComparison.Ordinal))
-            {
-                return;
-            }
-        }
-
-        await File.WriteAllTextAsync(path, content, cancellationToken).ConfigureAwait(false);
-    }
+    internal static Task WriteIfChangedAsync(string path, string content, CancellationToken cancellationToken)
+        => GeneratedFileWriter.WriteIfChangedAsync(path, content, cancellationToken);
 
     /// <summary>
     /// Reads every restore input, returning its fingerprint and whether the closure is eligible

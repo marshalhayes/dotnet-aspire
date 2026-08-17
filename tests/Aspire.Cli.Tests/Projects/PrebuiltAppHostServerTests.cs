@@ -53,6 +53,33 @@ public class PrebuiltAppHostServerTests(ITestOutputHelper outputHelper)
     }
 
     [Fact]
+    public async Task WriteIfChangedAsync_RewritesAFileItCannotRead()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "Read permission is removed with POSIX file modes.");
+
+        using var workspace = TemporaryWorkspace.CreateForCli(outputHelper);
+        var path = Path.Combine(workspace.WorkspaceRoot.FullName, "IntegrationRestore.csproj");
+        await File.WriteAllTextAsync(path, "<Project />");
+
+        // A generated file the CLI owns but momentarily cannot read -- an antivirus scanner holding it
+        // open on Windows, a mode the user changed on POSIX -- must be rewritten, not turned into a
+        // launch failure. The write below is what surfaces a genuinely unrecoverable error.
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(path, UnixFileMode.UserWrite);
+        }
+
+        await PrebuiltAppHostServer.WriteIfChangedAsync(path, "<Project Sdk=\"Microsoft.NET.Sdk\" />", CancellationToken.None);
+
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+
+        Assert.Equal("<Project Sdk=\"Microsoft.NET.Sdk\" />", await File.ReadAllTextAsync(path));
+    }
+
+    [Fact]
     public void CanSkipIntegrationRestore_RestoresWhenNothingHasBeenRestoredYet()
     {
         using var workspace = TemporaryWorkspace.CreateForCli(outputHelper);

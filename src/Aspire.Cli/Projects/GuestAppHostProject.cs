@@ -1693,10 +1693,8 @@ internal sealed class GuestAppHostProject : IAppHostProject, IGuestAppHostSdkGen
     /// </summary>
     /// <remarks>
     /// The generated SDK is hundreds of files and is regenerated on every launch, but its content is
-    /// identical from one launch to the next unless the app model changed. Rewriting it unconditionally
-    /// moves every last-write time forward, which invalidates every downstream incremental build --
-    /// javac, Maven, Gradle, and the IDE all decide what to recompile from these timestamps. Comparing
-    /// first costs a read of files that are already in the page cache and keeps those timestamps stable.
+    /// identical from one launch to the next unless the app model changed. See
+    /// <see cref="GeneratedFileWriter" /> for why leaving those timestamps alone matters.
     /// <para>
     /// Only languages that compile the generated sources in place opt in, via
     /// <see cref="LanguageInfo.PreserveUnchangedGeneratedFiles" />. A language that installs them into
@@ -1708,21 +1706,9 @@ internal sealed class GuestAppHostProject : IAppHostProject, IGuestAppHostSdkGen
     /// <returns><see langword="true" /> when the file was written.</returns>
     internal static async Task<bool> WriteGeneratedFileAsync(string filePath, string content, bool preserveUnchangedFiles, CancellationToken cancellationToken)
     {
-        if (preserveUnchangedFiles && File.Exists(filePath))
+        if (preserveUnchangedFiles)
         {
-            try
-            {
-                var existing = await File.ReadAllTextAsync(filePath, cancellationToken);
-                if (string.Equals(existing, content, StringComparison.Ordinal))
-                {
-                    return false;
-                }
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                // An unreadable file is rewritten rather than treated as current; the write below
-                // surfaces the real error if it is not transient.
-            }
+            return await GeneratedFileWriter.WriteIfChangedAsync(filePath, content, cancellationToken);
         }
 
         await File.WriteAllTextAsync(filePath, content, cancellationToken);
