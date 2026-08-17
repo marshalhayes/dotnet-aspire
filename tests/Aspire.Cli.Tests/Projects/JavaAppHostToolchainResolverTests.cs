@@ -170,6 +170,62 @@ public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
         Assert.DoesNotContain(spec.Execute.Args, arg => arg.Contains("{args}", StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData("pom.xml", "target", new[] { "pom.xml" })]
+    [InlineData("build.gradle", "build", new[] { "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts", "gradle/libs.versions.toml" })]
+    public void ApplyToRuntimeSpec_DeclaresTheBuildDescriptorsAndStagedDependenciesAsCompileInputs(
+        string buildFileName,
+        string outputDirectoryName,
+        string[] expectedDescriptors)
+    {
+        using var workspace = TemporaryWorkspace.Create(outputHelper);
+
+        File.WriteAllText(Path.Combine(workspace.Path, buildFileName), "");
+        WriteWrapper(workspace.Path, buildFileName == "pom.xml"
+            ? OperatingSystem.IsWindows() ? "mvnw.cmd" : "mvnw"
+            : OperatingSystem.IsWindows() ? "gradlew.bat" : "gradlew");
+
+        var baseSpec = CreateJavacRuntimeSpec();
+        var baseCompile = baseSpec.PreExecute![0];
+        var specWithCheck = new RuntimeSpec
+        {
+            Language = baseSpec.Language,
+            DisplayName = baseSpec.DisplayName,
+            CodeGenLanguage = baseSpec.CodeGenLanguage,
+            DetectionPatterns = baseSpec.DetectionPatterns,
+            InstallDependencies = baseSpec.InstallDependencies,
+            ExtensionLaunchCapability = baseSpec.ExtensionLaunchCapability,
+            PreExecute =
+            [
+                new CommandSpec
+                {
+                    Command = baseCompile.Command,
+                    Args = baseCompile.Args,
+                    UpToDateCheck = new CommandUpToDateCheck
+                    {
+                        Inputs = ["{appHostFile}", ".", ".aspire/modules/**", "src/main/java/**"],
+                        FileExtensions = [".java"],
+                        StampFile = Path.Combine(".java-build", ".aspire-compile-stamp")
+                    }
+                }
+            ],
+            Execute = baseSpec.Execute
+        };
+
+        var spec = JavaAppHostToolchainResolver.ApplyToRuntimeSpec(specWithCheck, JavaAppHostToolchainResolver.Resolve(workspace.WorkspaceRoot), workspace.WorkspaceRoot);
+
+        // A dependency bump touches no Java source: the descriptor changes and a differently-named JAR
+        // is staged. Neither reaches a check whose inputs are only source roots, so the AppHost keeps
+        // running bytecode compiled against the version that is no longer on the classpath.
+        var inputs = Assert.Single(spec.PreExecute!).UpToDateCheck!.Inputs;
+        foreach (var descriptor in expectedDescriptors)
+        {
+            Assert.Contains(descriptor.Replace('/', Path.DirectorySeparatorChar), inputs);
+        }
+
+        Assert.Contains(Path.Combine(outputDirectoryName, "aspire-deps"), inputs);
+    }
+
     [Fact]
     public void ApplyToRuntimeSpec_ForGradle_UsesTheGradleOutputLayout()
     {
@@ -268,6 +324,72 @@ public class JavaAppHostToolchainResolverTests(ITestOutputHelper outputHelper)
             // a shell, so a bare "mvnw" would be looked up on PATH and never found.
             Assert.Equal("sh", invocation.Command);
             Assert.Equal([wrapperPath], invocation.PrefixArgs);
+        }
+    }
+
+    [Theory]
+    [InlineData(true, "mvnw", "mvnw.cmd")]
+    [InlineData(false, "gradlew", "gradlew.bat")]
+    public void GetToolInvocation_InAMultiModuleBuild_UsesTheWrapperAtTheBuildRoot(bool useMaven, string wrapperName, string windowsWrapperName)
+    {
+        using var workspace = TemporaryWorkspace.Create(outputHelper);
+        var toolchain = useMaven ? JavaAppHostToolchain.Maven : JavaAppHostToolchain.Gradle;
+
+        // The standard multi-module layout: one wrapper beside the aggregator POM or settings file at
+        // the repository root, and the AppHost in a module that carries only its own build file.
+        // Requiring a wrapper beside the module would reject every such repository.
+        WriteBuildRootMarker(workspace.Path, useMaven);
+        var expectedWrapper = OperatingSystem.IsWindows() ? windowsWrapperName : wrapperName;
+        var rootWrapperPath = Path.Combine(workspace.Path, expectedWrapper);
+        File.WriteAllText(rootWrapperPath, "");
+
+        var moduleDirectory = Directory.CreateDirectory(Path.Combine(workspace.Path, "apphost"));
+        File.WriteAllText(Path.Combine(moduleDirectory.FullName, useMaven ? "pom.xml" : "build.gradle"), "");
+
+        var invocation = JavaAppHostToolchainResolver.GetToolInvocation(moduleDirectory, moduleDirectory, toolchain);
+
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Equal(["/c", "call", Path.Combine("..", expectedWrapper)], invocation.PrefixArgs);
+        }
+        else
+        {
+            Assert.Equal([rootWrapperPath], invocation.PrefixArgs);
+        }
+    }
+
+    [Theory]
+    [InlineData(true, "mvnw", "mvnw.cmd")]
+    [InlineData(false, "gradlew", "gradlew.bat")]
+    public void GetToolInvocation_DoesNotCrossACheckoutBoundaryLookingForAWrapper(bool useMaven, string wrapperName, string windowsWrapperName)
+    {
+        using var workspace = TemporaryWorkspace.Create(outputHelper);
+        var toolchain = useMaven ? JavaAppHostToolchain.Maven : JavaAppHostToolchain.Gradle;
+
+        // A wrapper in an outer repository must not be adopted by an inner checkout: a submodule or a
+        // nested clone pins its own build tool version, and the outer one is a different project.
+        WriteBuildRootMarker(workspace.Path, useMaven);
+        File.WriteAllText(Path.Combine(workspace.Path, OperatingSystem.IsWindows() ? windowsWrapperName : wrapperName), "");
+
+        var innerCheckout = Directory.CreateDirectory(Path.Combine(workspace.Path, "inner"));
+        Directory.CreateDirectory(Path.Combine(innerCheckout.FullName, ".git"));
+        File.WriteAllText(Path.Combine(innerCheckout.FullName, useMaven ? "pom.xml" : "build.gradle"), "");
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => JavaAppHostToolchainResolver.GetToolInvocation(innerCheckout, innerCheckout, toolchain));
+
+        Assert.Contains(innerCheckout.FullName, ex.Message);
+    }
+
+    private static void WriteBuildRootMarker(string directory, bool useMaven)
+    {
+        if (useMaven)
+        {
+            File.WriteAllText(Path.Combine(directory, "pom.xml"), "");
+        }
+        else
+        {
+            File.WriteAllText(Path.Combine(directory, "settings.gradle"), "");
         }
     }
 

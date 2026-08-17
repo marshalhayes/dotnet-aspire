@@ -52,6 +52,8 @@ internal static class JavaAppHostToolchainResolver
     private const string MavenPomFileName = "pom.xml";
     private const string GradleBuildFileName = "build.gradle";
     private const string GradleKotlinBuildFileName = "build.gradle.kts";
+    private const string GradleSettingsFileName = "settings.gradle";
+    private const string GradleKotlinSettingsFileName = "settings.gradle.kts";
 
     /// <summary>
     /// Directory the resolved runtime dependencies are copied into, relative to the build output.
@@ -163,6 +165,92 @@ internal static class JavaAppHostToolchainResolver
         yield return candidate;
     }
 
+    /// <summary>
+    /// Locates the wrapper for <paramref name="toolchain"/>, preferring the project's own directory and
+    /// otherwise walking up to the build root.
+    /// </summary>
+    /// <remarks>
+    /// A Gradle multi-project build has exactly one <c>gradlew</c>, beside the <c>settings.gradle</c>
+    /// that declares the subprojects, and a Maven multi-module repository keeps <c>mvnw</c> beside the
+    /// aggregator POM. An AppHost that is one of those modules carries only its own build file, so
+    /// requiring a wrapper next to it would reject the standard layout outright.
+    /// <para>
+    /// An ancestor only qualifies when it also holds that tool's build-root marker and is not
+    /// world-writable, and the walk stops at the directory holding <c>.git</c> so a submodule or nested
+    /// clone uses its own wrapper rather than the outer repository's. These are the same rules
+    /// <c>Aspire.Hosting.Java</c>'s JavaBuildToolResolver applies to hosted resources; the logic is
+    /// duplicated rather than shared because the CLI does not reference the hosting package.
+    /// </para>
+    /// </remarks>
+    private static string? FindWrapper(DirectoryInfo projectDirectory, string wrapperName, JavaAppHostToolchain toolchain)
+    {
+        for (var directory = projectDirectory; directory is not null; directory = directory.Parent)
+        {
+            var candidate = Path.Combine(directory.FullName, wrapperName);
+            var isProjectDirectory = directory.FullName == projectDirectory.FullName;
+
+            // The project directory is named by the AppHost, so a wrapper beside it is the developer's
+            // own instruction and needs no further qualification. Ancestors are inferred instead.
+            if (File.Exists(candidate)
+                && (isProjectDirectory || (IsBuildRoot(directory.FullName, toolchain) && !IsWorldWritable(directory))))
+            {
+                return candidate;
+            }
+
+            // A worktree or submodule records .git as a file rather than a directory, so both count.
+            var gitPath = Path.Combine(directory.FullName, ".git");
+            if (Directory.Exists(gitPath) || File.Exists(gitPath))
+            {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Returns whether a directory is the root of a build for <paramref name="toolchain"/>.
+    /// </summary>
+    private static bool IsBuildRoot(string directory, JavaAppHostToolchain toolchain) => toolchain switch
+    {
+        // Gradle requires a settings file at the root of a multi-project build; that is the directory
+        // the wrapper is generated into. https://docs.gradle.org/current/userguide/multi_project_builds.html
+        JavaAppHostToolchain.Gradle => File.Exists(Path.Combine(directory, GradleSettingsFileName))
+                                       || File.Exists(Path.Combine(directory, GradleKotlinSettingsFileName)),
+        // A Maven aggregator is itself a project, so its POM is the marker.
+        // https://maven.apache.org/guides/introduction/introduction-to-the-pom.html
+        JavaAppHostToolchain.Maven => File.Exists(Path.Combine(directory, MavenPomFileName)),
+        _ => false
+    };
+
+    /// <summary>
+    /// Returns whether any user on the machine can write to <paramref name="directory"/>.
+    /// </summary>
+    /// <remarks>
+    /// Only inferred ancestors are checked. On a shared machine an AppHost under a world-writable
+    /// directory such as <c>/tmp</c> could otherwise pick up a wrapper another user planted beside a
+    /// <c>pom.xml</c>, and the CLI would execute it with the developer's privileges before anything is
+    /// built. Windows uses ACLs that <see cref="UnixFileMode"/> does not describe, and .NET reports
+    /// <see cref="UnixFileMode.None"/> there, so the check is skipped.
+    /// </remarks>
+    private static bool IsWorldWritable(DirectoryInfo directory)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return false;
+        }
+
+        try
+        {
+            return (File.GetUnixFileMode(directory.FullName) & UnixFileMode.OtherWrite) != 0;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // A directory whose mode cannot be read cannot be shown safe, so treat it as unusable.
+            return true;
+        }
+    }
+
     private static StringComparison PathComparison =>
         OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
 
@@ -197,17 +285,17 @@ internal static class JavaAppHostToolchainResolver
             _ => throw new ArgumentOutOfRangeException(nameof(toolchain), toolchain, null)
         };
 
-        var wrapperPath = Path.Combine(projectDirectory.FullName, wrapperName);
+        var wrapperPath = FindWrapper(projectDirectory, wrapperName, toolchain);
 
         // A globally installed Maven or Gradle is deliberately not used as a fallback: the wrapper pins the
         // tool version in the repository, so every machine builds the AppHost with the same one. Falling
         // back silently would make the AppHost build depend on whatever the developer happens to have.
-        if (!File.Exists(wrapperPath))
+        if (wrapperPath is null)
         {
             throw new InvalidOperationException(
                 $"The Java AppHost project in '{projectDirectory.FullName}' declares a {GetDisplayName(toolchain)} " +
-                $"build but ships no {wrapperName}. Generate one with '{generateCommand}', or remove the " +
-                "build file to build the AppHost with javac instead.");
+                $"build but ships no {wrapperName}, and none was found at an enclosing build root. Generate one " +
+                $"with '{generateCommand}', or remove the build file to build the AppHost with javac instead.");
         }
 
         if (!OperatingSystem.IsWindows())
@@ -270,7 +358,7 @@ internal static class JavaAppHostToolchainResolver
             DetectionPatterns = baseRuntimeSpec.DetectionPatterns,
             Initialize = baseRuntimeSpec.Initialize,
             InstallDependencies = CreateInstallCommand(toolchain, invocation, projectPath),
-            PreExecute = [CreateCompileCommand(baseRuntimeSpec, projectPath, classesDirectory, dependencyDirectory)],
+            PreExecute = [CreateCompileCommand(toolchain, baseRuntimeSpec, projectPath, classesDirectory, dependencyDirectory)],
             Execute = CreateExecuteCommand(classesDirectory, dependencyDirectory),
             WatchExecute = baseRuntimeSpec.WatchExecute,
             PublishExecute = baseRuntimeSpec.PublishExecute,
@@ -498,7 +586,49 @@ internal static class JavaAppHostToolchainResolver
     /// compiler — does not apply to <c>AppHost.java</c>.
     /// </para>
     /// </remarks>
-    private static CommandSpec CreateCompileCommand(RuntimeSpec baseRuntimeSpec, string? projectPath, string classesDirectory, string dependencyDirectory)
+    /// <summary>
+    /// Inputs that decide what the AppHost is compiled <em>against</em>, as opposed to what it is
+    /// compiled <em>from</em>.
+    /// </summary>
+    /// <remarks>
+    /// A dependency bump changes no Java source at all: the build descriptor changes, and the build
+    /// tool then stages a differently-named JAR. Without these the cached bytecode is reused and the
+    /// AppHost runs against an API that is no longer on its classpath, usually surfacing as a
+    /// NoSuchMethodError at the point of use rather than anything that names the real cause.
+    /// <para>
+    /// The staged dependency directory is listed non-recursively and its JARs are outside the check's
+    /// source extensions on purpose. Staging runs on every launch and can rewrite the JARs in place,
+    /// so only the directory's own timestamp is meaningful — and that moves exactly when the resolved
+    /// set changes, which is the question being asked.
+    /// </para>
+    /// </remarks>
+    private static string[] GetDependencyInputs(JavaAppHostToolchain toolchain, string? projectPath, string dependencyDirectory)
+    {
+        string[] buildDescriptors = toolchain switch
+        {
+            JavaAppHostToolchain.Maven => [MavenPomFileName],
+            // The version catalog is Gradle's other place for dependency coordinates, and it is
+            // conventionally a sibling of the settings file rather than of the build file.
+            // https://docs.gradle.org/current/userguide/version_catalogs.html
+            JavaAppHostToolchain.Gradle =>
+            [
+                GradleBuildFileName,
+                GradleKotlinBuildFileName,
+                GradleSettingsFileName,
+                GradleKotlinSettingsFileName,
+                Path.Combine("gradle", "libs.versions.toml")
+            ],
+            _ => throw new ArgumentOutOfRangeException(nameof(toolchain), toolchain, null)
+        };
+
+        return
+        [
+            .. buildDescriptors.Select(descriptor => CombineProjectPath(projectPath, descriptor)),
+            dependencyDirectory
+        ];
+    }
+
+    private static CommandSpec CreateCompileCommand(JavaAppHostToolchain toolchain, RuntimeSpec baseRuntimeSpec, string? projectPath, string classesDirectory, string dependencyDirectory)
     {
         var baseCompile = baseRuntimeSpec.PreExecute?.FirstOrDefault()
             ?? throw new InvalidOperationException("The Java runtime spec has no compile step to adapt for a build tool.");
@@ -554,7 +684,8 @@ internal static class JavaAppHostToolchainResolver
                     Inputs =
                     [
                         .. baseCompile.UpToDateCheck.Inputs.Where(static input => !input.StartsWith("src/main/java", StringComparison.Ordinal)),
-                        $"{CombineProjectPath(projectPath, Path.Combine("src", "main", "java"))}/**"
+                        $"{CombineProjectPath(projectPath, Path.Combine("src", "main", "java"))}/**",
+                        .. GetDependencyInputs(toolchain, projectPath, dependencyDirectory)
                     ],
                     FileExtensions = baseCompile.UpToDateCheck.FileExtensions,
                     StampFile = Path.Combine(classesDirectory, Path.GetFileName(baseCompile.UpToDateCheck.StampFile))

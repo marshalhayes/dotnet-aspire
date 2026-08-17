@@ -325,7 +325,11 @@ internal sealed class GuestRuntime
 
             if (File.Exists(path))
             {
-                if (MatchesExtension(check, path) && File.GetLastWriteTimeUtc(path) > stampWriteTime)
+                // A file the spec names outright is not a scan result, so the extension filter - which
+                // exists to keep a directory scan from picking up the command's own outputs - does not
+                // apply to it. This is what lets a build descriptor such as pom.xml or build.gradle be
+                // declared as an input of a check whose scans are restricted to sources.
+                if (File.GetLastWriteTimeUtc(path) > stampWriteTime)
                 {
                     return false;
                 }
@@ -339,29 +343,58 @@ internal sealed class GuestRuntime
             }
 
             var searchOption = recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
-            IEnumerable<string> files;
             try
             {
-                files = Directory.EnumerateFiles(path, "*", searchOption);
+                // A directory's own timestamp moves when an entry is added, removed, or renamed inside
+                // it, and not when an existing entry is rewritten. Both POSIX and NTFS guarantee that,
+                // and it is the only signal here that catches a *deleted* input: after a delete every
+                // surviving file is older than the stamp, so comparing files alone sees no change at
+                // all and the command keeps reusing outputs built from a source that is gone. It also
+                // covers a changed set of staged dependency JARs, whose own timestamps are rewritten
+                // by the staging step on every launch and so cannot be compared directly.
+                //
+                // The cost is being occasionally eager: an unrelated file appearing in an input
+                // directory - an editor swap file, a .DS_Store - triggers one extra run, after which
+                // the new stamp settles it. That is the safe direction for this to be wrong in.
+                if (Directory.GetLastWriteTimeUtc(path) > stampWriteTime)
+                {
+                    return false;
+                }
+
+                if (recursive)
+                {
+                    foreach (var subdirectory in Directory.EnumerateDirectories(path, "*", SearchOption.AllDirectories))
+                    {
+                        if (Directory.GetLastWriteTimeUtc(subdirectory) > stampWriteTime)
+                        {
+                            return false;
+                        }
+                    }
+                }
+
+                // EnumerateFiles is lazy: the traversal - and any IOException or
+                // UnauthorizedAccessException an unreadable subdirectory raises - happens while the
+                // foreach pulls from it, not at the call. Iterating inside the same try is what puts
+                // that failure in front of this catch; enumerating outside it let an unreadable tree
+                // abort AppHost startup instead of falling back to running the command.
+                foreach (var file in Directory.EnumerateFiles(path, "*", searchOption))
+                {
+                    if (!MatchesExtension(check, file))
+                    {
+                        continue;
+                    }
+
+                    if (File.GetLastWriteTimeUtc(file) > stampWriteTime)
+                    {
+                        return false;
+                    }
+                }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 // An unreadable input tree cannot be proven unchanged, so fall back to running the command.
                 _logger.LogDebug(ex, "Unable to scan up-to-date check input {Input}; treating the command as out of date.", path);
                 return false;
-            }
-
-            foreach (var file in files)
-            {
-                if (!MatchesExtension(check, file))
-                {
-                    continue;
-                }
-
-                if (File.GetLastWriteTimeUtc(file) > stampWriteTime)
-                {
-                    return false;
-                }
             }
         }
 
