@@ -39,11 +39,37 @@ suite('AspireMcpServerDefinitionProvider definition tests', () => {
     });
 
     test('passes native executables through to the VS Code MCP launcher', () => {
-        const definition = createAspireMcpServerDefinition('C:\\Program Files\\Aspire\\aspire.exe');
+        const cliPath = 'C:\\Program Files\\Aspire\\aspire.exe';
+        const definition = createAspireMcpServerDefinition(cliPath, undefined, undefined, {
+            isAbsolute: () => true,
+            fileExists: candidate => candidate === cliPath,
+            realpath: () => undefined,
+        });
 
-        assert.strictEqual(definition.command, 'C:\\Program Files\\Aspire\\aspire.exe');
+        assert.strictEqual(definition.command, cliPath);
         assert.deepStrictEqual(definition.args, ['agent', 'mcp']);
-        assert.deepStrictEqual(definition.env, { AspireCliPath: 'C:\\Program Files\\Aspire\\aspire.exe' });
+        assert.deepStrictEqual(definition.env, { AspireCliPath: cliPath });
+    });
+
+    // `aspire agent mcp` can build an AppHost, and that build inherits this environment. Forwarding
+    // an unbundled framework-dependent CLI path makes ResolveAspireCliBundle stamp bundle assets
+    // from a CLI that has no bundle layout, so the MCP server must apply the same forwardability
+    // guard every other AspireCliPath producer applies.
+    test('does not forward an unbundled framework-dependent CLI path to the MCP server', () => {
+        const cliPath = '/repo/artifacts/bin/Aspire.Cli/Debug/aspire';
+        const definition = createAspireMcpServerDefinition(cliPath, undefined, undefined, {
+            isAbsolute: () => true,
+            // An inner-loop `dotnet build` output: the apphost sits next to aspire.dll with no
+            // install sidecar and no adjacent bundle layout.
+            fileExists: candidate => candidate === cliPath || candidate === '/repo/artifacts/bin/Aspire.Cli/Debug/aspire.dll',
+            realpath: () => undefined,
+        });
+
+        assert.strictEqual(definition.command, cliPath);
+        assert.deepStrictEqual(definition.args, ['agent', 'mcp']);
+        // VS Code normalizes an omitted env to an empty record, so asserting the whole value both
+        // proves AspireCliPath is absent and pins that nothing else is forwarded in its place.
+        assert.deepStrictEqual(definition.env, {});
     });
 });
 

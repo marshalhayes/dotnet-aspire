@@ -4,11 +4,11 @@ import { workspaceFolderCliPathTarget } from '../utils/cliPathVariables';
 import { extensionLogOutputChannel } from '../utils/logging';
 import { getCmdShimSpawnCommandWithoutVerbatimArguments, shouldWrapWithCmd } from '../utils/cmdShim';
 import { getRegisterMcpServerInWorkspace, registerMcpServerInWorkspaceSetting } from '../utils/settings';
+import { ASPIRE_CLI_PATH_ENV_VAR, getForwardableResolvedAspireCliPath, ResolvedCliPathDependencies } from '../utils/cliPathEnvironment';
 
 const mcpServerLabel = 'Aspire';
 const mcpServerArgs = ['agent', 'mcp'];
 const aspireCliExecutablePathSetting = 'aspire.aspireCliExecutablePath';
-const aspireCliPathEnvironmentVariable = 'AspireCliPath';
 
 /**
  * Builds the stdio definition VS Code uses to launch `aspire agent mcp`.
@@ -22,8 +22,17 @@ export function createAspireMcpServerDefinition(
     cliPath: string,
     label = mcpServerLabel,
     cwd?: vscode.Uri,
+    deps?: ResolvedCliPathDependencies,
 ): vscode.McpStdioServerDefinition {
-    const env = { [aspireCliPathEnvironmentVariable]: cliPath };
+    // `aspire agent mcp` can build an AppHost, and that build inherits this environment. An
+    // unbundled framework-dependent CLI path makes MSBuild's ResolveAspireCliBundle bind bundle
+    // assets to a CLI that has no bundle layout (ASPIRE009), so it must not be forwarded. Every
+    // other AspireCliPath producer applies the same guard; omitting the variable lets the build
+    // fall back to PATH probing, exactly as those sites do.
+    const forwardableCliPath = deps === undefined
+        ? getForwardableResolvedAspireCliPath(cliPath)
+        : getForwardableResolvedAspireCliPath(cliPath, deps);
+    const env = forwardableCliPath === undefined ? undefined : { [ASPIRE_CLI_PATH_ENV_VAR]: forwardableCliPath };
     let definition: vscode.McpStdioServerDefinition;
     if (!shouldWrapWithCmd(cliPath)) {
         definition = new vscode.McpStdioServerDefinition(label, cliPath, [...mcpServerArgs], env);
