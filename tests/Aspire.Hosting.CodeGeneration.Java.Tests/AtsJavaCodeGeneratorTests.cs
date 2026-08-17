@@ -592,7 +592,51 @@ public class AtsJavaCodeGeneratorTests
         Assert.Contains($"map.put(\"{propertyName}\", AspireClient.serializeValue({expectedField}))", generated);
     }
 
+    [Fact]
+    public void DtoPropertyWithDictionaryNestedInArrayCastsToTheFieldType()
+    {
+        // The field type comes from MapDtoPropertyTypeToJava (Map/List) while the fromMap cast used to
+        // fall through to MapTypeRefToJava, which renders a mutable dictionary as AspireDict. AspireDict
+        // extends HandleWrapperBase and does not implement Map, so javac rejected the generated SDK
+        // outright — and the CLI compiles every generated source in one javac invocation, so a single
+        // bad property broke `aspire run` for the whole Java AppHost.
+        var context = CreateContextWithSingleDtoProperty(
+            "MetadataArray",
+            new AtsTypeRef { TypeId = "array", Category = AtsTypeCategory.Array, ElementType = MutableStringDict() });
+
+        var generated = JoinGeneratedFiles(_generator.GenerateDistributedApplication(context));
+
+        Assert.Contains("private Map<String, String>[] metadataArray;", generated);
+        Assert.Contains("value.setMetadataArray((Map<String, String>[]) metadataArrayValue);", generated);
+    }
+
+    [Fact]
+    public void DtoPropertyWithDictionaryNestedInListCastsToTheFieldType()
+    {
+        var context = CreateContextWithSingleDtoProperty(
+            "Entries",
+            new AtsTypeRef
+            {
+                TypeId = "list",
+                Category = AtsTypeCategory.List,
+                IsReadOnly = false,
+                ElementType = MutableStringDict()
+            });
+
+        var generated = JoinGeneratedFiles(_generator.GenerateDistributedApplication(context));
+
+        Assert.Contains("private List<Map<String, String>> entries;", generated);
+        Assert.Contains("item0 -> (Map<String, String>) item0", generated);
+    }
+
     private static AtsContext CreateContextWithSingleDtoProperty(string propertyName)
+    {
+        return CreateContextWithSingleDtoProperty(
+            propertyName,
+            new AtsTypeRef { TypeId = "string", Category = AtsTypeCategory.Primitive });
+    }
+
+    private static AtsContext CreateContextWithSingleDtoProperty(string propertyName, AtsTypeRef propertyType)
     {
         return new AtsContext
         {
@@ -610,11 +654,20 @@ public class AtsJavaCodeGeneratorTests
                         new AtsDtoPropertyInfo
                         {
                             Name = propertyName,
-                            Type = new AtsTypeRef { TypeId = "string", Category = AtsTypeCategory.Primitive }
+                            Type = propertyType
                         }
                     ]
                 }
             ]
         };
     }
+
+    private static AtsTypeRef MutableStringDict() => new()
+    {
+        TypeId = "dict",
+        Category = AtsTypeCategory.Dict,
+        IsReadOnly = false,
+        KeyType = new AtsTypeRef { TypeId = "string", Category = AtsTypeCategory.Primitive },
+        ValueType = new AtsTypeRef { TypeId = "string", Category = AtsTypeCategory.Primitive }
+    };
 }

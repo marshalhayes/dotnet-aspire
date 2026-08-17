@@ -2045,17 +2045,46 @@ internal sealed class AtsJavaCodeGenerator : ICodeGenerator
         return converted;
     }
 
-    private string RenderJavaDtoPropertyTransportValueConversion(AtsTypeRef? typeRef, string valueExpression, bool isOptional)
+    private string RenderJavaDtoPropertyTransportValueConversion(AtsTypeRef? typeRef, string valueExpression, bool isOptional, int depth = 0)
     {
-        if (typeRef?.Category != AtsTypeCategory.Dict)
+        // A DTO field is typed by MapDtoPropertyTypeToJava, which renders every dictionary as Map and
+        // every list as List. MapTypeRefToJava instead renders a *mutable* dictionary or list as
+        // AspireDict/AspireList, which extend HandleWrapperBase and implement neither interface. So the
+        // cast has to use the DTO flavour for collections at any depth, not just at the top level:
+        // otherwise a property as ordinary as Dictionary<string, string>[] emits
+        // `(AspireDict<String, String>[]) value` against a `Map<String, String>[]` field and javac
+        // rejects the file. The CLI compiles the whole generated SDK in one javac invocation, so that
+        // fails `aspire run` entirely, in code the user is told not to edit.
+        if (typeRef?.Category is not (AtsTypeCategory.Dict or AtsTypeCategory.Array or AtsTypeCategory.List))
         {
-            return RenderJavaTransportValueConversion(typeRef, valueExpression, isOptional);
+            return RenderJavaTransportValueConversion(typeRef, valueExpression, isOptional, depth);
         }
 
         var allowNull = isOptional || typeRef.IsNullable == true;
+
+        if (typeRef.Category == AtsTypeCategory.List)
+        {
+            // Rebuilt element by element rather than cast, because the transport hands back a
+            // List<Object> whose elements still need converting. `item{depth}` keeps nested lambdas
+            // from shadowing one another.
+            var itemName = $"item{depth}";
+            var convertedItem = RenderJavaDtoPropertyTransportValueConversion(
+                typeRef.ElementType,
+                itemName,
+                typeRef.ElementType?.IsNullable == true,
+                depth + 1);
+            var projected = $"((List<Object>) {valueExpression}).stream().map({itemName} -> {convertedItem}).toList()";
+
+            return allowNull ? $"{valueExpression} == null ? null : {projected}" : projected;
+        }
+
         var converted = $"({MapDtoPropertyTypeToJava(typeRef, allowNull, useBoxedTypes: true)}) {valueExpression}";
 
-        return allowNull ? $"{valueExpression} == null ? null : {converted}" : converted;
+        // An array needs no null guard: casting null to an array type is legal Java and yields null,
+        // so guarding would only add noise the previous shape did not have.
+        return allowNull && typeRef.Category == AtsTypeCategory.Dict
+            ? $"{valueExpression} == null ? null : {converted}"
+            : converted;
     }
 
     private static string RenderJavaPrimitiveTransportValueConversion(string typeId, string valueExpression, bool allowNull)

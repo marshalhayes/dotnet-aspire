@@ -23968,7 +23968,7 @@ public class TestDeeplyNestedDto implements JsonSerializable {
         var nestedDataValue = map.get("NestedData");
         value.setNestedData((Map<String, List<TestConfigDto>>) nestedDataValue);
         var metadataArrayValue = map.get("MetadataArray");
-        value.setMetadataArray((AspireDict<String, String>[]) metadataArrayValue);
+        value.setMetadataArray((Map<String, String>[]) metadataArrayValue);
         return value;
     }
 
