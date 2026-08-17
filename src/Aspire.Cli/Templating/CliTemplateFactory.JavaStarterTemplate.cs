@@ -57,21 +57,22 @@ internal sealed partial class CliTemplateFactory
                     _logger.LogDebug("Copying embedded Java starter template files to '{OutputPath}'.", outputPath);
                     await CopyTemplateTreeToDiskAsync("java-starter", outputPath, ApplyAllTokens, cancellationToken);
 
-                    // Persist the resolved channel into the scaffolded project's aspire.config.json
-                    // when NewCommand resolved an Explicit channel (pr-<N>, daily, staging, local).
-                    // Without this pin, `aspire update` skips the local-config step in its
-                    // channel-resolution precedence and falls through to either an interactive
-                    // prompt (when hives exist) or the Implicit/nuget.org channel — silently
-                    // moving a project scaffolded by a PR or daily CLI onto stable. Implicit
-                    // channel selections are left unwritten so `aspire add`/`aspire restore`
-                    // use the user's ambient NuGet config without a per-project pin. Mirrors
+                    // Persist the resolved SDK version, and the resolved channel when NewCommand
+                    // resolved an Explicit one (pr-<N>, daily, staging, local), into the scaffolded
+                    // project's aspire.config.json.
+                    //
+                    // The SDK version is written unconditionally so `aspire new --version` produces a
+                    // project pinned to the version it was scaffolded with; without it the AppHost and
+                    // the packages can resolve to different versions on the next restore. Implicit
+                    // channel selections are left unwritten so `aspire add`/`aspire restore` use the
+                    // user's ambient NuGet config without a per-project pin. Mirrors
                     // CliTemplateFactory.TypeScriptStarterTemplate and DotNetTemplateFactory.
+                    var config = AspireConfigFile.LoadOrCreate(outputPath, aspireVersion);
                     if (!string.IsNullOrEmpty(inputs.Channel))
                     {
-                        var config = AspireConfigFile.LoadOrCreate(outputPath);
                         config.Channel = inputs.Channel;
-                        config.Save(outputPath);
                     }
+                    config.Save(outputPath);
 
                     var appHostProject = _projectFactory.TryGetProject(new FileInfo(Path.Combine(outputPath, "AppHost.java")));
                     if (appHostProject is not IGuestAppHostSdkGenerator guestProject)
