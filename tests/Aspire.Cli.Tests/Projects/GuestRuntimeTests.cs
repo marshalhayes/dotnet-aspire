@@ -1175,7 +1175,12 @@ public class GuestRuntimeTests(ITestOutputHelper outputHelper)
         var dependencies = Path.Combine(workspace.WorkspaceRoot.FullName, "target", "dependency");
         Directory.CreateDirectory(dependencies);
         File.WriteAllText(Path.Combine(dependencies, "guava-32.0.0.jar"), "");
-        WriteStamp(workspace.WorkspaceRoot, DateTime.UtcNow);
+
+        // Age the workspace before stamping so the restage below is genuinely newer. Stamping at
+        // DateTime.UtcNow leaves the staged directory and the stamp within one clock tick on Windows,
+        // where UtcNow advances in ~15ms steps, and the directory timestamp never compares greater.
+        BackdateWorkspace(workspace.WorkspaceRoot, DateTime.UtcNow.AddMinutes(-2));
+        WriteStamp(workspace.WorkspaceRoot, DateTime.UtcNow.AddMinutes(-1));
 
         // Bumping a dependency stages a differently-named JAR. Nothing under the source roots changes,
         // so without the staged set as an input the AppHost keeps running bytecode compiled against
@@ -1302,12 +1307,19 @@ public class GuestRuntimeTests(ITestOutputHelper outputHelper)
             File.WriteAllText(path, "");
         }
 
-        WriteStamp(workspace.WorkspaceRoot, DateTime.UtcNow);
+        // Age the workspace before stamping. Stamping at DateTime.UtcNow leaves the real inputs and
+        // the stamp within one clock tick on Windows, where UtcNow advances in ~15ms steps, so an
+        // input can compare newer than the stamp and fail the check for a reason this test is not about.
+        BackdateWorkspace(workspace.WorkspaceRoot, DateTime.UtcNow.AddMinutes(-2));
+        WriteStamp(workspace.WorkspaceRoot, DateTime.UtcNow.AddMinutes(-1));
 
         foreach (var path in churn)
         {
             File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddMinutes(1));
-            File.SetLastWriteTimeUtc(Path.GetDirectoryName(path)!, DateTime.UtcNow.AddMinutes(1));
+
+            // Directories need Directory.SetLastWriteTimeUtc: the File overload opens the path without
+            // FILE_FLAG_BACKUP_SEMANTICS, which Windows refuses for a directory handle.
+            Directory.SetLastWriteTimeUtc(Path.GetDirectoryName(path)!, DateTime.UtcNow.AddMinutes(1));
         }
 
         var runtime = CreateRuntime(CreateUpToDateSpec());
@@ -1320,7 +1332,8 @@ public class GuestRuntimeTests(ITestOutputHelper outputHelper)
 
     [Fact]
     [SkipOnPlatform(TestPlatforms.Windows, "Directory permissions cannot be revoked this way on Windows, and root ignores them on Unix.")]
-    public async Task RunAsync_UpToDateCheckTreatsAnUnreadableInputTreeAsOutOfDateInsteadOfThrowing()    {
+    public async Task RunAsync_UpToDateCheckTreatsAnUnreadableInputTreeAsOutOfDateInsteadOfThrowing()
+    {
         Assert.SkipWhen(Environment.GetEnvironmentVariable("USER") == "root", "root bypasses directory permissions, so the traversal never fails.");
 
         using var workspace = TemporaryWorkspace.CreateForCli(outputHelper);

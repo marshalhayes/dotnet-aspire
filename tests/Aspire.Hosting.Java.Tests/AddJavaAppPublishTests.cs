@@ -873,7 +873,8 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
     }
 
     [Fact]
-    public void PublishingWithAWrapperOutsideTheBuildContextIsRejected()    {
+    public void PublishingWithAWrapperOutsideTheBuildContextIsRejected()
+    {
         using var workspace = TemporaryWorkspace.Create(outputHelper);
         var sourceDir = workspace.CreateDirectory("source");
         var siblingDir = workspace.CreateDirectory("sibling");
@@ -1319,7 +1320,8 @@ public class AddJavaAppPublishTests(ITestOutputHelper outputHelper)
         }
     }
 
-    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunDockerCommandAsync(string arguments, string workingDirectory)    {
+    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunDockerCommandAsync(string arguments, string workingDirectory)
+    {
         using var process = Process.Start(new ProcessStartInfo
         {
             FileName = "docker",

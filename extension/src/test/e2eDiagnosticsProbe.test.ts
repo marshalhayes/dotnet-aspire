@@ -74,8 +74,13 @@ suite('E2E diagnostics probe', () => {
             .flatMap(group => group.tabs)
             .map(tab => tab.input instanceof vscode.TabInputText ? tab.input.uri.fsPath : undefined);
 
+        // Compare through Uri.file the way the probe itself does. On Windows a path from os.tmpdir()
+        // keeps the drive letter VS Code lowercases, so `C:\Users\RUNNER~1\...` never string-matches
+        // the `c:\Users\RUNNER~1\...` a tab reports.
+        const expectedPath = vscode.Uri.file(filePath).fsPath;
+
         assert.ok(
-            openPaths.includes(filePath),
+            openPaths.includes(expectedPath),
             `Probing must not close an editor the caller already had open. Open tabs: ${JSON.stringify(openPaths)}`);
     });
 });

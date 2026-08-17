@@ -304,7 +304,8 @@ internal sealed class GuestRuntime
     /// the stamp therefore counts as up to date, which matches how make-style checks behave and is
     /// safe here because the stamp is written after the compile reads its inputs.
     /// </remarks>
-    private bool IsUpToDate(CommandUpToDateCheck check, FileInfo stampFile, FileInfo appHostFile, DirectoryInfo directory)    {
+    private bool IsUpToDate(CommandUpToDateCheck check, FileInfo stampFile, FileInfo appHostFile, DirectoryInfo directory)
+    {
         stampFile.Refresh();
         if (!stampFile.Exists)
         {
