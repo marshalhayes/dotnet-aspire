@@ -143,4 +143,85 @@ suite('loc/strings tests', () => {
 				launchingRunWithAppHost: 'Launching Aspire run session for AppHost {0}...',
 			});
 	});
+
+    test('no new loc string ships without a package.nls.json entry', () => {
+        // The two guards above only cover the rust*/java* prefixes, so the configuredCliPath* strings
+        // were added, shipped English-only, and passed CI - package.nls.json is the only input to the
+        // XLF catalog (see gulpfile.js), so a string that exists only in strings.ts never reaches
+        // translators. This guard covers every vscode.l10n.t export instead of a prefix, so the next
+        // omission fails here rather than in a localization drop.
+        //
+        // The allowlist is the set that predates the guard. It is deliberately an explicit list rather
+        // than a count: entries may be removed as strings are localized, but adding one means shipping
+        // a user-visible string untranslated and should be a conscious decision in review.
+        const knownUnlocalized = new Set([
+        'appHostStoppingDescription',
+        'aspireDashboard',
+        'aspireDebugSessionNotInitialized',
+        'browserDisplayName',
+        'browserLabel',
+        'codeLensCommand',
+        'codeLensDebugPipelineStep',
+        'codeLensOpenDashboard',
+        'codeLensResourceFailedToStart',
+        'codeLensResourceFailedToStartError',
+        'codeLensResourceNotStarted',
+        'codeLensResourceRunning',
+        'codeLensResourceRunningError',
+        'codeLensResourceRunningWarning',
+        'codeLensResourceRuntimeUnhealthy',
+        'codeLensResourceStarting',
+        'codeLensResourceStopped',
+        'codeLensResourceStoppedError',
+        'codeLensResourceStoppedErrorWithExitCode',
+        'codeLensResourceStoppedWithExitCode',
+        'codeLensResourceStopping',
+        'codeLensResourceValueMissing',
+        'codeLensResourceWaiting',
+        'codeLensRestart',
+        'codeLensRustAppHostAlreadyRunning',
+        'codeLensRustAppHostAlreadyRunningTooltip',
+        'codeLensRustAppHostUseAspire',
+        'codeLensRustAppHostUseAspireTooltip',
+        'codeLensStart',
+        'codeLensStop',
+        'codeLensViewAppHostLogs',
+        'codeLensViewLogs',
+        'dashboardLabel',
+        'defaultConfigurationName',
+        'errorFetchingAppHosts',
+        'errorMessage',
+        'healthCheckDescription',
+        'healthChecksLabel',
+        'logFileLabel',
+        'pidDescription',
+        'resourceCommandLogOpenFailed',
+        'resourceCommandOpenAppHostLog',
+        'resourceCommandOpenCliLog',
+        'resourceDescriptionExitCode',
+        'resourceDescriptionHealth',
+        'rpcServerAddressError',
+        'settingsLabel',
+        'tooltipEndpoints',
+        'tooltipHealth',
+        'tooltipState',
+        'tooltipType',
+        ]);
+
+        const extensionRoot = path.resolve(__dirname, '..', '..');
+        const stringsSource = fs.readFileSync(path.join(extensionRoot, 'src', 'loc', 'strings.ts'), 'utf8');
+        const packageNls = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'package.nls.json'), 'utf8')) as Record<string, string>;
+
+        const declarationPattern = /export\s+const\s+([A-Za-z0-9_]+)\s*=\s*(?:\([^)]*\)\s*=>\s*)?vscode\.l10n\.t\(/g;
+        const names = [...stringsSource.matchAll(declarationPattern)].map(match => match[1]);
+        assert.ok(names.length > 200, `Expected the declaration scan to find the loc strings, found ${names.length}.`);
+
+        const newlyMissing = names
+            .filter(name => packageNls[`aspire-vscode.strings.${name}`] === undefined)
+            .filter(name => !knownUnlocalized.has(name));
+        assert.deepStrictEqual(newlyMissing, [], 'Add an aspire-vscode.strings.* entry to package.nls.json for these, then run "yarn run localize".');
+
+        const localizedButAllowlisted = [...knownUnlocalized].filter(name => packageNls[`aspire-vscode.strings.${name}`] !== undefined);
+        assert.deepStrictEqual(localizedButAllowlisted, [], 'These strings are localized now - remove them from knownUnlocalized.');
+    });
 });

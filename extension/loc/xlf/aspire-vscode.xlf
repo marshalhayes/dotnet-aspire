@@ -523,6 +523,9 @@
     <trans-unit id="command.openTerminal">
       <source xml:lang="en">Open Aspire terminal</source>
     </trans-unit>
+    <trans-unit id="aspire-vscode.strings.configuredCliPathRejectedOpenSetting">
+      <source xml:lang="en">Open Setting</source>
+    </trans-unit>
     <trans-unit id="aspire-vscode.strings.openSettingsLabel">
       <source xml:lang="en">Open Settings</source>
     </trans-unit>
@@ -801,6 +804,9 @@
     </trans-unit>
     <trans-unit id="aspire-vscode.strings.resourceCommandOutputOpenFailed">
       <source xml:lang="en">The command completed, but its output could not be opened: {0}</source>
+    </trans-unit>
+    <trans-unit id="aspire-vscode.strings.configuredCliPathRejected">
+      <source xml:lang="en">The configured Aspire CLI path could not be used, so a different Aspire CLI is running instead: {0}. Check that aspire.aspireCliExecutablePath points to the aspire executable itself and that it runs.</source>
     </trans-unit>
     <trans-unit id="aspire-vscode.strings.azureFunctionsUnsupportedTaskShell">
       <source xml:lang="en">The configured VS Code task shell is not supported for Azure Functions launch arguments. Configure terminal.integrated.automationProfile to use PowerShell, Command Prompt, bash, zsh, fish, or WSL.</source>
