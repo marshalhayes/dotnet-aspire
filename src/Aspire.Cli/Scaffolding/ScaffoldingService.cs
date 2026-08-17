@@ -206,7 +206,7 @@ internal sealed class ScaffoldingService : IScaffoldingService
             else if (IsVsCodeSettingsFile(fileName) && File.Exists(filePath))
             {
                 var existingContent = await File.ReadAllTextAsync(filePath, cancellationToken);
-                contentToWrite = MergeVsCodeSettingsContent(existingContent, content);
+                contentToWrite = MergeVsCodeSettingsContent(existingContent, content, _logger);
             }
 
             await File.WriteAllTextAsync(filePath, contentToWrite, cancellationToken);
@@ -621,8 +621,17 @@ internal sealed class ScaffoldingService : IScaffoldingService
     /// comments are lost; that is the same tradeoff the package.json merge makes, and VS Code writes
     /// this file itself the same way.
     /// </para>
+    /// <para>
+    /// An existing file that cannot be parsed is returned unchanged. A settings.json broken mid-edit,
+    /// or using a JSONC construct this parser does not accept, still represents editor configuration
+    /// the developer accumulated, and silently replacing it with the scaffold's three settings is a
+    /// far worse outcome than skipping the merge. The caller reports the skip.
+    /// </para>
     /// </remarks>
-    internal static string MergeVsCodeSettingsContent(string existingContent, string scaffoldContent)
+    /// <param name="existingContent">Content already on disk.</param>
+    /// <param name="scaffoldContent">Content the scaffold wants to contribute.</param>
+    /// <param name="logger">Receives a warning when the existing file could not be parsed.</param>
+    internal static string MergeVsCodeSettingsContent(string existingContent, string scaffoldContent, ILogger? logger = null)
     {
         ArgumentNullException.ThrowIfNull(existingContent);
         ArgumentNullException.ThrowIfNull(scaffoldContent);
@@ -637,7 +646,10 @@ internal sealed class ScaffoldingService : IScaffoldingService
         // https://code.visualstudio.com/docs/languages/json#_json-with-comments
         if (ParseJsonC(existingContent) is not { } existing)
         {
-            return scaffoldContent;
+            logger?.LogWarning(
+                "The existing VS Code settings file could not be parsed, so Aspire's settings were not merged into it. " +
+                "Fix the JSON and re-run the command, or add the settings by hand.");
+            return existingContent;
         }
 
         var changed = false;

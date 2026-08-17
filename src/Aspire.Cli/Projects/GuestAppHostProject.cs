@@ -849,7 +849,36 @@ internal sealed class GuestAppHostProject : IAppHostProject, IGuestAppHostSdkGen
 
         AppHostEnvironmentDefaults.ApplyEffectiveEnvironment(environmentVariables, defaultEnvironment, inheritedEnvironmentVariables, args);
 
+        ForwardAppHostArguments(environmentVariables, args);
+
         return environmentVariables;
+    }
+
+    /// <summary>
+    /// Publishes the arguments the CLI also passes on the guest process command line into
+    /// <c>ASPIRE_APPHOST_ARGS</c>.
+    /// </summary>
+    /// <remarks>
+    /// Python, TypeScript and Rust AppHosts read the process arguments themselves
+    /// (<c>sys.argv[1:]</c>, <c>process.argv.slice(2)</c>, <c>std::env::args()</c>), so a builder
+    /// created without arguments still observes <c>--operation publish</c>. A JVM cannot do the
+    /// same: <c>main(String[])</c> is the only place those arguments exist, and
+    /// <c>ProcessHandle.current().info().arguments()</c> reports the JVM's own arguments (options
+    /// and main class) rather than the application's. Without this, a Java AppHost that calls
+    /// <c>CreateBuilder()</c> instead of <c>CreateBuilder(args)</c> silently runs the application
+    /// when the user asked to publish.
+    ///
+    /// Newline is the separator because it is the one character an argument never contains in
+    /// practice, whereas spaces are common in paths.
+    /// </remarks>
+    private static void ForwardAppHostArguments(IDictionary<string, string> environmentVariables, string[]? args)
+    {
+        if (args is not { Length: > 0 })
+        {
+            return;
+        }
+
+        environmentVariables["ASPIRE_APPHOST_ARGS"] = string.Join('\n', args);
     }
 
     private static void MergeLaunchProfileEnvironmentVariables(
@@ -1652,6 +1681,8 @@ internal sealed class GuestAppHostProject : IAppHostProject, IGuestAppHostSdkGen
         // Write generation hash for caching
         SaveGenerationHash(outputPath, integrationsList);
 
+        await PruneObsoleteGeneratedFilesAsync(outputPath, files.Keys, cancellationToken);
+
         _logger.LogInformation("Generated {Count} {CodeGenerator} files in {Path} ({WrittenCount} changed)",
             files.Count, codeGenerator, outputPath, writtenCount);
     }
@@ -1885,6 +1916,99 @@ internal sealed class GuestAppHostProject : IAppHostProject, IGuestAppHostSdkGen
     /// When project references are present, the hash is always unique to force regeneration
     /// since project outputs are mutable.
     /// </summary>
+    /// <summary>
+    /// Deletes generated files a previous generation wrote that the current one no longer produces,
+    /// and records the current set for the next run.
+    /// </summary>
+    /// <remarks>
+    /// Removing a package from <c>aspire.config.json</c>, or renaming a resource type, changes which
+    /// files the generator emits. Without pruning the old ones stay on disk, and for languages that
+    /// compile the generated sources in place that is not merely untidy: <c>javac</c> compiles
+    /// everything under the source root, so a leftover file referencing a type that no longer exists
+    /// fails the AppHost build outright, with an error pointing at generated code the user never wrote.
+    /// <para>
+    /// Only paths a previous run recorded in the manifest are eligible, so a file Aspire did not write
+    /// is never deleted - including on the first run, when no manifest exists yet. A failure to delete
+    /// or to write the manifest is not fatal: the worst case is the stale file surviving, which is the
+    /// behaviour before this existed.
+    /// </para>
+    /// </remarks>
+    internal static async Task PruneObsoleteGeneratedFilesAsync(
+        string outputPath,
+        IEnumerable<string> generatedRelativePaths,
+        CancellationToken cancellationToken)
+    {
+        var manifestPath = Path.Combine(outputPath, GeneratedManifestFileName);
+        var current = new HashSet<string>(generatedRelativePaths.Select(NormalizeManifestPath), StringComparer.Ordinal);
+
+        if (File.Exists(manifestPath))
+        {
+            try
+            {
+                foreach (var line in await File.ReadAllLinesAsync(manifestPath, cancellationToken).ConfigureAwait(false))
+                {
+                    var recorded = line.Trim();
+                    if (recorded.Length == 0 || current.Contains(NormalizeManifestPath(recorded)))
+                    {
+                        continue;
+                    }
+
+                    DeleteObsoleteGeneratedFile(outputPath, recorded);
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // An unreadable manifest only costs pruning for this run.
+            }
+        }
+
+        try
+        {
+            Directory.CreateDirectory(outputPath);
+            await File.WriteAllLinesAsync(manifestPath, current.Order(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Losing the manifest only means the next run cannot prune.
+        }
+    }
+
+    /// <summary>
+    /// Manifest of the files the last generation wrote, relative to the generated folder.
+    /// </summary>
+    private const string GeneratedManifestFileName = ".codegen-manifest";
+
+    /// <summary>
+    /// Stores manifest entries with forward slashes so a manifest written on Windows still prunes on
+    /// Unix, and vice versa, when a repository is shared between them.
+    /// </summary>
+    private static string NormalizeManifestPath(string path) => path.Replace('\\', '/');
+
+    private static void DeleteObsoleteGeneratedFile(string outputPath, string recordedRelativePath)
+    {
+        var fullPath = Path.GetFullPath(Path.Combine(outputPath, recordedRelativePath));
+
+        // A manifest is written by Aspire, but it is a file on disk in the user's repository, so a
+        // hand-edited or corrupted entry must not be able to reach outside the generated folder.
+        var root = Path.GetFullPath(outputPath);
+        if (!fullPath.StartsWith(root + Path.DirectorySeparatorChar, PathComparison))
+        {
+            return;
+        }
+
+        try
+        {
+            File.Delete(fullPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // A file that cannot be deleted is left alone; that is the pre-existing behaviour.
+        }
+    }
+
+    private static StringComparison PathComparison =>
+        OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+
     private static void SaveGenerationHash(string generatedPath, List<IntegrationReference> integrations)
     {
         var hashPath = Path.Combine(generatedPath, ".codegen-hash");

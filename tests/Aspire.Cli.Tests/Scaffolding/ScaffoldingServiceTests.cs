@@ -357,6 +357,29 @@ public class ScaffoldingServiceTests
     }
 
     [Fact]
+    public void MergeVsCodeSettingsContent_PreservesSettingsThatCannotBeParsed()
+    {
+        // A settings.json broken mid-edit, or one using a JSONC construct the parser does not accept.
+        // Overwriting it discards editor configuration the developer may have accumulated for years,
+        // and `aspire init` gives no warning that it happened.
+        var existingContent = """
+            {
+              "editor.formatOnSave": true,
+              "java.project.sourcePaths": ["src/main/java"
+            }
+            """;
+        var scaffoldContent = """
+            {
+              "java.project.sourcePaths": [".", ".aspire/modules"]
+            }
+            """;
+
+        var merged = ScaffoldingService.MergeVsCodeSettingsContent(existingContent, scaffoldContent);
+
+        Assert.Equal(existingContent, merged);
+    }
+
+    [Fact]
     public void MergeVsCodeSettingsContent_LeavesTheFileAloneWhenEverySettingIsAlreadyPresent()
     {
         // Nothing to add means nothing is rewritten, so comments and formatting survive re-running init.
@@ -376,11 +399,12 @@ public class ScaffoldingServiceTests
     }
 
     [Fact]
-    public void MergeVsCodeSettingsContent_KeepsTheScaffoldWhenTheExistingFileIsNotUsableJson()
+    public void MergeVsCodeSettingsContent_KeepsTheExistingFileWhenItIsNotUsableJson()
     {
+        // Preferring the scaffold here would silently discard the developer's whole settings file.
         var merged = ScaffoldingService.MergeVsCodeSettingsContent("not json at all", """{"a": 1}""");
 
-        Assert.Equal("""{"a": 1}""", merged);
+        Assert.Equal("not json at all", merged);
     }
 
     [Fact]

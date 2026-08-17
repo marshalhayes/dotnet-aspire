@@ -46,6 +46,50 @@ public class GuestAppHostProjectTests : IDisposable
     }
 
     [Fact]
+    public async Task PruneObsoleteGeneratedFilesAsync_RemovesFilesTheGeneratorNoLongerProduces()
+    {
+        var outputPath = Path.Combine(_workspace.WorkspaceRoot.FullName, ".aspire", "modules");
+        Directory.CreateDirectory(Path.Combine(outputPath, "aspire"));
+        var kept = Path.Combine(outputPath, "aspire", "Kept.java");
+        var obsolete = Path.Combine(outputPath, "aspire", "RemovedResource.java");
+        await File.WriteAllTextAsync(kept, "class Kept { }");
+        await File.WriteAllTextAsync(obsolete, "class RemovedResource { }");
+
+        // The first generation records what it wrote.
+        await GuestAppHostProject.PruneObsoleteGeneratedFilesAsync(
+            outputPath,
+            [Path.Combine("aspire", "Kept.java"), Path.Combine("aspire", "RemovedResource.java")],
+            CancellationToken.None);
+
+        // Dropping the package that produced RemovedResource.java means the generator stops emitting it.
+        // javac compiles everything under the source root, so leaving it behind fails the build with a
+        // reference to a type that no longer exists.
+        await GuestAppHostProject.PruneObsoleteGeneratedFilesAsync(
+            outputPath,
+            [Path.Combine("aspire", "Kept.java")],
+            CancellationToken.None);
+
+        Assert.True(File.Exists(kept));
+        Assert.False(File.Exists(obsolete));
+    }
+
+    [Fact]
+    public async Task PruneObsoleteGeneratedFilesAsync_LeavesFilesTheGeneratorNeverWrote()
+    {
+        var outputPath = Path.Combine(_workspace.WorkspaceRoot.FullName, ".aspire", "modules");
+        Directory.CreateDirectory(outputPath);
+        var handWritten = Path.Combine(outputPath, "HandWritten.java");
+        await File.WriteAllTextAsync(handWritten, "class HandWritten { }");
+
+        // Only files a previous generation recorded are eligible, so nothing Aspire did not write is
+        // ever deleted - including on the very first run, where there is no manifest at all.
+        await GuestAppHostProject.PruneObsoleteGeneratedFilesAsync(outputPath, ["Generated.java"], CancellationToken.None);
+        await GuestAppHostProject.PruneObsoleteGeneratedFilesAsync(outputPath, ["Generated.java"], CancellationToken.None);
+
+        Assert.True(File.Exists(handWritten));
+    }
+
+    [Fact]
     public async Task WriteGeneratedFileAsync_WhenContentIsUnchanged_LeavesTimestampAlone()
     {
         var filePath = Path.Combine(_workspace.WorkspaceRoot.FullName, "Generated.java");
@@ -548,6 +592,32 @@ public class GuestAppHostProjectTests : IDisposable
         Assert.Equal("https://localhost:17269", envVars["ASPIRE_DASHBOARD_OTLP_ENDPOINT_URL"]);
         Assert.Equal("https://localhost:18269", envVars["ASPIRE_RESOURCE_SERVICE_ENDPOINT_URL"]);
         Assert.False(envVars.ContainsKey("ASPIRE_ENVIRONMENT"));
+    }
+
+    [Fact]
+    public void CreateGuestEnvironmentVariables_ForwardsAppHostArgumentsForGuestsThatCannotReadArgv()
+    {
+        var envVars = GuestAppHostProject.CreateGuestEnvironmentVariables(
+            contextEnvironmentVariables: new Dictionary<string, string>(),
+            launchProfileEnvironmentVariables: null,
+            inheritedEnvironmentVariables: new Dictionary<string, string?>(),
+            args: ["--operation", "publish", "--step", "publish", "--output-path", "/tmp/out dir"]);
+
+        Assert.Equal(
+            "--operation\npublish\n--step\npublish\n--output-path\n/tmp/out dir",
+            envVars["ASPIRE_APPHOST_ARGS"]);
+    }
+
+    [Fact]
+    public void CreateGuestEnvironmentVariables_DoesNotForwardAppHostArgumentsWhenThereAreNone()
+    {
+        var envVars = GuestAppHostProject.CreateGuestEnvironmentVariables(
+            contextEnvironmentVariables: new Dictionary<string, string>(),
+            launchProfileEnvironmentVariables: null,
+            inheritedEnvironmentVariables: new Dictionary<string, string?>(),
+            args: []);
+
+        Assert.False(envVars.ContainsKey("ASPIRE_APPHOST_ARGS"));
     }
 
     [Fact]
