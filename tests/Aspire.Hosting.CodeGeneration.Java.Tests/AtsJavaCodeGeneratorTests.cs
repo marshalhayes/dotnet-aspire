@@ -559,4 +559,62 @@ public class AtsJavaCodeGeneratorTests
         var hostingAssembly = typeof(DistributedApplication).Assembly;
         return (testAssembly, hostingAssembly);
     }
+
+    [Theory]
+    [InlineData("Default", "default_", "Default_")]
+    [InlineData("Package", "package_", "Package_")]
+    [InlineData("Class", "class_", "Class_")]
+    [InlineData("Native", "native_", "Native_")]
+    public void GenerateDistributedApplication_EscapesDtoPropertiesNamedAfterJavaKeywords(
+        string propertyName,
+        string expectedField,
+        string expectedAccessorSuffix)
+    {
+        // A DTO property whose name lowercases to a Java keyword produces source that javac rejects
+        // outright - `private String default;` is not parseable - so the generated SDK would fail to
+        // compile the first time any integration exposes such a property. Rust escapes every generated
+        // identifier through SanitizeIdentifier (r# prefix); Java only escaped type names, leaving
+        // fields, accessors and parameters unescaped.
+        //
+        // `Class` additionally collides with the final java.lang.Object.getClass(), which cannot be
+        // overridden, so the accessor name has to follow the escaped field rather than the raw property.
+        var context = CreateContextWithSingleDtoProperty(propertyName);
+
+        var generated = JoinGeneratedFiles(_generator.GenerateDistributedApplication(context));
+
+        Assert.Contains($"private String {expectedField};", generated);
+        Assert.Contains($"public String get{expectedAccessorSuffix}() {{ return {expectedField}; }}", generated);
+        Assert.Contains($"public void set{expectedAccessorSuffix}(String value) {{ this.{expectedField} = value; }}", generated);
+
+        // The transport key stays the original property name: escaping is a Java source concern and
+        // must not change the shape of the wire payload the .NET host reads and writes.
+        Assert.Contains($"map.get(\"{propertyName}\")", generated);
+        Assert.Contains($"map.put(\"{propertyName}\", AspireClient.serializeValue({expectedField}))", generated);
+    }
+
+    private static AtsContext CreateContextWithSingleDtoProperty(string propertyName)
+    {
+        return new AtsContext
+        {
+            Capabilities = [],
+            HandleTypes = [],
+            EnumTypes = [],
+            DtoTypes =
+            [
+                new AtsDtoTypeInfo
+                {
+                    Name = "KeywordProbe",
+                    TypeId = "KeywordProbe",
+                    Properties =
+                    [
+                        new AtsDtoPropertyInfo
+                        {
+                            Name = propertyName,
+                            Type = new AtsTypeRef { TypeId = "string", Category = AtsTypeCategory.Primitive }
+                        }
+                    ]
+                }
+            ]
+        };
+    }
 }

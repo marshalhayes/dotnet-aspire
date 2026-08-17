@@ -736,7 +736,10 @@ internal sealed class AtsJavaCodeGenerator : ICodeGenerator
             foreach (var property in dto.Properties)
             {
                 var fieldName = ToCamelCase(property.Name);
-                var methodName = ToPascalCase(property.Name);
+                // Derived from the escaped field rather than the raw property name so the accessor and the
+                // field stay in step, and so a property named `Class` becomes getClass_() instead of
+                // colliding with the final java.lang.Object.getClass(), which cannot be overridden.
+                var methodName = ToPascalCase(fieldName);
                 var fieldType = MapDtoFieldTypeToJava(property);
                 
                 WriteLine($"    public {fieldType} get{methodName}() {{ return {fieldName}; }}");
@@ -757,7 +760,7 @@ internal sealed class AtsJavaCodeGenerator : ICodeGenerator
                     continue;
                 }
                 var fieldName = ToCamelCase(property.Name);
-                var methodName = ToPascalCase(property.Name);
+                var methodName = ToPascalCase(fieldName);
                 var transportValueName = $"{fieldName}Value";
                 WriteLine($"        var {transportValueName} = map.get(\"{property.Name}\");");
                 WriteLine($"        value.set{methodName}({RenderJavaDtoPropertyTransportValueConversion(property.Type, transportValueName, property.IsOptional)});");
@@ -2688,19 +2691,29 @@ internal sealed class AtsJavaCodeGenerator : ICodeGenerator
     }
 
     /// <summary>
-    /// Converts a name to camelCase for Java field/variable names.
+    /// Converts a name to camelCase for Java field, parameter and local variable names, escaping any
+    /// result that collides with a Java keyword.
     /// </summary>
+    /// <remarks>
+    /// Only type names used to route through <see cref="SanitizeIdentifier"/>, so a capability parameter
+    /// or DTO property named <c>Default</c>, <c>Package</c> or <c>Class</c> emitted <c>default</c>,
+    /// <c>package</c> or <c>class</c> as a bare identifier and javac rejected the generated SDK outright.
+    /// The Rust generator escapes every identifier it emits (<c>r#</c> prefix); this keeps Java at parity.
+    /// The trailing underscore is the convention the JLS leaves available, since no keyword ends in one.
+    /// <para>
+    /// This only changes Java source. Transport keys are emitted from the original property name, so the
+    /// wire payload exchanged with the .NET host is unaffected.
+    /// </para>
+    /// </remarks>
     private static string ToCamelCase(string name)
     {
         if (string.IsNullOrEmpty(name))
         {
             return name;
         }
-        if (char.IsLower(name[0]))
-        {
-            return name;
-        }
-        return char.ToLowerInvariant(name[0]) + name[1..];
+
+        var camelCase = char.IsLower(name[0]) ? name : char.ToLowerInvariant(name[0]) + name[1..];
+        return s_javaKeywords.Contains(camelCase) ? camelCase + "_" : camelCase;
     }
 
     /// <summary>
