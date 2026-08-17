@@ -369,14 +369,6 @@ export async function waitForEditorTitle(expectedText: string, timeoutMs = 60000
 }
 
 /**
- * Opens a file's editor and waits for a CodeLens matching <paramref name="expectedText"/>.
- *
- * Both steps race the editor: `openResources` returns before VS Code has created the tab, so
- * `openEditor` throws until it exists, and the lenses are produced asynchronously by the provider
- * afterwards, so the first successful read is routinely empty. Polling the pair together is what makes
- * the assertion about the lens rather than about how quickly the editor settled.
- */
-/**
  * Waits for a CodeLens whose text contains <paramref name="expectedText"/> in the named editor.
  *
  * The widget spans are read directly rather than through `TextEditor.getCodeLenses()` because that

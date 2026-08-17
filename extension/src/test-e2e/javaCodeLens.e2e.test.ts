@@ -1,7 +1,8 @@
 import * as assert from 'assert';
 import { getJavaAppHostSourcePath, prepareJavaWorkspace, waitForJavaLanguageServerImport } from './helpers/java';
 import { executeE2eControlCommand } from './helpers/fixtures';
-import { closeAllEditors, waitForCodeLensText } from './helpers/vscode';
+import { isSamePath } from './helpers/assertions';
+import { closeAllEditors, waitForCodeLensText, waitForEditorTitle } from './helpers/vscode';
 
 suite('Java AppHost CodeLens E2E', function () {
     // Matches the other Java specs: the language server import below is allowed 15 minutes on a cold
@@ -34,10 +35,13 @@ suite('Java AppHost CodeLens E2E', function () {
         // active editor - so a silent no-op fails here instead of three minutes later as a blank wait.
         const opened = await executeE2eControlCommand({ name: 'openFile', filePath: appHostPath });
         const openedFileName = (opened.result as { fileName?: string } | undefined)?.fileName;
-        assert.strictEqual(
-            openedFileName,
-            appHostPath,
+        assert.ok(
+            openedFileName && isSamePath(openedFileName, appHostPath),
             `expected '${appHostPath}' to be the active editor, got '${openedFileName ?? '<no active editor>'}'`);
+
+        // The command reports the extension host's view; this proves the tab actually rendered,
+        // which is the specific thing that was missing when the window sat on the welcome screen.
+        await waitForEditorTitle('AppHost.java');
 
         // The tab now exists, but the lenses are produced asynchronously after that, so this is
         // polled rather than read once. The suiteSetup guarantees the Java language server reached
