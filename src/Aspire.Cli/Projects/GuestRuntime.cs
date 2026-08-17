@@ -304,8 +304,7 @@ internal sealed class GuestRuntime
     /// the stamp therefore counts as up to date, which matches how make-style checks behave and is
     /// safe here because the stamp is written after the compile reads its inputs.
     /// </remarks>
-    private bool IsUpToDate(CommandUpToDateCheck check, FileInfo stampFile, FileInfo appHostFile, DirectoryInfo directory)
-    {
+    private bool IsUpToDate(CommandUpToDateCheck check, FileInfo stampFile, FileInfo appHostFile, DirectoryInfo directory)    {
         stampFile.Refresh();
         if (!stampFile.Exists)
         {
@@ -313,6 +312,7 @@ internal sealed class GuestRuntime
         }
 
         var stampWriteTime = stampFile.LastWriteTimeUtc;
+        var stampDirectory = stampFile.Directory?.FullName;
         var inputs = ReplacePlaceholders(check.Inputs, appHostFile, directory, null);
 
         foreach (var input in inputs)
@@ -342,7 +342,6 @@ internal sealed class GuestRuntime
                 continue;
             }
 
-            var searchOption = recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
             try
             {
                 // A directory's own timestamp moves when an entry is added, removed, or renamed inside
@@ -361,30 +360,55 @@ internal sealed class GuestRuntime
                     return false;
                 }
 
-                if (recursive)
-                {
-                    foreach (var subdirectory in Directory.EnumerateDirectories(path, "*", SearchOption.AllDirectories))
-                    {
-                        if (Directory.GetLastWriteTimeUtc(subdirectory) > stampWriteTime)
-                        {
-                            return false;
-                        }
-                    }
-                }
-
                 // EnumerateFiles is lazy: the traversal - and any IOException or
                 // UnauthorizedAccessException an unreadable subdirectory raises - happens while the
                 // foreach pulls from it, not at the call. Iterating inside the same try is what puts
                 // that failure in front of this catch; enumerating outside it let an unreadable tree
                 // abort AppHost startup instead of falling back to running the command.
-                foreach (var file in Directory.EnumerateFiles(path, "*", searchOption))
+                foreach (var file in Directory.EnumerateFiles(path))
                 {
-                    if (!MatchesExtension(check, file))
+                    if (MatchesExtension(check, file) && File.GetLastWriteTimeUtc(file) > stampWriteTime)
                     {
-                        continue;
+                        return false;
+                    }
+                }
+
+                if (!recursive)
+                {
+                    continue;
+                }
+
+                foreach (var subdirectory in EnumerateInputDirectories(path, stampDirectory))
+                {
+                    // Unlike the declared root above, a subdirectory's own timestamp only counts when
+                    // the directory still holds inputs, or holds nothing at all. A recursive input
+                    // reaches whatever happens to sit under it - a log directory, a tool's scratch
+                    // space - and the timestamp rule ignores the extension filter, so checking every
+                    // subdirectory would let any unrelated write force a rebuild, and a command that
+                    // writes under its own input root would never settle. An emptied directory is
+                    // kept because that is exactly what deleting the last input in a package looks
+                    // like, and a delete is the one change no file timestamp can reveal.
+                    var holdsInputs = false;
+                    var holdsFiles = false;
+
+                    foreach (var file in Directory.EnumerateFiles(subdirectory))
+                    {
+                        holdsFiles = true;
+
+                        if (!MatchesExtension(check, file))
+                        {
+                            continue;
+                        }
+
+                        holdsInputs = true;
+
+                        if (File.GetLastWriteTimeUtc(file) > stampWriteTime)
+                        {
+                            return false;
+                        }
                     }
 
-                    if (File.GetLastWriteTimeUtc(file) > stampWriteTime)
+                    if ((holdsInputs || !holdsFiles) && Directory.GetLastWriteTimeUtc(subdirectory) > stampWriteTime)
                     {
                         return false;
                     }
@@ -400,6 +424,72 @@ internal sealed class GuestRuntime
 
         return true;
     }
+
+    /// <summary>
+    /// Enumerates the subdirectories of <paramref name="root"/>, skipping trees that cannot hold an
+    /// input.
+    /// </summary>
+    /// <remarks>
+    /// Lazy on purpose: an <see cref="IOException"/> or <see cref="UnauthorizedAccessException"/> from
+    /// an unreadable subdirectory has to surface while the caller is iterating, inside the caller's
+    /// try, rather than at the call.
+    /// </remarks>
+    private static IEnumerable<string> EnumerateInputDirectories(string root, string? outputDirectory)
+    {
+        var pending = new Stack<string>();
+        pending.Push(root);
+
+        while (pending.Count > 0)
+        {
+            foreach (var child in Directory.EnumerateDirectories(pending.Pop()))
+            {
+                if (IsNeverAnInput(child, outputDirectory))
+                {
+                    continue;
+                }
+
+                yield return child;
+                pending.Push(child);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Returns whether a directory can be skipped entirely while scanning a recursive input.
+    /// </summary>
+    /// <remarks>
+    /// A recursive input has to descend to be correct - a source in a package subdirectory is
+    /// compiled, and rewriting it in place moves no ancestor's timestamp - but descending everywhere
+    /// costs the launch time the check exists to save, and would let the command's own outputs
+    /// invalidate the check that produced them.
+    /// <para>
+    /// Dot-directories are tooling state (<c>.git</c>, <c>.gradle</c>, <c>.idea</c>) rather than
+    /// sources, and no language here has a package or module segment that may begin with a dot. The
+    /// generated SDK lives in one and is declared as its own input, so it stays tracked.
+    /// </para>
+    /// </remarks>
+    private static bool IsNeverAnInput(string directory, string? outputDirectory)
+    {
+        var name = Path.GetFileName(directory.AsSpan());
+
+        if (name.StartsWith("."))
+        {
+            return true;
+        }
+
+        // A dependency tree, never a first-party source root, and by far the largest thing likely to
+        // sit beside an AppHost.
+        if (name.Equals("node_modules", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return outputDirectory is not null
+            && string.Equals(directory, outputDirectory, PathComparison);
+    }
+
+    private static StringComparison PathComparison =>
+        OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
 
     private static bool MatchesExtension(CommandUpToDateCheck check, string path)
     {

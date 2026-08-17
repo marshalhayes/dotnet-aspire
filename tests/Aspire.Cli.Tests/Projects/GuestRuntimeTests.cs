@@ -1221,15 +1221,94 @@ public class GuestRuntimeTests(ITestOutputHelper outputHelper)
         using var workspace = TemporaryWorkspace.CreateForCli(outputHelper);
         var appHostFile = CreateUpToDateWorkspace(workspace.WorkspaceRoot);
 
-        // "." is declared without the recursive marker specifically so that unrelated sibling trees --
-        // a node_modules directory, another service's sources -- neither invalidate the compile nor
-        // have to be walked on every launch. The tree is in place before the stamp, as it would be in
-        // a real workspace; what must not register is the churn *inside* it afterwards.
-        var unrelated = Path.Combine(workspace.WorkspaceRoot.FullName, "frontend", "node_modules", "Vendored.java");
+        // A directory input without the recursive marker is scanned top-level only, so churn deeper
+        // inside it neither invalidates the command nor has to be walked. The tree is in place before
+        // the stamp, as it would be in a real workspace; what must not register is the churn *inside*
+        // it afterwards.
+        var unrelated = Path.Combine(workspace.WorkspaceRoot.FullName, "vendor", "nested", "Vendored.java");
         Directory.CreateDirectory(Path.GetDirectoryName(unrelated)!);
         File.WriteAllText(unrelated, "");
         WriteStamp(workspace.WorkspaceRoot, DateTime.UtcNow);
         File.SetLastWriteTimeUtc(unrelated, DateTime.UtcNow.AddMinutes(1));
+
+        var spec = CreateTestSpec(
+            execute: new CommandSpec { Command = "java", Args = ["AppHost"] },
+            preExecute:
+            [
+                new CommandSpec
+                {
+                    Command = "javac",
+                    Args = ["-d", "classes", "{appHostFile}"],
+                    UpToDateCheck = new CommandUpToDateCheck
+                    {
+                        Inputs = ["{appHostFile}", "vendor"],
+                        FileExtensions = [".java"],
+                        StampFile = Path.Combine("classes", ".aspire-compile-stamp")
+                    }
+                }
+            ]);
+
+        var runtime = CreateRuntime(spec);
+        var launcher = new RecordingLauncher();
+
+        await runtime.RunAsync(appHostFile, workspace.WorkspaceRoot, new Dictionary<string, string>(), watchMode: false, launcher, CancellationToken.None);
+
+        Assert.DoesNotContain(launcher.Calls, call => call.Command == "javac");
+    }
+
+    [Fact]
+    public async Task RunAsync_UpToDateCheckSeesAnEditToANestedPackageUnderTheAppHostDirectory()
+    {
+        using var workspace = TemporaryWorkspace.CreateForCli(outputHelper);
+        var appHostFile = CreateUpToDateWorkspace(workspace.WorkspaceRoot);
+
+        // javac is given no -classpath and no -sourcepath, so its source path defaults to the user
+        // class path, which defaults to the current directory. A helper class in a package beside the
+        // AppHost is therefore compiled implicitly, and its .class lands in the output directory the
+        // AppHost runs from. Rewriting that file in place moves neither the AppHost directory's mtime
+        // nor any top-level file, so a check that does not descend keeps stale bytecode.
+        var nested = Path.Combine(workspace.WorkspaceRoot.FullName, "config", "Resources.java");
+        Directory.CreateDirectory(Path.GetDirectoryName(nested)!);
+        File.WriteAllText(nested, "class Resources { }");
+        WriteStamp(workspace.WorkspaceRoot, DateTime.UtcNow);
+        File.SetLastWriteTimeUtc(nested, DateTime.UtcNow.AddMinutes(1));
+
+        var runtime = CreateRuntime(CreateUpToDateSpec());
+        var launcher = new RecordingLauncher();
+
+        await runtime.RunAsync(appHostFile, workspace.WorkspaceRoot, new Dictionary<string, string>(), watchMode: false, launcher, CancellationToken.None);
+
+        Assert.Contains(launcher.Calls, call => call.Command == "javac");
+    }
+
+    [Fact]
+    public async Task RunAsync_UpToDateCheckIgnoresChurnInDirectoriesThatCannotHoldJavaPackages()
+    {
+        using var workspace = TemporaryWorkspace.CreateForCli(outputHelper);
+        var appHostFile = CreateUpToDateWorkspace(workspace.WorkspaceRoot);
+
+        // The output directory holds the stamp itself, and a dependency or tooling directory is not a
+        // source root, so neither may drag the compile back out of date once it has settled.
+        var churn = new[]
+        {
+            Path.Combine(workspace.WorkspaceRoot.FullName, "classes", "config", "Resources.class"),
+            Path.Combine(workspace.WorkspaceRoot.FullName, "node_modules", "vendor", "Vendored.java"),
+            Path.Combine(workspace.WorkspaceRoot.FullName, ".gradle", "caches", "Cached.java")
+        };
+
+        foreach (var path in churn)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, "");
+        }
+
+        WriteStamp(workspace.WorkspaceRoot, DateTime.UtcNow);
+
+        foreach (var path in churn)
+        {
+            File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddMinutes(1));
+            File.SetLastWriteTimeUtc(Path.GetDirectoryName(path)!, DateTime.UtcNow.AddMinutes(1));
+        }
 
         var runtime = CreateRuntime(CreateUpToDateSpec());
         var launcher = new RecordingLauncher();
@@ -1241,8 +1320,7 @@ public class GuestRuntimeTests(ITestOutputHelper outputHelper)
 
     [Fact]
     [SkipOnPlatform(TestPlatforms.Windows, "Directory permissions cannot be revoked this way on Windows, and root ignores them on Unix.")]
-    public async Task RunAsync_UpToDateCheckTreatsAnUnreadableInputTreeAsOutOfDateInsteadOfThrowing()
-    {
+    public async Task RunAsync_UpToDateCheckTreatsAnUnreadableInputTreeAsOutOfDateInsteadOfThrowing()    {
         Assert.SkipWhen(Environment.GetEnvironmentVariable("USER") == "root", "root bypasses directory permissions, so the traversal never fails.");
 
         using var workspace = TemporaryWorkspace.CreateForCli(outputHelper);
@@ -1310,7 +1388,7 @@ public class GuestRuntimeTests(ITestOutputHelper outputHelper)
                     Args = ["-d", "classes", "{appHostFile}"],
                     UpToDateCheck = new CommandUpToDateCheck
                     {
-                        Inputs = ["{appHostFile}", ".", ".aspire/modules/**", "src/main/java/**", .. extraInputs ?? []],
+                        Inputs = ["{appHostFile}", "./**", ".aspire/modules/**", "src/main/java/**", .. extraInputs ?? []],
                         FileExtensions = [".java"],
                         StampFile = Path.Combine("classes", ".aspire-compile-stamp")
                     }

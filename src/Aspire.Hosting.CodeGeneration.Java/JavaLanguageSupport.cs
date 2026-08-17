@@ -197,9 +197,12 @@ internal sealed class JavaLanguageSupport : ILanguageSupport
     /// <para>
     /// The inputs are exactly javac's source roots: the AppHost file, the sources beside it, the
     /// generated SDK, and <c>src/main/java</c> for the layout where the AppHost sits at the project
-    /// root. The AppHost directory is deliberately not recursive — the sibling trees in a typical
-    /// solution (a JavaScript front end, another service) are not javac inputs, and walking them on
-    /// every launch would give back the time this saves.
+    /// root. The AppHost directory is recursive because javac is given no <c>-sourcepath</c>, so its
+    /// source path defaults to the user class path and therefore to the AppHost directory: a helper
+    /// class in a package beside the AppHost is compiled implicitly, and rewriting it in place moves
+    /// no ancestor's timestamp. The scan prunes the trees that cannot hold a package - dot
+    /// directories, <c>node_modules</c>, and javac's own output - so the sibling trees in a typical
+    /// solution do not give back the time this saves.
     /// </para>
     /// </remarks>
     /// <param name="classOutputDirectory">Directory javac writes classes to, which is where the stamp lives.</param>
@@ -210,7 +213,7 @@ internal sealed class JavaLanguageSupport : ILanguageSupport
             Inputs =
             [
                 "{appHostFile}",
-                ".",
+                "./**",
                 $"{GeneratedSourcesDirectory}/**",
                 "src/main/java/**"
             ],
