@@ -1,13 +1,21 @@
 import * as assert from 'assert';
 import { VSBrowser } from 'vscode-extension-tester';
-import { getJavaAppHostSourcePath, prepareJavaWorkspace } from './helpers/java';
+import { getJavaAppHostSourcePath, prepareJavaWorkspace, waitForJavaLanguageServerImport } from './helpers/java';
 import { closeAllEditors, waitForCodeLensText } from './helpers/vscode';
 
 suite('Java AppHost CodeLens E2E', function () {
-    this.timeout(300000);
+    // Matches the other Java specs: the language server import below is allowed 15 minutes on a cold
+    // runner, so a 5 minute suite budget would abort the setup rather than the thing it waits for.
+    this.timeout(1800000);
 
     suiteSetup(async () => {
         await prepareJavaWorkspace();
+
+        // VS Code renders one merged CodeLens set per document, so a `java` file shows nothing at all
+        // until every registered provider has answered - including redhat.java's. On a cold CI runner
+        // that server is still importing, which is how this spec timed out with `CodeLenses: (none)`
+        // while the Aspire lens itself was ready. The other two Java specs already wait here.
+        await waitForJavaLanguageServerImport();
     });
 
     suiteTeardown(async () => {
