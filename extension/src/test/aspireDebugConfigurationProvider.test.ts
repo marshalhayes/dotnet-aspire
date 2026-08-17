@@ -781,6 +781,48 @@ suite('AspireDebugConfigurationProvider', () => {
         assert.strictEqual(config.resolvedCliPath, '/verified/aspire');
     });
 
+    test('re-resolves the CLI against the substituted program when variables named another folder', async () => {
+        const folderA = createWorkspaceFolder(path.join(tempDir, 'workspace-a'));
+        const folderB = createWorkspaceFolder(path.join(tempDir, 'workspace-b'));
+        const programPath = path.join(folderB.uri.fsPath, 'AppHost.java');
+        const provider = new AspireDebugConfigurationProvider(createAppHostDiscoveryService(programPath), launchReservation);
+        sandbox.stub(vscode.workspace, 'getWorkspaceFolder').callsFake(uri => {
+            if (uri.fsPath.startsWith(folderA.uri.fsPath)) {
+                return folderA;
+            }
+            if (uri.fsPath.startsWith(folderB.uri.fsPath)) {
+                return folderB;
+            }
+            return undefined;
+        });
+        const resolveCliPathStub = sandbox.stub(cliPathModule, 'resolveCliPath').callsFake(async (target: unknown) => {
+            const isFolderB = JSON.stringify(target) === JSON.stringify(workspaceFolderCliPathTarget(folderB));
+            return { cliPath: isFolderB ? '/workspace-b/bin/aspire' : '/workspace-a/bin/aspire', available: true, source: 'configured' } as never;
+        });
+
+        // The gate runs before substitution, so ${workspaceFolder:workspace-b} is still literal and the
+        // only folder available is the initiating one. That first answer must not be final.
+        const gatedConfig = await provider.resolveDebugConfiguration(folderA, {
+            name: 'Debug AppHost',
+            type: 'aspire',
+            request: 'launch',
+            program: '${workspaceFolder:workspace-b}/AppHost.java',
+        } as AspireExtendedDebugConfiguration);
+
+        assert.ok(gatedConfig);
+
+        // VS Code substitutes variables in place and passes the same configuration to this hook, so
+        // the owning folder is now knowable and the CLI must be re-resolved against it.
+        (gatedConfig as AspireExtendedDebugConfiguration).program = programPath;
+        const config = await provider.resolveDebugConfigurationWithSubstitutedVariables(
+            folderA,
+            gatedConfig as AspireExtendedDebugConfiguration) as AspireExtendedDebugConfiguration | undefined;
+
+        assert.ok(config);
+        assert.strictEqual(config.resolvedCliPath, '/workspace-b/bin/aspire');
+        assert.ok(resolveCliPathStub.calledWith(workspaceFolderCliPathTarget(folderB)));
+    });
+
     test('resolveDebugConfigurationWithSubstitutedVariables removes internal skip flag before launch', async () => {
         const provider = new AspireDebugConfigurationProvider(createAppHostDiscoveryService('/repo/AppHost.csproj'), launchReservation);
 

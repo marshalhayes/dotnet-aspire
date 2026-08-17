@@ -1561,6 +1561,79 @@ var builder = Aspire.Hosting.DistributedApplication.CreateBuilder(args);
         assert.strictEqual(stopDebuggingStub.callCount, 4);
     });
 
+    test('stopDebugging reserves budget for the AppHost stop when a resource adapter never acknowledges', async () => {
+        // A debug adapter suspended at a breakpoint does not acknowledge stopDebugging() until its
+        // runtime resumes, so it consumes whatever budget it is given. When every phase shared one
+        // deadline, that left the AppHost stop with 0ms: it timed out immediately, the AppHost
+        // process kept running, and its resources stayed in the Call Stack pane after the debug
+        // session disappeared. The reserve exists so the AppHost and parent stops still land.
+        const parentDebugSession = {
+            id: 'aspire-session',
+            type: 'aspire',
+            name: 'Aspire',
+            workspaceFolder: undefined,
+            configuration: {
+                type: 'aspire',
+                request: 'launch',
+                name: 'Aspire',
+                program: '/workspace/apphost.java',
+                command: 'run',
+            },
+            customRequest: sinon.stub(),
+            getDebugProtocolBreakpoint: sinon.stub(),
+        };
+        const appHostDebugSession = {
+            id: 'apphost-session',
+            type: 'java',
+            name: 'AppHost',
+            configuration: { type: 'java', request: 'launch', name: 'AppHost' },
+        };
+        const suspendedResourceDebugSession = {
+            id: 'suspended-resource-session',
+            type: 'java',
+            name: 'catalog',
+            configuration: { type: 'java', request: 'attach', name: 'catalog' },
+        };
+        const terminalProvider = {
+            isCliDebugLoggingEnabled: () => false,
+        };
+
+        const stopDebuggingStub = sinon.stub(vscode.debug, 'stopDebugging').callsFake(async session => {
+            if (session === (suspendedResourceDebugSession as unknown as vscode.DebugSession)) {
+                // Never settles, exactly like an adapter stopped at a breakpoint.
+                return new Promise<void>(() => { });
+            }
+
+            if (session === (appHostDebugSession as unknown as vscode.DebugSession)) {
+                // Deliberately non-instant. A stop that resolves in the same microtask would win the
+                // race even against a 0ms budget, so the test would pass without the reserve.
+                await new Promise<void>(resolve => setTimeout(resolve, 50));
+            }
+        });
+
+        const aspireDebugSession = new AspireDebugSession(parentDebugSession as unknown as vscode.DebugSession, {} as any, {} as any, terminalProvider as any, () => { });
+        (aspireDebugSession as any)._appHostDebugSession = {
+            id: appHostDebugSession.id,
+            session: appHostDebugSession as unknown as vscode.DebugSession,
+            stopSession: () => vscode.debug.stopDebugging(appHostDebugSession as unknown as vscode.DebugSession),
+        };
+        (aspireDebugSession as any)._resourceDebugSessions = [
+            {
+                id: suspendedResourceDebugSession.id,
+                session: suspendedResourceDebugSession as unknown as vscode.DebugSession,
+                stopSession: () => vscode.debug.stopDebugging(suspendedResourceDebugSession as unknown as vscode.DebugSession),
+            },
+        ];
+
+        // The suspended resource still times out, and that failure has to reach the caller.
+        await assert.rejects(() => aspireDebugSession.stopDebugging());
+
+        assert.strictEqual((aspireDebugSession as any)._appHostStopped, true, 'AppHost stop must be confirmed even when a resource adapter never acknowledges');
+        assert.strictEqual((aspireDebugSession as any)._parentStopped, true, 'Aspire parent stop must be confirmed even when a resource adapter never acknowledges');
+        assert.ok(stopDebuggingStub.calledWith(appHostDebugSession as unknown as vscode.DebugSession));
+        assert.ok(stopDebuggingStub.calledWith(parentDebugSession as unknown as vscode.DebugSession));
+    });
+
     test('stopDebugging still stops the Aspire parent session when AppHost stop fails', async () => {
         const parentDebugSession = {
             id: 'aspire-session',
@@ -2091,7 +2164,7 @@ var builder = Aspire.Hosting.DistributedApplication.CreateBuilder(args);
         const shutdown = aspireDebugSession.stopDebugging();
         await clock.tickAsync(10_001);
 
-        await assert.rejects(shutdown, /Timed out after 10 seconds waiting for debug session 'Resource' to start/);
+        await assert.rejects(shutdown, /Timed out after 6 seconds waiting for debug session 'Resource' to start/);
 
         resolveStart!(true);
         startSessionCallback?.(resourceDebugSession as unknown as vscode.DebugSession);
@@ -2308,15 +2381,17 @@ var builder = Aspire.Hosting.DistributedApplication.CreateBuilder(args);
         ];
 
         const stopPromise = aspireDebugSession.stopDebugging();
-        // Just short of the budget the shutdown is still waiting on the resource, so nothing else
-        // has been stopped yet: the ordering is honoured right up to the deadline.
-        await clock.tickAsync(9_000);
+        // Just short of the resource budget the shutdown is still waiting on the resource, so nothing
+        // else has been stopped yet: the ordering is honoured right up to the resource deadline.
+        await clock.tickAsync(5_000);
         assert.strictEqual(stopDebuggingStub.callCount, 0, 'The AppHost must not be stopped while a resource stop is still within budget');
 
         await clock.tickAsync(2_000);
 
         await assert.rejects(stopPromise, (err: Error) => {
-            assert.strictEqual(err.message, debugSessionStopTimedOut('Wedged resource', 10));
+            // Six, not ten: the resource phase runs against the reserved deadline so the AppHost and
+            // parent stops still have a usable budget after a wedged resource consumes its own.
+            assert.strictEqual(err.message, debugSessionStopTimedOut('Wedged resource', 6));
             return true;
         });
         // Giving up on the resource must not abandon the rest of the shutdown - the AppHost and the
@@ -2365,8 +2440,14 @@ var builder = Aspire.Hosting.DistributedApplication.CreateBuilder(args);
         const stopPromise = aspireDebugSession.stopDebugging();
         await clock.tickAsync(10_001);
 
-        await assert.rejects(stopPromise, (err: Error) => {
-            assert.strictEqual(err.message, debugSessionStopTimedOut('AppHost', 1));
+        await assert.rejects(stopPromise, (err: AggregateError) => {
+            // Both phases time out, and the budgets they report are the point of this test. The
+            // resource is bounded at the reserved deadline rather than the whole budget, which is
+            // what leaves the AppHost a real four seconds instead of the one second it used to get
+            // after a slow resource had taken everything else.
+            assert.deepStrictEqual(
+                (err.errors as Error[]).map(error => error.message),
+                [debugSessionStopTimedOut('Slow resource', 6), debugSessionStopTimedOut('AppHost', 4)]);
             return true;
         });
         clock.restore();
@@ -2575,7 +2656,7 @@ var builder = Aspire.Hosting.DistributedApplication.CreateBuilder(args);
 
         const firstStop = aspireDebugSession.stopDebugging();
         await clock.tickAsync(10_001);
-        await assert.rejects(firstStop, /Timed out after 10 seconds waiting for debug session 'Resource' to stop/);
+        await assert.rejects(firstStop, /Timed out after 6 seconds waiting for debug session 'Resource' to stop/);
 
         const retry = aspireDebugSession.stopDebugging();
         await Promise.resolve();
@@ -4029,6 +4110,45 @@ var builder = Aspire.Hosting.DistributedApplication.CreateBuilder(args);
 
         assert.deepStrictEqual(loggableConfig.env, { SECRET_TOKEN: 'env-secret' });
         assert.strictEqual(loggableConfig.environmentVariables, '<redacted>');
+    });
+
+    test('redacts Java vmArgs and classPaths by default', () => {
+        const debugConfig = {
+            runId: 'run-1',
+            debugSessionId: 'debug-1',
+            type: 'java',
+            name: 'catalog',
+            request: 'launch',
+            // A JVM system property is the ordinary way a secret reaches a Java process, and the
+            // extension log persists to disk.
+            vmArgs: ['-Xmx512m', '-Dspring.datasource.password=hunter2'],
+            classPaths: ['/Users/someone/src/private-project/target/classes'],
+        } as AspireResourceExtendedDebugConfiguration;
+
+        const loggableConfig = getLoggableDebugConfiguration(debugConfig, false);
+
+        assert.strictEqual(loggableConfig.vmArgs, '<redacted>');
+        assert.strictEqual(loggableConfig.classPaths, '<redacted: 1 entry>');
+        const serialized = JSON.stringify(loggableConfig);
+        assert.ok(!serialized.includes('hunter2'));
+        assert.ok(!serialized.includes('/Users/someone'));
+    });
+
+    test('includes Java vmArgs and classPaths when debug configuration logging is enabled', () => {
+        const debugConfig = {
+            runId: 'run-1',
+            debugSessionId: 'debug-1',
+            type: 'java',
+            name: 'catalog',
+            request: 'launch',
+            vmArgs: ['-Xmx512m'],
+            classPaths: ['/Users/someone/src/project/target/classes', '/deps/a.jar'],
+        } as AspireResourceExtendedDebugConfiguration;
+
+        const loggableConfig = getLoggableDebugConfiguration(debugConfig, true);
+
+        assert.deepStrictEqual(loggableConfig.vmArgs, ['-Xmx512m']);
+        assert.deepStrictEqual(loggableConfig.classPaths, ['/Users/someone/src/project/target/classes', '/deps/a.jar']);
     });
 
     test('redacts sensitive debugger environments even when environment logging is enabled', () => {

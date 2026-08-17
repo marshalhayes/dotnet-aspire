@@ -142,6 +142,12 @@ export function getCliPathTargetForUri(uri: vscode.Uri): CliPathResolutionTarget
 const cliExecutableFileName = 'aspire';
 
 /**
+ * Extensions Windows treats as directly executable, used both to complete an extensionless path and
+ * to recognise a path that already names the executable.
+ */
+const windowsExecutableExtensions = ['.exe', '.cmd', '.bat'];
+
+/**
  * Returns the set of filesystem paths to probe when looking for the CLI
  * executable at `cliPath`.
  *
@@ -169,13 +175,16 @@ export function getCliExecutableCandidates(
             return [candidate];
         }
 
-        return [candidate, `${candidate}.exe`, `${candidate}.cmd`, `${candidate}.bat`];
+        return [candidate, ...windowsExecutableExtensions.map(extension => `${candidate}${extension}`)];
     };
-
     const joiner = platform === 'win32' ? path.win32 : path.posix;
 
-    // A path that already carries an extension names a file, so do not also probe inside it.
-    const namesFile = platform === 'win32' && path.win32.extname(cliPath) !== '';
+    // Only an executable extension means the path names the CLI itself. extname() reports the text
+    // after the last dot, so testing for "has any extension" classified a perfectly ordinary
+    // directory - `...\bin\Debug\net10.0`, which is where a locally built CLI lives - as a file with
+    // extension `.0`, and `aspire.exe` inside it was never probed.
+    const namesFile = platform === 'win32'
+        && windowsExecutableExtensions.includes(path.win32.extname(cliPath).toLowerCase());
     if (namesFile) {
         return withExtensions(cliPath);
     }

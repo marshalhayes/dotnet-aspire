@@ -70,8 +70,37 @@ export function getLoggableDebugConfiguration(debugConfig: AspireResourceExtende
     env: debugConfig.env ? '<redacted>' : undefined,
     environment: debugConfig.environment ? '<redacted>' : undefined,
     environmentVariables: debugConfig.environmentVariables ? '<redacted>' : undefined,
+    // A JVM system property is the ordinary way configuration - including credentials - reaches a
+    // Java process (-Dspring.datasource.password=..., -Djavax.net.ssl.trustStorePassword=...), so
+    // vmArgs belongs in the same class as the environment rather than alongside plain arguments.
+    ...redactedJavaLaunchFields(debugConfig),
     msbuildProperties: debugConfig.msbuildProperties instanceof Map ? Object.fromEntries(debugConfig.msbuildProperties) : debugConfig.msbuildProperties,
   };
+}
+
+/**
+ * Redactions for the Java-specific launch fields, which the extension log would otherwise persist to
+ * disk in full.
+ *
+ * Classpaths are absolute and name the developer's home directory and private project names, so only
+ * their count survives - enough to tell an empty classpath from a populated one when diagnosing a
+ * `ClassNotFoundException`, without recording the paths themselves. Both fields are logged verbatim
+ * when `aspire.enableDebugConfigEnvironmentLogging` is on, which is the existing opt-in for exactly
+ * this trade.
+ */
+function redactedJavaLaunchFields(debugConfig: AspireResourceExtendedDebugConfiguration): Record<string, unknown> {
+  const redacted: Record<string, unknown> = {};
+
+  if (debugConfig.vmArgs !== undefined) {
+    redacted.vmArgs = '<redacted>';
+  }
+
+  if (Array.isArray(debugConfig.classPaths)) {
+    const count = debugConfig.classPaths.length;
+    redacted.classPaths = `<redacted: ${count} ${count === 1 ? 'entry' : 'entries'}>`;
+  }
+
+  return redacted;
 }
 
 export class AspireDebugSession implements vscode.DebugAdapter, DashboardLauncherHost {
@@ -89,6 +118,21 @@ export class AspireDebugSession implements vscode.DebugAdapter, DashboardLaunche
    * involved, where per-session timeouts would scale the worst case with the resource count.
    */
   private static readonly _stopSessionsTimeoutMs = 10000;
+  /**
+   * Portion of {@link _stopSessionsTimeoutMs} withheld from the resource and dashboard stops so the
+   * AppHost stop and the Aspire parent stop always get a usable budget.
+   *
+   * Without a reserve the phases compete for one deadline, and a resource adapter that is slow to
+   * acknowledge takes all of it. That is not a rare case: a Java, .NET or Node adapter suspended at
+   * a breakpoint does not acknowledge `stopDebugging()` until the runtime resumes, so the common
+   * "stop while stopped at a breakpoint" gesture reliably drains the whole budget. The AppHost stop
+   * then starts with 0ms, times out immediately, and the AppHost is left running in the Call Stack
+   * pane even though the debug session disappeared - the reported symptom.
+   *
+   * The resource phase still gets the majority of the budget because it is the phase with an
+   * unbounded number of participants; the reserve only has to cover two further stops.
+   */
+  private static readonly _appHostStopReserveMs = 4000;
   /**
    * How long the cooperative `stopCli` RPC has to bring the CLI down before its process group is
    * signalled. Long enough for the CLI to stop containers and other resources cleanly, short
@@ -364,6 +408,10 @@ export class AspireDebugSession implements vscode.DebugAdapter, DashboardLaunche
     // One deadline for the whole shutdown rather than one per stop, so the worst case does not grow
     // with the number of resources. See _stopSessionsTimeoutMs for why this has to be bounded.
     const deadline = Date.now() + AspireDebugSession._stopSessionsTimeoutMs;
+    // Resource and dashboard stops run against an earlier deadline so that whatever they consume,
+    // the AppHost and parent stops below still have _appHostStopReserveMs to work with. See
+    // _appHostStopReserveMs for why a single shared deadline leaves the AppHost running.
+    const resourceDeadline = deadline - AspireDebugSession._appHostStopReserveMs;
 
     // A dashboard or resource launched under a debugger can keep the AppHost shutdown in flight
     // until its debug session exits. Stop those sessions before the AppHost to avoid waiting on a
@@ -375,11 +423,11 @@ export class AspireDebugSession implements vscode.DebugAdapter, DashboardLaunche
     // the path where a resource is most likely to be left behind. The rejection is kept and
     // rethrown after the AppHost and the synthetic Aspire parent have been stopped.
     const [dashboardResult, ...resourceResults] = await Promise.allSettled([
-      this._dashboardLauncher.stopDashboardWithinBudget(deadline),
+      this._dashboardLauncher.stopDashboardWithinBudget(resourceDeadline),
       ...resourceDebugSessions.map(session => this.stopWithinBudget(
         () => session.stopSession(),
         session.session.name,
-        deadline,
+        resourceDeadline,
         () => session.resetStopSessionAttempt?.())),
     ]);
     const stopFailures: unknown[] = [dashboardResult, ...resourceResults]
@@ -393,8 +441,8 @@ export class AspireDebugSession implements vscode.DebugAdapter, DashboardLaunche
     this._resourceDebugSessions = this._resourceDebugSessions.filter(
       session => unstoppedResourceSessions.has(session) || session.id === this._appHostDebugSession?.id);
 
-    let pendingStartBudgetExhausted = await this.drainPendingDebugSessionStarts(deadline, stopFailures);
-    await this.drainLateResourceStops(deadline, stopFailures);
+    let pendingStartBudgetExhausted = await this.drainPendingDebugSessionStarts(resourceDeadline, stopFailures);
+    await this.drainLateResourceStops(resourceDeadline, stopFailures);
 
     // Global/E2E stop requests target the synthetic Aspire session. Stop the real AppHost session
     // explicitly before the parent so we do not rely on VS Code cascading termination before the
@@ -412,6 +460,15 @@ export class AspireDebugSession implements vscode.DebugAdapter, DashboardLaunche
       }
       catch (err) {
         stopFailures.push(err);
+
+        // The AppHost did not confirm it stopped, which in practice means its adapter is wedged -
+        // most often suspended at a breakpoint in the AppHost itself, where `stopDebugging()` is
+        // not acknowledged until the runtime resumes. VS Code still tears the session down, so the
+        // user sees the debug session disappear while the AppHost process keeps running and its
+        // resources stay in the Call Stack pane. Escalate to the CLI process tree, which owns that
+        // process: the cooperative `stopCli` gets the grace period first and the hard kill follows
+        // only if it does not land.
+        this.scheduleCliProcessTermination();
       }
     }
 

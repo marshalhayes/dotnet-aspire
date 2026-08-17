@@ -194,6 +194,14 @@ suite('cliPathVariables tests', () => {
             ]);
         });
 
+        test('windows directory whose last segment contains a dot still probes the executable inside it', () => {
+            // extname('net10.0') is '.0', so treating a dotted final segment as a file name meant a
+            // locally built CLI at ...\\Debug\\net10.0 was never found on Windows.
+            const candidates = getCliExecutableCandidates('C:\\repo\\artifacts\\bin\\Aspire.Cli\\Debug\\net10.0', 'win32');
+
+            assert.ok(candidates.includes('C:\\repo\\artifacts\\bin\\Aspire.Cli\\Debug\\net10.0\\aspire.exe'));
+        });
+
     });
 
     suite('getCliPathTargetKey', () => {

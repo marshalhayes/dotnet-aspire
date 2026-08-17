@@ -62,6 +62,22 @@ export interface ConfigInfoOptions {
  * capabilities from a different CLI. Failures are intentionally NOT cached: an older CLI that can't
  * answer, or a transient spawn error, should be retried on the next call.
  */
+/**
+ * Working directory for `aspire config info`, chosen from the resolution target.
+ *
+ * The CLI discovers `aspire.config.json` by walking up from its working directory, so the folder it
+ * runs in decides which local settings file the answer describes. Window-scoped callers have no
+ * folder of their own and fall back to the first one, which is the best available guess and matches
+ * how other window-scoped commands behave.
+ */
+function resolveConfigInfoWorkingDirectory(target: CliPathResolutionTarget): string | undefined {
+    if (target.kind === 'workspaceFolder') {
+        return target.workspaceFolder.uri.fsPath;
+    }
+
+    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+}
+
 export class ConfigInfoProvider {
     private readonly _cachedConfigInfoByCliPath = new Map<string, ConfigInfo>();
     private readonly _inFlightByCliPath = new Map<string, Promise<ConfigInfo | null>>();
@@ -84,16 +100,24 @@ export class ConfigInfoProvider {
     async getConfigInfo(options?: ConfigInfoOptions): Promise<ConfigInfo | null> {
         const suppressErrors = options?.suppressErrors ?? false;
         const startTime = Date.now();
-        const cliPath = options?.cliPath ?? await this._resolveCliPath(suppressErrors, options?.target ?? windowCliPathTarget);
+        const target = options?.target ?? windowCliPathTarget;
+        const cliPath = options?.cliPath ?? await this._resolveCliPath(suppressErrors, target);
         if (!cliPath) {
             return null;
         }
 
+        // `aspire config info` reports the local settings file it discovers from its working
+        // directory, so the answer is per-folder, not per-CLI. Keying the caches by CLI path alone
+        // let one folder's result be served for another in a multi-root workspace - and callers such
+        // as "Open Local Settings" act on `localSettingsPath`, so that opens or creates the wrong file.
+        const workingDirectory = resolveConfigInfoWorkingDirectory(target);
+        const cacheKey = `${cliPath}\u0000${workingDirectory ?? ''}`;
+
         if (options?.forceRefresh) {
-            this._cachedConfigInfoByCliPath.delete(cliPath);
+            this._cachedConfigInfoByCliPath.delete(cacheKey);
         }
         else {
-            const cachedConfigInfo = this._cachedConfigInfoByCliPath.get(cliPath);
+            const cachedConfigInfo = this._cachedConfigInfoByCliPath.get(cacheKey);
             if (cachedConfigInfo) {
                 return cachedConfigInfo;
             }
@@ -106,24 +130,24 @@ export class ConfigInfoProvider {
         }
 
         if (!options?.forceRefresh) {
-            const existingProbe = this._inFlightByCliPath.get(cliPath);
+            const existingProbe = this._inFlightByCliPath.get(cacheKey);
             if (existingProbe) {
                 return await this._awaitProbe(existingProbe, remainingTimeoutMs, suppressErrors);
             }
         }
 
-        const probe = this._fetchConfigInfo(cliPath, suppressErrors, remainingTimeoutMs);
-        this._inFlightByCliPath.set(cliPath, probe);
+        const probe = this._fetchConfigInfo(cliPath, workingDirectory, suppressErrors, remainingTimeoutMs);
+        this._inFlightByCliPath.set(cacheKey, probe);
         try {
             const result = await probe;
-            if (result && this._inFlightByCliPath.get(cliPath) === probe) {
-                this._cachedConfigInfoByCliPath.set(cliPath, result);
+            if (result && this._inFlightByCliPath.get(cacheKey) === probe) {
+                this._cachedConfigInfoByCliPath.set(cacheKey, result);
             }
             return result;
         }
         finally {
-            if (this._inFlightByCliPath.get(cliPath) === probe) {
-                this._inFlightByCliPath.delete(cliPath);
+            if (this._inFlightByCliPath.get(cacheKey) === probe) {
+                this._inFlightByCliPath.delete(cacheKey);
             }
         }
     }
@@ -195,7 +219,7 @@ export class ConfigInfoProvider {
         });
     }
 
-    private _fetchConfigInfo(cliPath: string, suppressErrors: boolean, timeoutMs: number): Promise<ConfigInfo | null> {
+    private _fetchConfigInfo(cliPath: string, workingDirectory: string | undefined, suppressErrors: boolean, timeoutMs: number): Promise<ConfigInfo | null> {
         return new Promise<ConfigInfo | null>((resolve) => {
             let childProcess: ChildProcessWithoutNullStreams | undefined;
             let settled = false;
@@ -231,7 +255,6 @@ export class ConfigInfoProvider {
                 }
             }, timeoutMs);
 
-            const workingDirectory = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
             const runConfigInfo = (args: string[], allowNoLogoRetry: boolean) => {
                 if (settled) {
                     return;
