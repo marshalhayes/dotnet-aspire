@@ -633,11 +633,19 @@ jobs:
           # guest-language AppHost never restores the Microsoft.DeveloperControlPlane.<rid> package.
           # Assert it is really here so a missing DCP fails on this line, naming the component, instead
           # of surfacing minutes later as an unexplained debug startup timeout.
+          #
+          # `aspire setup` extracts to SetupCommand.GetDefaultInstallPath(processPath), which is the
+          # *parent of the parent* of the CLI binary - not the directory the archive was unpacked into.
+          # With the CLI at artifacts/bundle/<rid>/aspire that install path is artifacts/bundle, so DCP
+          # lands beside $bundleDir rather than inside it. Derive the same path the CLI derives instead
+          # of assuming a layout, otherwise this assertion fails on every shard even when setup worked.
+          $cliDir = Split-Path -Path $cli.FullName -Parent
+          $installPath = Split-Path -Path $cliDir -Parent
           $dcpExecutable = if ('${{ runner.os }}' -eq 'Windows') { 'dcp.exe' } else { 'dcp' }
-          $dcp = Get-ChildItem -Path $bundleDir -Recurse -File -Filter $dcpExecutable -ErrorAction SilentlyContinue | Select-Object -First 1
+          $dcp = Get-ChildItem -Path $installPath -Recurse -File -Filter $dcpExecutable -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($null -eq $dcp) {
-            Get-ChildItem -Path $bundleDir -Recurse -Directory | Select-Object -ExpandProperty FullName
-            throw "'aspire setup' succeeded but no $dcpExecutable exists under $bundleDir, so every AppHost in this shard would fail to orchestrate."
+            Get-ChildItem -Path $installPath -Recurse -Directory -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+            throw "'aspire setup' succeeded but no $dcpExecutable exists under $installPath, so every AppHost in this shard would fail to orchestrate."
           }
           Write-Host "Orchestration component: $($dcp.FullName)"
 
