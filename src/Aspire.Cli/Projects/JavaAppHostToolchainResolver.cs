@@ -192,7 +192,10 @@ internal static class JavaAppHostToolchainResolver
             // The project directory is named by the AppHost, so a wrapper beside it is the developer's
             // own instruction and needs no further qualification. Ancestors are inferred instead.
             if (File.Exists(candidate)
-                && (isProjectDirectory || (IsBuildRoot(directory.FullName, toolchain) && !IsWorldWritable(directory))))
+                && (isProjectDirectory
+                    || (IsBuildRoot(directory.FullName, toolchain)
+                        && !IsWorldWritable(directory.FullName)
+                        && !IsWorldWritable(candidate))))
             {
                 return candidate;
             }
@@ -224,16 +227,25 @@ internal static class JavaAppHostToolchainResolver
     };
 
     /// <summary>
-    /// Returns whether any user on the machine can write to <paramref name="directory"/>.
+    /// Returns whether any user on the machine can write to <paramref name="path"/>.
     /// </summary>
     /// <remarks>
     /// Only inferred ancestors are checked. On a shared machine an AppHost under a world-writable
     /// directory such as <c>/tmp</c> could otherwise pick up a wrapper another user planted beside a
     /// <c>pom.xml</c>, and the CLI would execute it with the developer's privileges before anything is
-    /// built. Windows uses ACLs that <see cref="UnixFileMode"/> does not describe, and .NET reports
+    /// built. Applied to the wrapper file as well as its directory, because rewriting a file in place
+    /// needs write permission on the file rather than on the directory holding it.
+    /// <para>
+    /// Group-writable is deliberately not rejected: distributions that enable user private groups pair
+    /// a umask of 002 with a group per user, so an ordinary checkout is mode 775 and rejecting it
+    /// would break wrapper resolution for a large share of Linux users.
+    /// </para>
+    /// <para>
+    /// Windows uses ACLs that <see cref="UnixFileMode"/> does not describe, and .NET reports
     /// <see cref="UnixFileMode.None"/> there, so the check is skipped.
+    /// </para>
     /// </remarks>
-    private static bool IsWorldWritable(DirectoryInfo directory)
+    private static bool IsWorldWritable(string path)
     {
         if (OperatingSystem.IsWindows())
         {
@@ -242,11 +254,11 @@ internal static class JavaAppHostToolchainResolver
 
         try
         {
-            return (File.GetUnixFileMode(directory.FullName) & UnixFileMode.OtherWrite) != 0;
+            return (File.GetUnixFileMode(path) & UnixFileMode.OtherWrite) != 0;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            // A directory whose mode cannot be read cannot be shown safe, so treat it as unusable.
+            // A path whose mode cannot be read cannot be shown safe, so treat it as unusable.
             return true;
         }
     }

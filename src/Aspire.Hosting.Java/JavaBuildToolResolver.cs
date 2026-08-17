@@ -87,7 +87,10 @@ internal static class JavaBuildToolResolver
             var isApplicationDirectory = directory.FullName == appDirectory;
 
             if (File.Exists(candidate)
-                && (isApplicationDirectory || (IsBuildRoot(directory.FullName, tool) && !IsWorldWritable(directory))))
+                && (isApplicationDirectory
+                    || (IsBuildRoot(directory.FullName, tool)
+                        && !IsWorldWritable(directory)
+                        && !IsWorldWritable(new FileInfo(candidate)))))
             {
                 return candidate;
             }
@@ -119,7 +122,7 @@ internal static class JavaBuildToolResolver
     };
 
     /// <summary>
-    /// Returns whether any user on the machine can write to <paramref name="directory"/>.
+    /// Returns whether any user on the machine can write to <paramref name="entry"/>.
     /// </summary>
     /// <remarks>
     /// The application directory is named in the AppHost, so running the wrapper beside it is the
@@ -129,12 +132,22 @@ internal static class JavaBuildToolResolver
     /// <c>mvnw</c> another user planted alongside a <c>pom.xml</c>, and execute it with the
     /// developer's privileges before anything is built.
     /// <para>
+    /// Applied to the wrapper file as well as its directory, because rewriting a file in place needs
+    /// write permission on the file rather than on the directory holding it.
+    /// </para>
+    /// <para>
+    /// Group-writable is deliberately not rejected: distributions that enable user private groups
+    /// pair a umask of 002 with a group per user, so an ordinary checkout is mode 775 and rejecting
+    /// it would break wrapper resolution for a large share of Linux users. Telling a private group
+    /// from a shared one needs the owner and group membership, which .NET does not expose portably.
+    /// </para>
+    /// <para>
     /// Only applied to inferred ancestors, and only where the mode is meaningful: Windows uses ACLs
     /// that <see cref="UnixFileMode"/> does not describe, and .NET reports
     /// <see cref="UnixFileMode.None"/> there.
     /// </para>
     /// </remarks>
-    private static bool IsWorldWritable(DirectoryInfo directory)
+    private static bool IsWorldWritable(FileSystemInfo entry)
     {
         if (OperatingSystem.IsWindows())
         {
@@ -143,11 +156,11 @@ internal static class JavaBuildToolResolver
 
         try
         {
-            return directory.UnixFileMode.HasFlag(UnixFileMode.OtherWrite);
+            return entry.UnixFileMode.HasFlag(UnixFileMode.OtherWrite);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            // The mode could not be read, so the directory cannot be shown to be safe. Treating it as
+            // The mode could not be read, so it cannot be shown to be safe. Treating it as
             // world-writable falls back to the wrapper beside the application, which is the same
             // outcome as finding no ancestor wrapper at all.
             return true;
