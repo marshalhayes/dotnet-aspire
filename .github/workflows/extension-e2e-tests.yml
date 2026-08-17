@@ -648,6 +648,7 @@ jobs:
             throw "'aspire setup' succeeded but no $dcpExecutable exists under $installPath, so every AppHost in this shard would fail to orchestrate."
           }
           Write-Host "Orchestration component: $($dcp.FullName)"
+          "ASPIRE_DCP_PATH=$($dcp.Directory.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
           $shippingDir = Join-Path '${{ github.workspace }}' 'artifacts/nugets/Debug/Shipping'
           if (-not (Test-Path $shippingDir)) {

@@ -40,6 +40,13 @@ public sealed class ExtensionE2eWorkflowTests
         var environment = (YamlMappingNode)runSuiteStep.Children[new YamlScalarNode("env")];
         Assert.False(environment.Children.ContainsKey(new YamlScalarNode("ASPIRE_EXTENSION_E2E_ALLOW_TEST_FAILURE")));
         Assert.Equal("${{ matrix.advisoryIssue }}", Scalar(environment, "ASPIRE_EXTENSION_E2E_ADVISORY_ISSUE"));
+
+        var prepareCliStep = Assert.Single(steps, step => Scalar(step, "name") == "Prepare Aspire CLI and package hive");
+        var prepareCliScript = Scalar(prepareCliStep, "run") ?? string.Empty;
+        Assert.Contains(
+            "\"ASPIRE_DCP_PATH=$($dcp.Directory.FullName)\" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append",
+            prepareCliScript,
+            StringComparison.Ordinal);
     }
 
     [Fact]
