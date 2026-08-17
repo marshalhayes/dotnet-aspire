@@ -246,8 +246,10 @@ public class Aspire {
             resolvedOptions.putAll(options.toMap());
         }
         if (resolvedOptions.get("Args") == null) {
-            // Note: Java doesn't have easy access to command line args from here
-            resolvedOptions.put("Args", new String[0]);
+            String forwardedArgs = System.getenv("ASPIRE_APPHOST_ARGS");
+            resolvedOptions.put("Args", forwardedArgs == null || forwardedArgs.isEmpty()
+                ? new String[0]
+                : forwardedArgs.split("\n", -1));
         }
         if (resolvedOptions.get("ProjectDirectory") == null) {
             String projectDirectory = System.getenv("ASPIRE_PROJECT_DIRECTORY");

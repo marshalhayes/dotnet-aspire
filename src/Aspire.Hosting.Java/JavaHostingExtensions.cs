@@ -842,7 +842,15 @@ public static partial class JavaHostingExtensions
         // Calling the same method twice must not add a second resource under the same name. The
         // annotation was just replaced, and the arguments are read from it on every run, so the existing
         // resource already reflects the new arguments.
-        if (existing is not null)
+        //
+        // The check is on ResourceName rather than on the annotation, because an earlier call can record
+        // a build step without creating a resource: createRunResource is false when the launch goal
+        // already compiles the application. If something later makes the build mandatory - a relative
+        // WithOtelAgent path, for instance, whose agent JAR the build has to produce before launch -
+        // this call is the one that has to create it. Returning early on the annotation alone left the
+        // new annotation naming a resource that was never added, and the application then failed at
+        // startup loading an agent that nothing had built.
+        if (existing?.ResourceName is not null)
         {
             return builder;
         }

@@ -364,4 +364,28 @@ public class AddSpringBootAppTests
         Assert.Equal("-Xmx256m", envVars["JAVA_TOOL_OPTIONS"]);
         Assert.True(Assert.Single(app.Resource.Annotations.OfType<EndpointAnnotation>()).IsExternal);
     }
+
+    [Fact]
+    public void WithMavenBuildThenWithOtelAgent_CreatesTheBuildResourceTheAgentNeeds()
+    {
+        // spring-boot:run compiles on its way to running, so the first WithMavenBuild records the build
+        // step without adding a resource. A relative OpenTelemetry agent path then makes the build
+        // mandatory - nothing else writes target/agent/opentelemetry-javaagent.jar - and the second pass
+        // through WithJavaBuildStep is the one that has to add it. Skipping on the annotation alone left
+        // the annotation naming a resource that was never created, and the JVM failed at startup with
+        // "Error opening zip file or JAR manifest missing".
+        using var builder = TestDistributedApplicationBuilder.Create(DistributedApplicationOperation.Run).WithResourceCleanUp(true);
+        using var tempDir = new TempJavaAppDirectory();
+        tempDir.Write("pom.xml", "<project/>");
+
+        var app = builder.AddSpringBootApp("catalog", tempDir.Path)
+            .WithMavenBuild("-DskipTests", "package");
+
+        Assert.DoesNotContain(builder.Resources, r => r.Name == "catalog-maven-build");
+
+        app.WithOtelAgent();
+
+        var buildResource = Assert.Single(builder.Resources, r => r.Name == "catalog-maven-build");
+        Assert.Equal(JavaBuildTool.Maven, Assert.IsType<JavaBuildResource>(buildResource).Tool);
+    }
 }

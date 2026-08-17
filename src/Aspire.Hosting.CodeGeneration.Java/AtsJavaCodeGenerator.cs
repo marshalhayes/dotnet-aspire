@@ -2263,8 +2263,18 @@ internal sealed class AtsJavaCodeGenerator : ICodeGenerator
         WriteLine("            resolvedOptions.putAll(options.toMap());");
         WriteLine("        }");
         WriteLine("        if (resolvedOptions.get(\"Args\") == null) {");
-        WriteLine("            // Note: Java doesn't have easy access to command line args from here");
-        WriteLine("            resolvedOptions.put(\"Args\", new String[0]);");
+        // Python, TypeScript and Rust AppHosts read the process arguments themselves
+        // (sys.argv[1:], process.argv.slice(2), std::env::args()), so a builder created without
+        // arguments still observes "--operation publish". A JVM cannot do the same:
+        // main(String[]) is the only place those arguments exist, and
+        // ProcessHandle.current().info().arguments() reports the JVM's own arguments (options and
+        // main class) rather than the application's. The CLI therefore forwards them in
+        // ASPIRE_APPHOST_ARGS, newline separated, so CreateBuilder() behaves like its
+        // counterparts instead of silently running the app when the user asked to publish.
+        WriteLine("            String forwardedArgs = System.getenv(\"ASPIRE_APPHOST_ARGS\");");
+        WriteLine("            resolvedOptions.put(\"Args\", forwardedArgs == null || forwardedArgs.isEmpty()");
+        WriteLine("                ? new String[0]");
+        WriteLine("                : forwardedArgs.split(\"\\n\", -1));");
         WriteLine("        }");
         // ASPIRE_PROJECT_DIRECTORY is set by the CLI so the host reports the correct project
         // directory (not the JVM's user.dir) when matching --apphost <directory> requests.
