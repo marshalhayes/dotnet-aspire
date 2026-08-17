@@ -816,7 +816,7 @@ async function executeE2eControlCommand(
     }
     case 'addWorkspaceFolder': {
       markStarted();
-      return await addWorkspaceFolderForE2E(getE2eWorkspacePath(command.folderPath));
+      return await addWorkspaceFolderForE2E(getE2eAddableWorkspaceFolderPath(command.folderPath));
     }
     case 'getActiveEditor': {
       markStarted();
@@ -1679,8 +1679,35 @@ function getE2eRunPath(filePath: unknown): string {
   return filePath;
 }
 
-function getE2eBreakpointLine(line: unknown): number {
-  if (typeof line !== 'number' || !Number.isInteger(line) || line < 0) {
+// `addWorkspaceFolder` deliberately targets a folder that is NOT yet part of the workspace, so it
+// cannot reuse getE2eWorkspacePath (which requires containment in an already-open folder) and it
+// cannot reuse getE2eWorkspaceFolderPath (which only permits the workspace root itself). Validate
+// against the harness-configured roots instead, exactly as getE2eRunPath does: those roots are the
+// real sandbox boundary, and they stay meaningful before any folder has been opened.
+// Exported so the guard can be unit tested. The whole module is removed from production builds by
+// webpack (see e2eBridgeProductionGate.test.ts), so this export never ships.
+export function getE2eAddableWorkspaceFolderPath(folderPath: unknown): string {
+  if (typeof folderPath !== 'string' || folderPath.length === 0 || !path.isAbsolute(folderPath)) {
+    throw new Error('Aspire extension E2E addWorkspaceFolder requires an absolute folder path.');
+  }
+
+  if (!fs.existsSync(folderPath) || !fs.statSync(folderPath).isDirectory()) {
+    throw new Error(`Aspire extension E2E addWorkspaceFolder requires an existing folder: ${folderPath}`);
+  }
+
+  const allowedRoots = [
+    process.env.ASPIRE_EXTENSION_E2E_RUN_ROOT,
+    process.env.ASPIRE_EXTENSION_E2E_WORKSPACE_ROOT,
+  ].filter((root): root is string => typeof root === 'string' && root.length > 0);
+
+  if (!allowedRoots.some(root => isPathWithinDirectory(folderPath, root))) {
+    throw new Error('Aspire extension E2E addWorkspaceFolder can only add folders inside the configured E2E run root or workspace root.');
+  }
+
+  return folderPath;
+}
+
+function getE2eBreakpointLine(line: unknown): number {  if (typeof line !== 'number' || !Number.isInteger(line) || line < 0) {
     throw new Error('Aspire extension E2E setSourceBreakpoint requires a zero-based non-negative integer line.');
   }
 

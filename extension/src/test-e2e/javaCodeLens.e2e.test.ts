@@ -1,6 +1,6 @@
 import * as assert from 'assert';
-import { VSBrowser } from 'vscode-extension-tester';
 import { getJavaAppHostSourcePath, prepareJavaWorkspace, waitForJavaLanguageServerImport } from './helpers/java';
+import { executeE2eControlCommand } from './helpers/fixtures';
 import { closeAllEditors, waitForCodeLensText } from './helpers/vscode';
 
 suite('Java AppHost CodeLens E2E', function () {
@@ -11,10 +11,11 @@ suite('Java AppHost CodeLens E2E', function () {
     suiteSetup(async () => {
         await prepareJavaWorkspace();
 
-        // VS Code renders one merged CodeLens set per document, so a `java` file shows nothing at all
-        // until every registered provider has answered - including redhat.java's. On a cold CI runner
-        // that server is still importing, which is how this spec timed out with `CodeLenses: (none)`
-        // while the Aspire lens itself was ready. The other two Java specs already wait here.
+        // Kept because VS Code renders one merged CodeLens set per document: a `java` file shows
+        // nothing until every registered provider has answered, including redhat.java's, and the
+        // other two Java specs wait here for the same reason. It is not what caused the
+        // `CodeLenses: (none)` failure though - that run reached Standard mode in 20 seconds and
+        // still saw nothing, because no editor had been opened at all.
         await waitForJavaLanguageServerImport();
     });
 
@@ -25,12 +26,23 @@ suite('Java AppHost CodeLens E2E', function () {
     test('shows the entry point warning on a Java AppHost', async () => {
         const appHostPath = getJavaAppHostSourcePath();
 
-        await VSBrowser.instance.openResources(appHostPath);
+        // Open through the extension host rather than VSBrowser.openResources(). That helper shells
+        // out to `code -r <path>` (CodeUtil.open), which exited successfully here while opening
+        // nothing: the window sat on the welcome screen for the whole CodeLens wait, so the spec
+        // reported `CodeLenses: (none)` for a document that was never open. The other two Java specs
+        // already use this command, which is why they passed. It is also observable - it returns the
+        // active editor - so a silent no-op fails here instead of three minutes later as a blank wait.
+        const opened = await executeE2eControlCommand({ name: 'openFile', filePath: appHostPath });
+        const openedFileName = (opened.result as { fileName?: string } | undefined)?.fileName;
+        assert.strictEqual(
+            openedFileName,
+            appHostPath,
+            `expected '${appHostPath}' to be the active editor, got '${openedFileName ?? '<no active editor>'}'`);
 
-        // openResources returns before the tab exists and the lenses are produced asynchronously after
-        // that, so both are polled rather than read once. The suiteSetup guarantees the Java language
-        // server reached Standard mode, but VS Code still has to run the merged provider pass on this
-        // document afterwards, so this allows more than the 60s default.
+        // The tab now exists, but the lenses are produced asynchronously after that, so this is
+        // polled rather than read once. The suiteSetup guarantees the Java language server reached
+        // Standard mode; VS Code still has to run the merged provider pass on this document
+        // afterwards, so this allows more than the 60s default.
         const texts = await waitForCodeLensText('AppHost.java', 'bypass Aspire', 180000);
 
         assert.ok(
