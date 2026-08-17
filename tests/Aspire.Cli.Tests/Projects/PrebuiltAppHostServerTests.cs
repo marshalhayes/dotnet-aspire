@@ -304,6 +304,18 @@ public class PrebuiltAppHostServerTests(ITestOutputHelper outputHelper)
         Assert.True(PrebuiltAppHostServer.ShouldRetryWithRestore(output));
     }
 
+    [Theory]
+    [InlineData("error NETSDK1064: Package Aspire.Hosting.Redis, version 13.5.0 was not found. It might have been deleted since NuGet restore. Otherwise, NuGet restore might have only partially completed, which might have been due to maximum path length restrictions.")]
+    [InlineData("error NU1101: Unable to find package Aspire.Hosting.Java. No packages exist with this id in source(s): dotnet-public")]
+    [InlineData("error NU1102: Unable to find package Aspire.Hosting with version (>= 13.6.0-dev)")]
+    public void ShouldRetryWithRestore_RetriesWhenThePackageCacheIsMissingPackages(string line)
+    {
+        var output = new OutputCollector();
+        output.AppendOutput(line);
+
+        Assert.True(PrebuiltAppHostServer.ShouldRetryWithRestore(output));
+    }
+
     [Fact]
     public void ShouldRetryWithRestore_DoesNotRetryAnOrdinaryCompileFailure()
     {

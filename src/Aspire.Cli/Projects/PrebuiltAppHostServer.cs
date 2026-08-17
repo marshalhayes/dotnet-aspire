@@ -655,15 +655,26 @@ internal sealed partial class PrebuiltAppHostServer : IAppHostServerProject, IDi
     /// Returns <see langword="true" /> when a build failure looks like one that restoring would fix.
     /// </summary>
     /// <remarks>
-    /// Only a missing or stale assets file is worth a second build. Retrying every failure would
+    /// Only a package-resolution failure is worth a second build. Retrying every failure would
     /// double the cost of an ordinary compile error and would replace its diagnostic with whatever
     /// the restore attempt produced.
-    /// Example of the failure this matches:
+    /// The restore fingerprint covers this app's own inputs but cannot see the shared global package
+    /// cache, so a `dotnet nuget locals all --clear` (or any cache eviction) leaves the fingerprint
+    /// unchanged while the packages it assumes are gone. Because the stamp is only ever written
+    /// after a successful restore and is never cleared, a no-restore build that fails this way would
+    /// otherwise fail identically on every subsequent run until the user manually deleted obj/.
+    /// Examples of the failures this matches:
     ///   error NETSDK1004: Assets file '/path/obj/project.assets.json' not found. Run a NuGet package restore.
+    ///   error NETSDK1064: Package Aspire.Hosting.Redis, version 13.5.0 was not found. It might have been deleted since NuGet restore.
+    ///   error NU1101: Unable to find package Aspire.Hosting.Java. No packages exist with this id in source(s): dotnet-public
+    ///   error NU1102: Unable to find package Aspire.Hosting with version (&gt;= 13.6.0-dev)
     /// </remarks>
     internal static bool ShouldRetryWithRestore(OutputCollector buildOutput)
         => buildOutput.GetLines().Any(static l =>
             l.Line.Contains("NETSDK1004", StringComparison.Ordinal) ||
+            l.Line.Contains("NETSDK1064", StringComparison.Ordinal) ||
+            l.Line.Contains("NU1101", StringComparison.Ordinal) ||
+            l.Line.Contains("NU1102", StringComparison.Ordinal) ||
             l.Line.Contains(ProjectAssetsFileName, StringComparison.Ordinal));
 
     /// <summary>
