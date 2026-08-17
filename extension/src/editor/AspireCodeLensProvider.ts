@@ -11,6 +11,7 @@ import { isCommandVisibleToUi, isEnabledCommand } from '../views/treePresentatio
 import { compareResourceCommands, getParameterValueDescription, getResourceStateDescription } from '../utils/resourceDisplay';
 import { AppHostDataRepository, ResourceJson, AppHostDisplayInfo, ResourceCommandJson } from '../data/AppHostDataRepository';
 import { findResourceState, findWorkspaceResourceState, matchesAppHostPathOrDirectory } from './resourceStateUtils';
+import { extensionLogOutputChannel } from '../utils/logging';
 import { ResourceState, HealthStatus, StateStyle, ResourceType } from './resourceConstants';
 import {
     codeLensDebugPipelineStep,
@@ -86,8 +87,8 @@ const springBootLaunchPattern = /\b(?:with_?(?:maven_?goal|gradle_?task)\s*\(\s*
  *
  * Unlike the Spring Boot Dashboard warning this is not gated on the other extension being installed.
  * Neither rust-analyzer nor the Java extension pack is realistically absent when someone is editing
- * an AppHost in that language, and gating would put the warning out of reach of the E2E harness,
- * which cannot install a language server that large.
+ * an AppHost in that language, and an ungated warning is also what lets the E2E harness assert on it
+ * without standing up a language server first.
  */
 const entryPointWarningsByLanguage: ReadonlyMap<string, {
     readonly alreadyRunning: string;
@@ -154,7 +155,17 @@ export class AspireCodeLensProvider implements vscode.CodeLensProvider {
     }
 
     provideCodeLenses(document: vscode.TextDocument, token: vscode.CancellationToken): vscode.ProviderResult<vscode.CodeLens[]> {
-        return this._provideCodeLensesAsync(document, token);
+        // A parser failure (a tree-sitter grammar that will not load, an unparseable document) would
+        // otherwise surface as an editor with no lenses and nothing written anywhere, which is
+        // indistinguishable from "this document legitimately has no lenses". Log it and degrade to no
+        // lenses rather than letting the rejection disable the provider for the rest of the session.
+        return this._provideCodeLensesAsync(document, token).then(lenses => {
+            extensionLogOutputChannel.debug(`Computed ${lenses?.length ?? 0} Aspire CodeLens(es) for ${document.uri.fsPath} (languageId '${document.languageId}')${lenses?.length ? `: ${lenses.map(lens => lens.command?.title).join(' | ')}` : ''}`);
+            return lenses;
+        }).catch(error => {
+            extensionLogOutputChannel.error(`Failed to compute Aspire CodeLenses for ${document.uri.fsPath}: ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+            return [];
+        });
     }
 
     private async _provideCodeLensesAsync(document: vscode.TextDocument, token: vscode.CancellationToken): Promise<vscode.CodeLens[] | undefined> {

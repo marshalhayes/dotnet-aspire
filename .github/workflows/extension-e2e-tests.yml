@@ -477,6 +477,43 @@ jobs:
           # toolchain resolves without this.
           java-version: '25'
 
+      - name: Cache Java dependencies for the Java E2E specs
+        if: ${{ matrix.installJava }}
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          # The Java specs launch real Spring Boot resources, so a cold runner otherwise downloads the
+          # whole Spring dependency tree inside the test's readiness budget. Cache the user-level Maven
+          # and Gradle stores rather than a per-project directory: the specs run out of a generated
+          # workspace copied from the playground, so only the shared caches survive the copy.
+          path: |
+            ~/.m2/repository
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: java-e2e-${{ runner.os }}-${{ hashFiles('playground/JavaSpringBoot/**/pom.xml', 'playground/JavaSpringBoot/**/build.gradle*', 'playground/JavaSpringBoot/**/gradle-wrapper.properties') }}
+          restore-keys: |
+            java-e2e-${{ runner.os }}-
+
+      - name: Warm the Java dependency caches
+        if: ${{ matrix.installJava }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Resolving dependencies here rather than inside the specs keeps a cold cache from being
+          # charged against the in-test wait for a resource endpoint, which is what made these shards
+          # time out on cache misses. The AppHost project is deliberately excluded: it compiles against
+          # the Aspire Java SDK that the CLI generates later, during the E2E run itself.
+          #
+          # A resolution failure must not fail the job - it only means the specs pay the download cost
+          # they paid before this step existed.
+          cd playground/JavaSpringBoot
+          for maven_project in catalog worker; do
+            (cd "$maven_project" && ./mvnw --batch-mode --no-transfer-progress -q dependency:go-offline) \
+              || echo "warning: could not pre-resolve Maven dependencies for $maven_project"
+          done
+          (cd orders && ./gradlew --no-daemon --quiet compileJava) \
+            || echo 'warning: could not pre-resolve Gradle dependencies for orders'
+
       - name: Install Java E2E prerequisites
         if: ${{ matrix.installJava }}
         shell: bash

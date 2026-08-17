@@ -718,7 +718,11 @@ async function main() {
 
     if (cleanupErrors.length > 0) {
       cleanupFailed = true;
-      const cleanupFailure = new AggregateError(cleanupErrors, 'One or more E2E cleanup steps failed.');
+      // Node prints an AggregateError without its `errors`, so a cleanup failure would otherwise
+      // reach CI as a bare "one or more steps failed" with nothing naming the step that broke.
+      const cleanupFailure = new AggregateError(
+        cleanupErrors,
+        `One or more E2E cleanup steps failed:\n  ${cleanupErrors.map(error => error.stack ?? error.message).join('\n  ')}`);
       if (testFailure) {
         console.error(cleanupFailure);
       }

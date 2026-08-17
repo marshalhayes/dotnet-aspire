@@ -124,7 +124,7 @@ async function tryExecuteCommand(
     await withCommandTelemetry(commandName, async () => {
       const invocation = await prepareInvocation();
       let cliPath = '';
-      const cliCheckExcludedCommands: string[] = ["aspire-vscode.settings", "aspire-vscode.configureLaunchJson", "aspire-vscode.updateSelf", "aspire-vscode.deploy", "aspire-vscode.publish"];
+      const cliCheckExcludedCommands: string[] = ["aspire-vscode.settings", "aspire-vscode.configureLaunchJson", "aspire-vscode.updateSelf"];
       if (!cliCheckExcludedCommands.includes(commandName)) {
         if (isE2eBridgeEnabled() && process.env.ASPIRE_EXTENSION_E2E_FORCE_CLI_UNAVAILABLE === 'true') {
           vscode.window.showErrorMessage(

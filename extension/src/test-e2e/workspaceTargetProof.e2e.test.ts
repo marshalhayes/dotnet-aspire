@@ -8,7 +8,7 @@ import { InputBox, VSBrowser, Workbench } from './helpers/extester';
 import { cancelActiveInput, chooseActiveQuickPick, executeCommandFromPalette, openAspireView } from './helpers/vscode';
 
 suite('Workspace target proof E2E', function () {
-    this.timeout(240000);
+    this.timeout(360000);
 
     teardown(async () => {
         await setTerminalCommandExecutionSuppressedForE2E(false);
@@ -49,7 +49,12 @@ suite('Workspace target proof E2E', function () {
             'window-scoped update self command',
             60000,
             beforeUpdateTerminal);
-        assert.strictEqual(updateCommand.commandLine, 'aspire update --self');
+        // The property under test is that a window-scoped command resolves its CLI outside any
+        // workspace folder. Asserting the literal 'aspire update --self' would also encode "no CLI
+        // is installed on this machine", which is true on CI and false on a developer box where the
+        // command legitimately resolves to an absolute path under ~/.aspire.
+        assert.ok(updateCommand.commandLine.endsWith('aspire update --self'), updateCommand.commandLine);
+        assert.ok(!updateCommand.commandLine.includes(workspaceRoot), updateCommand.commandLine);
         assert.ok(!updateCommand.commandLine.includes(folderA.wrapperPath), updateCommand.commandLine);
         assert.ok(!updateCommand.commandLine.includes(folderB.wrapperPath), updateCommand.commandLine);
 
@@ -77,14 +82,37 @@ function createFolderFixture(workspaceRoot: string, folderName: string): FolderF
 }
 
 async function addWorkspaceFolder(folderPath: string): Promise<void> {
-    await new Workbench().executeCommand('Workspaces: Add Folder to Workspace...');
-    const input = await InputBox.create(30000);
-    await input.setText(folderPath);
-    await input.confirm();
-    await VSBrowser.instance.driver.wait(async () => {
-        const folders = await executeE2eControlCommand({ name: 'getWorkspaceFolders' });
-        return JSON.stringify(folders.result).includes(folderPath);
-    }, 30000, `Timed out adding workspace folder '${folderPath}'.`);
+    // Adding the first folder converts the single-folder window into an untitled multi-root
+    // workspace, which reloads the window and restarts the extension host. The reload can land
+    // between the command and the quick-open input, so the add is retried until the extension
+    // reports the folder rather than assumed to have taken on the first attempt.
+    const deadline = Date.now() + 90000;
+    let lastError: unknown;
+    while (Date.now() < deadline) {
+        try {
+            await VSBrowser.instance.waitForWorkbench();
+            await new Workbench().executeCommand('Workspaces: Add Folder to Workspace...');
+            const input = await InputBox.create(30000);
+            await input.setText(folderPath);
+            await input.confirm();
+        }
+        catch (error) {
+            lastError = error;
+        }
+
+        try {
+            await VSBrowser.instance.driver.wait(async () => {
+                const folders = await executeE2eControlCommand({ name: 'getWorkspaceFolders' });
+                return JSON.stringify(folders.result).includes(folderPath);
+            }, 30000);
+            return;
+        }
+        catch (error) {
+            lastError = error;
+        }
+    }
+
+    throw new Error(`Timed out adding workspace folder '${folderPath}'. Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
 }
 
 async function invokeNewForFolder(folderLabel: string, fixture: FolderFixture): Promise<void> {
