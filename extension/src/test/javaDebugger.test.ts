@@ -3,7 +3,7 @@ import * as assert from 'assert';
 import * as sinon from 'sinon';
 import * as vscode from 'vscode';
 import { getSupportedCapabilities } from '../capabilities';
-import { AspireDebugSession } from '../debugger/AspireDebugSession';
+import { AspireDebugSession, getLoggableDebugConfiguration } from '../debugger/AspireDebugSession';
 import * as debuggerExtensionsModule from '../debugger/debuggerExtensions';
 import { getResourceDebuggerExtensions } from '../debugger/debuggerExtensions';
 import { javaDebuggerExtension, parseJavaAppHostCommand, resolveJavaClassPaths } from '../debugger/languages/java';
@@ -435,6 +435,28 @@ suite('Java Debugger Extension Tests', () => {
         assert.strictEqual(
             showErrorMessage.firstCall.args[0],
             javaAppHostCommandNotRecognized('java -Xmx512m'));
+    });
+
+    test('always redacts resolved Java environments from persistent configuration logs', async () => {
+        const credential = 'resolved-environment-credential';
+        const debugConfig = createDebugConfig();
+        debugConfig.env = {
+            PRIVATE_TOKEN: credential,
+            OTEL_EXPORTER_OTLP_HEADERS: `x-otlp-api-key=${credential}`,
+        };
+
+        await javaDebuggerExtension.createDebugSessionConfigurationCallback!(
+            createJavaLaunchConfig(),
+            [],
+            [{ name: 'PRIVATE_TOKEN', value: credential }],
+            { debug: true, runId: '1', debugSessionId: '1', isApphost: false, debugSession: fakeAspireDebugSession },
+            debugConfig);
+
+        // `aspire.enableDebugConfigEnvironmentLogging` defaults to true, so `true` here is the default
+        // path rather than an opt-in, and the resolved environment must still be withheld.
+        const loggableConfig = getLoggableDebugConfiguration(debugConfig, true);
+        assert.strictEqual(loggableConfig.env, '<redacted>');
+        assert.ok(!JSON.stringify(loggableConfig).includes(credential));
     });
 });
 

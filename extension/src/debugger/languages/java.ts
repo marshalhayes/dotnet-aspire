@@ -5,7 +5,7 @@ import { AspireResourceExtendedDebugConfiguration, ExecutableLaunchConfiguration
 import { invalidLaunchConfiguration, javaAttachNotSupported, javaDisplayName, javaLabel } from "../../loc/strings";
 import { extensionLogOutputChannel } from "../../utils/logging";
 import { ResourceDebuggerExtension } from "../debuggerExtensions";
-import { AspireDebugSession } from "../AspireDebugSession";
+import { AspireDebugSession, markDebugConfigurationEnvironmentSensitive } from "../AspireDebugSession";
 
 // Commands contributed by redhat.java. They only exist once the language server has activated, so
 // every call site has to tolerate them being missing.
@@ -215,6 +215,14 @@ export const javaDebuggerExtension: ResourceDebuggerExtension = {
         launchOptions: { debug: boolean;[key: string]: any },
         debugConfiguration: AspireResourceExtendedDebugConfiguration
     ): Promise<void> => {
+        // The resolved resource environment reaches the adapter through this configuration and can
+        // include connection strings, `OTEL_EXPORTER_OTLP_HEADERS` and the extension certificate, so
+        // keep it available to the adapter without letting the diagnostic setting that logs other
+        // launch environments persist this one. `aspire.enableDebugConfigEnvironmentLogging` defaults
+        // to true, so without this the resolved environment is written to the output channel by
+        // default. Matches the Rust debugger extension.
+        markDebugConfigurationEnvironmentSensitive(debugConfiguration);
+
         if (!isJavaLaunchConfiguration(launchConfig)) {
             extensionLogOutputChannel.info(`The resource type was not java for ${JSON.stringify(launchConfig)}`);
             throw new Error(invalidLaunchConfiguration(JSON.stringify(launchConfig)));
