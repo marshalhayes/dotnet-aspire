@@ -1667,19 +1667,45 @@ function getExtensionFileStatus(context: vscode.ExtensionContext, relativePaths:
   ]));
 }
 
-async function getDiagnosticsForFile(filePath: string): Promise<{ message: string; severity: vscode.DiagnosticSeverity; code?: string | number }[]> {
+export async function getDiagnosticsForFile(filePath: string): Promise<{ message: string; severity: vscode.DiagnosticSeverity; code?: string | number }[]> {
   if (typeof filePath !== 'string' || filePath.length === 0) {
     throw new Error('Aspire extension E2E getDiagnostics requires filePath.');
   }
 
   const uri = vscode.Uri.file(filePath);
+  const wasAlreadyOpen = isFileOpenInAnyTab(uri);
   const document = await vscode.workspace.openTextDocument(uri);
-  await vscode.window.showTextDocument(document);
-  return vscode.languages.getDiagnostics(uri).map(diagnostic => ({
+
+  // The document has to be shown for a language server to publish diagnostics for it, but the Java
+  // AppHost spec probes every generated SDK source - more than a hundred files. `preview` alone is
+  // not enough to keep that to one tab because VS Code ignores it when the user has
+  // `workbench.editor.enablePreview` off, so any tab this opened is closed again below. Otherwise
+  // whichever suite tears down next closes them one at a time over WebDriver and exceeds its
+  // timeout.
+  await vscode.window.showTextDocument(document, { preview: true, preserveFocus: true });
+
+  const diagnostics = vscode.languages.getDiagnostics(uri).map(diagnostic => ({
     message: diagnostic.message,
     severity: diagnostic.severity,
     code: typeof diagnostic.code === 'string' || typeof diagnostic.code === 'number' ? diagnostic.code : undefined,
   }));
+
+  if (!wasAlreadyOpen) {
+    const openedTabs = vscode.window.tabGroups.all
+      .flatMap(group => group.tabs)
+      .filter(tab => tab.input instanceof vscode.TabInputText && tab.input.uri.fsPath === uri.fsPath);
+
+    if (openedTabs.length > 0) {
+      await vscode.window.tabGroups.close(openedTabs, true);
+    }
+  }
+
+  return diagnostics;
+}
+
+function isFileOpenInAnyTab(uri: vscode.Uri): boolean {
+  return vscode.window.tabGroups.all.some(group => group.tabs.some(tab =>
+    tab.input instanceof vscode.TabInputText && tab.input.uri.fsPath === uri.fsPath));
 }
 
 function getAppHostElement(appHostTreeProvider: AspireAppHostTreeProvider, appHostPath: string | undefined): unknown {
