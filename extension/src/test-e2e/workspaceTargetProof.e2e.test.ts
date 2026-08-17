@@ -8,7 +8,7 @@ import { InputBox, VSBrowser, Workbench } from './helpers/extester';
 import { cancelActiveInput, chooseActiveQuickPick, executeCommandFromPalette, openAspireView } from './helpers/vscode';
 
 suite('Workspace target proof E2E', function () {
-    this.timeout(360000);
+    this.timeout(900000);
 
     teardown(async () => {
         await setTerminalCommandExecutionSuppressedForE2E(false);
@@ -86,7 +86,14 @@ async function addWorkspaceFolder(folderPath: string): Promise<void> {
     // workspace, which reloads the window and restarts the extension host. The reload can land
     // between the command and the quick-open input, so the add is retried until the extension
     // reports the folder rather than assumed to have taken on the first attempt.
-    const deadline = Date.now() + 90000;
+    //
+    // The budget has to leave room for those retries to happen. A single failing attempt can spend
+    // 30s in `InputBox.create` and another 30s confirming the folder never arrived, so a 90s deadline
+    // bought one attempt and part of a second - and then reported the poll timeout as the cause. The
+    // confirmation poll is the cheap half to shorten: an add that took is visible within a second or
+    // two, so a shorter poll costs a successful run nothing and buys a failing one more attempts.
+    // 180s allows roughly four attempts at the 45s worst case, and both adds still fit the suite budget.
+    const deadline = Date.now() + 180000;
     let lastError: unknown;
     while (Date.now() < deadline) {
         try {
@@ -104,7 +111,7 @@ async function addWorkspaceFolder(folderPath: string): Promise<void> {
             await VSBrowser.instance.driver.wait(async () => {
                 const folders = await executeE2eControlCommand({ name: 'getWorkspaceFolders' });
                 return JSON.stringify(folders.result).includes(folderPath);
-            }, 30000);
+            }, 15000);
             return;
         }
         catch (error) {

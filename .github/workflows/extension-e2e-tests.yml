@@ -524,7 +524,13 @@ jobs:
           # they paid before this step existed.
           cd playground/JavaSpringBoot
           for maven_project in catalog worker; do
-            (cd "$maven_project" && ./mvnw --batch-mode --no-transfer-progress -q dependency:go-offline) \
+            # `dependency:go-offline` resolves the dependency tree but not every plugin a real build
+            # runs, so compiling here is what actually leaves `~/.m2` - the directory this job caches -
+            # holding the compiler, resources and Spring Boot plugins. The build output itself is
+            # deliberately not reused: the specs copy the playground without `target/` so each run
+            # builds clean, which is the same reason the Gradle project below is compiled rather than
+            # only resolved.
+            (cd "$maven_project" && ./mvnw --batch-mode --no-transfer-progress -q dependency:go-offline compile) \
               || echo "warning: could not pre-resolve Maven dependencies for $maven_project"
           done
           (cd orders && ./gradlew --no-daemon --quiet compileJava) \
@@ -600,6 +606,11 @@ jobs:
           }
 
           & $cli.FullName setup
+          # pwsh does not stop on a native command's exit code, so an unchecked failure here left the
+          # shard running without the orchestration component and failing minutes later with a debug
+          # startup timeout instead of the real reason - "The Aspire orchestration component is not
+          # installed at ~/.nuget/packages/microsoft.developercontrolplane.<rid>/<version>/tools/dcp".
+          if ($LASTEXITCODE -ne 0) { throw "aspire setup failed with exit code $LASTEXITCODE." }
 
           $shippingDir = Join-Path '${{ github.workspace }}' 'artifacts/nugets/Debug/Shipping'
           if (-not (Test-Path $shippingDir)) {

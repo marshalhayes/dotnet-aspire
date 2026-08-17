@@ -1064,12 +1064,18 @@ async function proveAppHostAndResourceDebugging(command: AppHostAndResourceDebug
     // run issues one: the health check probes /actuator/health rather than the controller. Without
     // driving the traffic here the wait below can only ever time out, which is what it did - the
     // resource launched under the debugger and sat idle for the full 15 minutes.
+    //
+    // The endpoint wait gets the caller's whole budget rather than a shorter cap of its own. The
+    // resource is a Spring Boot app that the run still has to compile and start under a debugger, on
+    // a runner that is already hosting the Java language server, so capping this at five minutes
+    // reported a timeout while the resource was legitimately still coming up - and reported it as
+    // "300000ms" even though the spec had asked for fifteen minutes.
     const resourceHit = await withResourceTraffic(
       appHostTreeProvider,
       appHostPath,
       resourceName,
       resourceRequestPath,
-      Math.min(timeoutMs, 300000),
+      timeoutMs,
       () => waitForBreakpoint(resourceSourcePath, resourceBreakpointLine));
     if (resourceHit.matchingFrame.line !== resourceBreakpointLine + 1) {
       throw new Error(`Expected resource breakpoint line ${resourceBreakpointLine + 1}, got ${resourceHit.matchingFrame.line}.`);
