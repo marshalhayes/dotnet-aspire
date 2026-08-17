@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import * as path from 'path';
 import * as sinon from 'sinon';
 import * as vscode from 'vscode';
 import * as cliPath from '../utils/cliPath';
@@ -56,12 +57,16 @@ suite('AspireMcpServerDefinitionProvider definition tests', () => {
     // from a CLI that has no bundle layout, so the MCP server must apply the same forwardability
     // guard every other AspireCliPath producer applies.
     test('does not forward an unbundled framework-dependent CLI path to the MCP server', () => {
-        const cliPath = '/repo/artifacts/bin/Aspire.Cli/Debug/aspire';
+        // Build the paths with `path` rather than literals: the production guard derives the
+        // adjacent assembly with path.dirname/path.join, which emits backslashes on Windows, so a
+        // hardcoded POSIX literal would never match there and the test would silently pass.
+        const cliPath = path.join(path.sep, 'repo', 'artifacts', 'bin', 'Aspire.Cli', 'Debug', 'aspire');
+        const cliAssemblyPath = path.join(path.dirname(cliPath), 'aspire.dll');
         const definition = createAspireMcpServerDefinition(cliPath, undefined, undefined, {
             isAbsolute: () => true,
             // An inner-loop `dotnet build` output: the apphost sits next to aspire.dll with no
             // install sidecar and no adjacent bundle layout.
-            fileExists: candidate => candidate === cliPath || candidate === '/repo/artifacts/bin/Aspire.Cli/Debug/aspire.dll',
+            fileExists: candidate => candidate === cliPath || candidate === cliAssemblyPath,
             realpath: () => undefined,
         });
 
