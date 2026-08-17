@@ -10,6 +10,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Xml;
 using System.Xml.Linq;
 using Aspire.Cli.Bundles;
 using Aspire.Cli.Configuration;
@@ -352,10 +353,16 @@ internal sealed partial class PrebuiltAppHostServer : IAppHostServerProject, IDi
     /// Aspire.Hosting version changes the resolved closure without changing a single byte of the
     /// generated project file.
     /// <para>
-    /// Referenced project files are also scanned for floating versions, because a float anywhere in
-    /// the closure can resolve to a different package without any local input changing. Only the
-    /// directly referenced projects are inspected; a float introduced by a project they reference in
-    /// turn is not seen, so restore is skipped based on the inputs this closure declares.
+    /// The whole project-reference graph is walked, not just its first level, because restore
+    /// resolves the graph: a package bump two hops out changes the closure exactly as much as one
+    /// hop out does. Each project's directory-scoped MSBuild imports are hashed with it, since under
+    /// central package management the reference carries no version at all and bumping
+    /// Directory.Packages.props changes what restore resolves while every project file stays
+    /// byte-for-byte identical.
+    /// </para>
+    /// <para>
+    /// Every project in that closure is also scanned for floating versions, because a float anywhere
+    /// in it can resolve to a different package without any local input changing.
     /// </para>
     /// </remarks>
     internal static async Task<RestoreInputs> ComputeRestoreInputsAsync(
@@ -369,16 +376,45 @@ internal sealed partial class PrebuiltAppHostServer : IAppHostServerProject, IDi
 
         var isFloating = HasFloatingPackageVersion(packageRefs);
 
-        // Hash the path as well as the content so that repointing a reference at a different project
-        // with identical content is still seen as a change.
-        foreach (var projectRef in projectRefs.OrderBy(static r => r.ProjectPath, StringComparer.Ordinal))
+        var pending = new Queue<string>();
+        // Ordinal rather than a path-aware comparer: a duplicate spelling of the same path costs one
+        // extra read, whereas treating two genuinely different paths as one would drop an input.
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var closure = new List<string>();
+
+        foreach (var projectRef in projectRefs)
         {
-            var projectPath = projectRef.ProjectPath;
-            if (projectPath is null)
+            if (projectRef.ProjectPath is { } path)
+            {
+                pending.Enqueue(path);
+            }
+        }
+
+        while (pending.Count > 0)
+        {
+            var projectPath = pending.Dequeue();
+            var normalizedPath = NormalizeProjectPath(projectPath);
+
+            // Terminates on its own rather than hanging the launch: MSBuild rejects a project
+            // reference cycle, but the fingerprint is computed before anything validates the graph.
+            if (!visited.Add(normalizedPath))
             {
                 continue;
             }
 
+            closure.Add(normalizedPath);
+
+            foreach (var referenced in ReadProjectReferences(normalizedPath))
+            {
+                pending.Enqueue(referenced);
+            }
+        }
+
+        // Ordering makes the fingerprint independent of the order the graph happened to be walked in.
+        // Hash the path as well as the content so that repointing a reference at a different project
+        // with identical content is still seen as a change.
+        foreach (var projectPath in closure.OrderBy(static path => path, StringComparer.Ordinal))
+        {
             hash.Append(Encoding.UTF8.GetBytes(projectPath));
 
             if (!File.Exists(projectPath))
@@ -395,8 +431,149 @@ internal sealed partial class PrebuiltAppHostServer : IAppHostServerProject, IDi
             }
         }
 
+        foreach (var importPath in FindDirectoryScopedImports(closure).OrderBy(static path => path, StringComparer.Ordinal))
+        {
+            hash.Append(Encoding.UTF8.GetBytes(importPath));
+
+            var importBytes = await File.ReadAllBytesAsync(importPath, cancellationToken).ConfigureAwait(false);
+            hash.Append(importBytes);
+
+            if (!isFloating && HasFloatingVersionAttribute(Encoding.UTF8.GetString(importBytes)))
+            {
+                isFloating = true;
+            }
+        }
+
         return new RestoreInputs(Convert.ToHexString(hash.GetCurrentHash()), IsEligibleForSkip: !isFloating);
     }
+
+    /// <summary>
+    /// Resolves a project path to a comparable absolute form so the same project reached by two
+    /// different spellings is hashed once.
+    /// </summary>
+    private static string NormalizeProjectPath(string projectPath)
+    {
+        try
+        {
+            return Path.GetFullPath(projectPath);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            // An unresolvable path is still hashed verbatim: it cannot be read, but the fact that the
+            // closure names it is itself an input, and a later change to a valid path is then seen.
+            return projectPath;
+        }
+    }
+
+    /// <summary>
+    /// Reads the &lt;ProjectReference Include="..." /&gt; paths a project declares, resolved against
+    /// the project's own directory the way MSBuild resolves them.
+    /// </summary>
+    /// <remarks>
+    /// Parsed as XML rather than with a regex because an Include can be spread across attributes and
+    /// whitespace. A project that cannot be read or parsed contributes no references: the file itself
+    /// is still hashed above, so a later fix to it changes the fingerprint.
+    /// </remarks>
+    private static List<string> ReadProjectReferences(string projectPath)
+    {
+        var references = new List<string>();
+
+        if (!File.Exists(projectPath))
+        {
+            return references;
+        }
+
+        XDocument document;
+        try
+        {
+            using var stream = File.OpenRead(projectPath);
+            // DTD processing stays off: these files are inputs from the user's checkout and an
+            // external entity must never be fetched while computing a fingerprint.
+            using var reader = XmlReader.Create(stream, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null });
+            document = XDocument.Load(reader);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or XmlException)
+        {
+            return references;
+        }
+
+        var projectDirectory = Path.GetDirectoryName(projectPath);
+        if (projectDirectory is null)
+        {
+            return references;
+        }
+
+        foreach (var element in document.Descendants().Where(static e => e.Name.LocalName == "ProjectReference"))
+        {
+            var include = element.Attribute("Include")?.Value;
+            if (string.IsNullOrWhiteSpace(include))
+            {
+                continue;
+            }
+
+            // An MSBuild property in the path ($(RepoRoot)/...) cannot be expanded without evaluating
+            // the project, so the reference is skipped rather than hashed under a nonsense path.
+            if (include.Contains("$(", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            references.Add(Path.Combine(projectDirectory, include.Replace('\\', Path.DirectorySeparatorChar)));
+        }
+
+        return references;
+    }
+
+    /// <summary>
+    /// Finds the directory-scoped files MSBuild and NuGet import automatically for the projects in a
+    /// closure, by walking from each project's directory to the root the way they do.
+    /// </summary>
+    /// <remarks>
+    /// These carry version information that never appears in the project file itself - most
+    /// importantly Directory.Packages.props under central package management, where the reference is
+    /// written without a version at all.
+    /// <list type="bullet">
+    /// <item>https://learn.microsoft.com/nuget/consume-packages/central-package-management</item>
+    /// <item>https://learn.microsoft.com/visualstudio/msbuild/customize-by-directory</item>
+    /// </list>
+    /// </remarks>
+    private static HashSet<string> FindDirectoryScopedImports(IReadOnlyList<string> closure)
+    {
+        var imports = new HashSet<string>(StringComparer.Ordinal);
+        var scannedDirectories = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var projectPath in closure)
+        {
+            var directory = Path.GetDirectoryName(projectPath);
+
+            while (directory is not null && scannedDirectories.Add(directory))
+            {
+                foreach (var fileName in s_directoryScopedImportFileNames)
+                {
+                    var candidate = Path.Combine(directory, fileName);
+                    if (File.Exists(candidate))
+                    {
+                        imports.Add(candidate);
+                    }
+                }
+
+                directory = Path.GetDirectoryName(directory);
+            }
+        }
+
+        return imports;
+    }
+
+    // NuGet.config is matched case-insensitively by NuGet itself, but the two spellings below are the
+    // ones it documents and the ones repositories actually use.
+    private static readonly string[] s_directoryScopedImportFileNames =
+    [
+        "Directory.Packages.props",
+        "Directory.Build.props",
+        "Directory.Build.targets",
+        "NuGet.config",
+        "nuget.config"
+    ];
 
     /// <summary>
     /// The restore inputs for one integration closure.
