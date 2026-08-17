@@ -569,9 +569,11 @@ jobs:
     name: Run VS Code extension unit tests (Windows)
     runs-on: windows-latest
     needs: [setup_for_tests]
-    # Also gated on run_extension_e2e (not just run_extension_unit): extension_e2e_tests `needs` this
-    # job, so gating it off while e2e runs would skip e2e via need-propagation.
-    if: ${{ needs.setup_for_tests.outputs.run_extension_unit == 'true' || needs.setup_for_tests.outputs.run_extension_e2e == 'true' }}
+    # E2E deliberately does not `needs` this job. It consumes only build artifacts (aspire-extension,
+    # cli-native-archives-*, built-nugets*), none of which this job produces, so gating E2E on unit
+    # results only means an unrelated unit failure - or a npm registry blip on this one runner -
+    # silently skips every E2E shard and erases that signal entirely.
+    if: ${{ needs.setup_for_tests.outputs.run_extension_unit == 'true' }}
     env:
       NPM_REGISTRY: https://pkgs.dev.azure.com/dnceng/public/_packaging/dotnet-public-npm/npm/registry/
       COREPACK_ENABLE_DOWNLOAD_PROMPT: 0
@@ -724,7 +726,7 @@ jobs:
     name: Run VS Code extension E2E tests
     if: ${{ needs.setup_for_tests.outputs.run_extension_e2e == 'true' }}
     uses: ./.github/workflows/extension-e2e-tests.yml
-    needs: [setup_for_tests, build_packages, build_cli_archive_linux, build_cli_archive_windows, extension_tests_win, extension_bootstrap_linux]
+    needs: [setup_for_tests, build_packages, build_cli_archive_linux, build_cli_archive_windows, extension_bootstrap_linux]
 
   typescript_sdk_tests:
     name: TypeScript SDK Unit Tests
@@ -850,7 +852,7 @@ jobs:
               (contains(needs.*.result, 'failure') ||
                contains(needs.*.result, 'cancelled') ||
                (github.event_name == 'pull_request' &&
-                ((needs.extension_tests_win.result == 'skipped' && (needs.setup_for_tests.outputs.run_extension_unit == 'true' || needs.setup_for_tests.outputs.run_extension_e2e == 'true')) ||
+                ((needs.extension_tests_win.result == 'skipped' && needs.setup_for_tests.outputs.run_extension_unit == 'true') ||
                  (needs.setup_for_tests.outputs.run_extension_e2e == 'true' &&
                   needs.extension_e2e_tests.result == 'skipped') ||
                  (needs.cli_starter_validation_windows.result == 'skipped' && (needs.setup_for_tests.outputs.run_cli_starter == 'true')) ||
@@ -876,7 +878,7 @@ jobs:
                   needs.tests_requires_cli_archive.result == 'skipped') ||
                  (needs.polyglot_validation.result == 'skipped' && (needs.setup_for_tests.outputs.run_polyglot == 'true')))) ||
                (github.event_name != 'pull_request' &&
-                ((needs.extension_tests_win.result == 'skipped' && (needs.setup_for_tests.outputs.run_extension_unit == 'true' || needs.setup_for_tests.outputs.run_extension_e2e == 'true')) ||
+                ((needs.extension_tests_win.result == 'skipped' && needs.setup_for_tests.outputs.run_extension_unit == 'true') ||
                  (needs.setup_for_tests.outputs.run_extension_e2e == 'true' &&
                   needs.extension_e2e_tests.result == 'skipped') ||
                  (needs.typescript_sdk_tests.result == 'skipped' &&
