@@ -21,6 +21,72 @@ namespace Aspire.Cli.Tests.Projects;
 
 public class PrebuiltAppHostServerTests(ITestOutputHelper outputHelper)
 {
+
+    [Fact]
+    public async Task WriteIfChangedAsync_LeavesAnIdenticalFileAlone()
+    {
+        using var workspace = TemporaryWorkspace.CreateForCli(outputHelper);
+        var path = Path.Combine(workspace.WorkspaceRoot.FullName, "IntegrationRestore.csproj");
+        await PrebuiltAppHostServer.WriteIfChangedAsync(path, "<Project />", CancellationToken.None);
+        var firstWrite = File.GetLastWriteTimeUtc(path);
+
+        // The restore skip compares timestamps, so an identical rewrite must not touch the file.
+        File.SetLastWriteTimeUtc(path, firstWrite.AddMinutes(-5));
+        var backdated = File.GetLastWriteTimeUtc(path);
+        await PrebuiltAppHostServer.WriteIfChangedAsync(path, "<Project />", CancellationToken.None);
+
+        Assert.Equal(backdated, File.GetLastWriteTimeUtc(path));
+        Assert.Equal("<Project />", await File.ReadAllTextAsync(path));
+    }
+
+    [Fact]
+    public async Task WriteIfChangedAsync_WritesWhenContentDiffers()
+    {
+        using var workspace = TemporaryWorkspace.CreateForCli(outputHelper);
+        var path = Path.Combine(workspace.WorkspaceRoot.FullName, "IntegrationRestore.csproj");
+        await PrebuiltAppHostServer.WriteIfChangedAsync(path, "<Project />", CancellationToken.None);
+        await PrebuiltAppHostServer.WriteIfChangedAsync(path, "<Project Sdk=\"Microsoft.NET.Sdk\" />", CancellationToken.None);
+
+        Assert.Equal("<Project Sdk=\"Microsoft.NET.Sdk\" />", await File.ReadAllTextAsync(path));
+    }
+
+    [Fact]
+    public void CanSkipIntegrationRestore_RestoresWhenNothingHasBeenRestoredYet()
+    {
+        using var workspace = TemporaryWorkspace.CreateForCli(outputHelper);
+        var projectFilePath = Path.Combine(workspace.WorkspaceRoot.FullName, "IntegrationRestore.csproj");
+        File.WriteAllText(projectFilePath, "<Project />");
+
+        Assert.False(PrebuiltAppHostServer.CanSkipIntegrationRestore(workspace.WorkspaceRoot.FullName, projectFilePath));
+    }
+
+    [Fact]
+    public void CanSkipIntegrationRestore_RestoresWhenTheProjectIsNewerThanTheAssets()
+    {
+        using var workspace = TemporaryWorkspace.CreateForCli(outputHelper);
+        var projectFilePath = Path.Combine(workspace.WorkspaceRoot.FullName, "IntegrationRestore.csproj");
+        var assetsPath = Path.Combine(workspace.WorkspaceRoot.FullName, "obj", "project.assets.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(assetsPath)!);
+        File.WriteAllText(assetsPath, "{}");
+        File.WriteAllText(projectFilePath, "<Project />");
+        File.SetLastWriteTimeUtc(projectFilePath, File.GetLastWriteTimeUtc(assetsPath).AddSeconds(1));
+
+        Assert.False(PrebuiltAppHostServer.CanSkipIntegrationRestore(workspace.WorkspaceRoot.FullName, projectFilePath));
+    }
+
+    [Fact]
+    public void CanSkipIntegrationRestore_SkipsWhenTheAssetsAreNotOlderThanTheProject()
+    {
+        using var workspace = TemporaryWorkspace.CreateForCli(outputHelper);
+        var projectFilePath = Path.Combine(workspace.WorkspaceRoot.FullName, "IntegrationRestore.csproj");
+        var assetsPath = Path.Combine(workspace.WorkspaceRoot.FullName, "obj", "project.assets.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(assetsPath)!);
+        File.WriteAllText(projectFilePath, "<Project />");
+        File.WriteAllText(assetsPath, "{}");
+        File.SetLastWriteTimeUtc(assetsPath, File.GetLastWriteTimeUtc(projectFilePath).AddSeconds(1));
+
+        Assert.True(PrebuiltAppHostServer.CanSkipIntegrationRestore(workspace.WorkspaceRoot.FullName, projectFilePath));
+    }
     private const string NuGetOrgSource = "https://api.nuget.org/v3/index.json";
 
     [Fact]

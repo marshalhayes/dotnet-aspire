@@ -765,8 +765,46 @@ internal sealed class GuestAppHostProject : IAppHostProject, IGuestAppHostSdkGen
             context.BuildCompletionSource?.TrySetResult(false);
             _logger.LogError(ex, "Failed to run {Language} AppHost", DisplayName);
             _interactionService.DisplayError($"Failed to run {DisplayName} AppHost: {ex.Message}");
+            if (TryDescribeAppHostServerAssemblySkew(ex) is { } skewHint)
+            {
+                _interactionService.DisplayMessage(KnownEmojis.Warning, $"[yellow]{Markup.Escape(skewHint)}[/]", allowMarkup: true);
+            }
+
             return CliExitCodes.FailedToDotnetRunAppHost;
         }
+    }
+
+    /// <summary>
+    /// Recognizes the failure that occurs when the AppHost server binary is older than the Aspire
+    /// integration packages it was asked to load, and returns an explanation of it.
+    /// </summary>
+    /// <remarks>
+    /// The server loads integration assemblies that were compiled against its own contract
+    /// assemblies. When the server is older, a type or member the integration references simply is
+    /// not there, and the runtime reports it as a bare type-load failure naming an assembly version
+    /// the user never chose — for example <c>Could not load type
+    /// 'Aspire.TypeSystem.CommandUpToDateCheck' from assembly 'Aspire.TypeSystem, Version=13.4.5.0'</c>.
+    /// Nothing in that message says "your CLI is older than your packages", which is the only
+    /// actionable part, so it is added here. The check is text-based because the failure arrives over
+    /// JSON-RPC as a <see cref="StreamJsonRpc.RemoteInvocationException" /> whose original exception
+    /// type is not reconstructed on this side.
+    /// </remarks>
+    internal static string? TryDescribeAppHostServerAssemblySkew(Exception exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            var message = current.Message;
+            var isMissingMember = message.Contains("Could not load type", StringComparison.Ordinal)
+                || message.Contains("Method not found", StringComparison.Ordinal)
+                || message.Contains("Missing method", StringComparison.Ordinal);
+            if (isMissingMember && message.Contains("Aspire.", StringComparison.Ordinal))
+            {
+                return "This usually means the Aspire AppHost server is older than the Aspire packages the AppHost references. "
+                    + "Update the Aspire CLI with 'aspire update --self', or pin the packages in aspire.config.json to the CLI's version.";
+            }
+        }
+
+        return null;
     }
 
     internal Dictionary<string, string> GetServerEnvironmentVariables(

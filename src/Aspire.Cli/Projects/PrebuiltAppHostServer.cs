@@ -314,6 +314,75 @@ internal sealed class PrebuiltAppHostServer : IAppHostServerProject, IDisposable
     }
 
     /// <summary>
+    /// Writes <paramref name="content" /> only when it differs from what is already on disk.
+    /// </summary>
+    /// <remarks>
+    /// Rewriting an identical file would update its timestamp, which is the input
+    /// <see cref="CanSkipIntegrationRestore" /> compares the restore assets file against. An
+    /// unconditional write would therefore make every launch look like a changed restore input.
+    /// </remarks>
+    internal static async Task WriteIfChangedAsync(string path, string content, CancellationToken cancellationToken)
+    {
+        if (File.Exists(path))
+        {
+            var existing = await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false);
+            if (string.Equals(existing, content, StringComparison.Ordinal))
+            {
+                return;
+            }
+        }
+
+        await File.WriteAllTextAsync(path, content, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Determines whether the last restore already saw the current integration project.
+    /// </summary>
+    /// <remarks>
+    /// NuGet writes <c>project.assets.json</c> at the end of a successful restore, so an assets file
+    /// at least as new as the project file means restore has already run for this exact input. The
+    /// comparison is "not older" rather than "strictly newer" because a restore triggered by the
+    /// project file write in the same second is still a restore of that content.
+    /// </remarks>
+    internal static bool CanSkipIntegrationRestore(string restoreDir, string projectFilePath, ILogger? logger = null)
+    {
+        var assetsPath = Path.Combine(restoreDir, "obj", "project.assets.json");
+        if (!File.Exists(assetsPath) || !File.Exists(projectFilePath))
+        {
+            return false;
+        }
+
+        try
+        {
+            return File.GetLastWriteTimeUtc(assetsPath) >= File.GetLastWriteTimeUtc(projectFilePath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            logger?.LogDebug(ex, "Unable to read integration restore timestamps; restoring.");
+            return false;
+        }
+    }
+
+    private async Task<(int ExitCode, OutputCollector Output)> BuildIntegrationProjectAsync(
+        string projectFilePath,
+        bool noRestore,
+        CancellationToken cancellationToken)
+    {
+        var buildOutput = new OutputCollector();
+        var exitCode = await _dotNetCliRunner.BuildAsync(
+            new FileInfo(projectFilePath),
+            noRestore,
+            new ProcessInvocationOptions
+            {
+                StandardOutputCallback = buildOutput.AppendOutput,
+                StandardErrorCallback = buildOutput.AppendError
+            },
+            cancellationToken).ConfigureAwait(false);
+
+        return (exitCode, buildOutput);
+    }
+
+    /// <summary>
     /// Creates a synthetic .csproj with all package and project references,
     /// then builds it to get the full transitive DLL closure via CopyLocalLockFileAssemblies.
     /// Requires .NET SDK.
@@ -348,7 +417,7 @@ internal sealed class PrebuiltAppHostServer : IAppHostServerProject, IDisposable
             useExactPackageVersions: !string.IsNullOrWhiteSpace(packageSourceOverride),
             restoreConfigFile: temporaryNuGetConfig?.ConfigFile.FullName);
         var projectFilePath = Path.Combine(restoreDir, IntegrationProjectFileName);
-        await File.WriteAllTextAsync(projectFilePath, projectContent, cancellationToken);
+        await WriteIfChangedAsync(projectFilePath, projectContent, cancellationToken);
 
         // Write a Directory.Packages.props to opt out of Central Package Management
         var directoryPackagesProps = """
@@ -358,28 +427,36 @@ internal sealed class PrebuiltAppHostServer : IAppHostServerProject, IDisposable
               </PropertyGroup>
             </Project>
             """;
-        await File.WriteAllTextAsync(
+        await WriteIfChangedAsync(
             Path.Combine(restoreDir, "Directory.Packages.props"), directoryPackagesProps, cancellationToken);
 
         // Also write an empty Directory.Build.props/targets to prevent parent imports
-        await File.WriteAllTextAsync(
+        await WriteIfChangedAsync(
             Path.Combine(restoreDir, "Directory.Build.props"), "<Project />", cancellationToken);
-        await File.WriteAllTextAsync(
+        await WriteIfChangedAsync(
             Path.Combine(restoreDir, "Directory.Build.targets"), "<Project />", cancellationToken);
 
-        _logger.LogDebug("Building integration project with {PackageCount} packages and {ProjectCount} project references",
-            packageRefs.Count, projectRefs.Count);
+        // Restore dominates this build - measured at 5.6s of a 6.7s warm build - and it only needs to
+        // run again when something restore actually reads has changed. The project file above is the
+        // single input that expresses all of it: package identities and versions, project references,
+        // channel sources, and the synthesized NuGet.config path are all written into it, and it is
+        // only rewritten when its content differs. So an assets file newer than the project file means
+        // the last restore already saw this exact input.
+        //
+        // Skipping restore never skips the build itself, so an edit to a referenced project is still
+        // compiled. And because a stale or partially cleaned obj/ directory is the one thing this
+        // cannot see, a failed no-restore build is retried with restore rather than reported.
+        var skipRestore = CanSkipIntegrationRestore(restoreDir, projectFilePath, _logger);
 
-        var buildOutput = new OutputCollector();
-        var exitCode = await _dotNetCliRunner.BuildAsync(
-            new FileInfo(projectFilePath),
-            noRestore: false,
-            new ProcessInvocationOptions
-            {
-                StandardOutputCallback = buildOutput.AppendOutput,
-                StandardErrorCallback = buildOutput.AppendError
-            },
-            cancellationToken);
+        _logger.LogDebug("Building integration project with {PackageCount} packages and {ProjectCount} project references (restore {RestoreState})",
+            packageRefs.Count, projectRefs.Count, skipRestore ? "skipped" : "requested");
+
+        var (exitCode, buildOutput) = await BuildIntegrationProjectAsync(projectFilePath, noRestore: skipRestore, cancellationToken).ConfigureAwait(false);
+        if (exitCode != 0 && skipRestore)
+        {
+            _logger.LogDebug("Integration project build failed without restore; retrying with restore.");
+            (exitCode, buildOutput) = await BuildIntegrationProjectAsync(projectFilePath, noRestore: false, cancellationToken).ConfigureAwait(false);
+        }
 
         if (exitCode != 0)
         {
