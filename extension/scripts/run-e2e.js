@@ -865,6 +865,8 @@ function copyJavaPlaygroundIntoWorkspace(bundledCliPath) {
     throw new Error(`The Java E2E specs require the Java playground at ${source}.`);
   }
 
+  assertWorkspaceRootIsNotGitIgnored();
+
   // `.aspire/` is generated rather than checked in, so it has to exist before the copy: it is what
   // the AppHost's `import aspire.*` statements resolve against, and the generated sources are the
   // very thing the diagnostics test measures.
@@ -905,6 +907,36 @@ function copyJavaPlaygroundIntoWorkspace(bundledCliPath) {
   }
 
   fs.rmSync(path.join(workspaceRoot, 'aspire.config.json'), { force: true });
+}
+
+/**
+ * Fails when the Java workspace root is excluded by a .gitignore rule.
+ *
+ * The Java workspace has to live inside the repository (see the note on `javaScratchWorkspaceRoot`),
+ * which puts it within reach of the repository's own ignore rules. That matters because `aspire ls`
+ * discovers AppHosts from `git ls-files` when it is run inside a work tree: an ignored workspace
+ * yields zero files, so `aspire ls` reports no candidates at all and every Java spec fails in its
+ * `before all` hook with nothing pointing at the cause. Adding `extension/java-e2e-workspace/` to
+ * .gitignore to keep `git status` tidy is exactly the well-intentioned change that breaks this, so
+ * name the cause here instead of leaving it to be rediscovered from an empty candidate list.
+ */
+function assertWorkspaceRootIsNotGitIgnored() {
+  const result = spawnSync('git', ['check-ignore', '-q', workspaceRoot], {
+    cwd: repoRoot,
+    shell: false,
+    encoding: 'utf8',
+  });
+
+  // git check-ignore exits 0 when the path is ignored, 1 when it is not, and >1 on error. Treat an
+  // error (no git, not a work tree) as "not ignored": the CLI falls back to a filesystem scan under
+  // the same conditions, so there is nothing to warn about.
+  if (result.status === 0) {
+    throw new Error(
+      `The Java E2E workspace root ${workspaceRoot} is excluded by a .gitignore rule. `
+      + '`aspire ls` discovers AppHosts from `git ls-files`, so an ignored workspace reports zero '
+      + 'AppHost candidates and every Java spec fails while waiting for one. Remove the ignore rule '
+      + 'covering this directory.');
+  }
 }
 
 /**
