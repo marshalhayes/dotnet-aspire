@@ -1468,6 +1468,17 @@ internal sealed partial class PrebuiltAppHostServer : IAppHostServerProject, IDi
         {
             startInfo.Environment[BundleDiscovery.DcpPathEnvVar] = dcpPath;
         }
+        else
+        {
+            // Without this variable the AppHost falls back to the DcpCliPath assembly metadata baked in
+            // by the AppHost SDK, which points into ~/.nuget/packages. A guest-language AppHost never
+            // restores that package, so the run fails with "The Aspire orchestration component is not
+            // installed at <nuget path>" - a message that describes the fallback rather than the real
+            // problem, which is that no layout supplied DCP. Log the real cause where the CLI logs are.
+            _logger.LogWarning(
+                "No layout supplied a DCP path, so {EnvironmentVariable} was not set. The AppHost will fall back to its baked-in NuGet package path, which a guest-language AppHost does not restore.",
+                BundleDiscovery.DcpPathEnvVar);
+        }
 
         // Set the dashboard path so the AppHost can locate and launch the dashboard binary
         var managedPath = _layout.GetManagedPath();

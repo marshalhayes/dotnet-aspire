@@ -28,8 +28,10 @@ suite('Java AppHost CodeLens E2E', function () {
         await VSBrowser.instance.openResources(appHostPath);
 
         // openResources returns before the tab exists and the lenses are produced asynchronously after
-        // that, so both are polled rather than read once.
-        const texts = await waitForCodeLensText('AppHost.java', 'bypass Aspire');
+        // that, so both are polled rather than read once. The suiteSetup guarantees the Java language
+        // server reached Standard mode, but VS Code still has to run the merged provider pass on this
+        // document afterwards, so this allows more than the 60s default.
+        const texts = await waitForCodeLensText('AppHost.java', 'bypass Aspire', 180000);
 
         assert.ok(
             texts.some(text => text.includes('bypass Aspire')),

@@ -18,6 +18,8 @@ import { dashboardDefaultChangedNotificationKey } from '../utils/dashboardNotifi
 import { extensionLogOutputChannel } from '../utils/logging';
 import { onDidInvokeCommand } from '../utils/telemetry';
 import { AspireAppHostTreeProvider } from '../views/AspireAppHostTreeProvider';
+import { ResourceItem } from '../views/treeItems/resourceItems';
+import { ResourceJson } from '../data/appHostCliContracts';
 import { AppHostDataRepository } from '../data/AppHostDataRepository';
 import { getSupportedCapabilities, javaLanguageExtensionId } from '../capabilities';
 
@@ -793,6 +795,10 @@ async function executeE2eControlCommand(
         fileName: folder.uri.fsPath,
       })) ?? [];
     }
+    case 'addWorkspaceFolder': {
+      markStarted();
+      return await addWorkspaceFolderForE2E(getE2eWorkspacePath(command.folderPath));
+    }
     case 'getActiveEditor': {
       markStarted();
       return getActiveEditorInfo();
@@ -1459,7 +1465,8 @@ async function withResourceTraffic<T>(
     () => {
       const element = appHostTreeProvider.findEndpointElement({ appHostPath, resourceName });
       return element && hasEndpointUrl(element) ? element.url : undefined;
-    });
+    },
+    () => describeResourcesForE2E(appHostTreeProvider, appHostPath, resourceName));
 
   // A relative path resolves against the endpoint only when the base ends in '/'; without it the
   // last segment of the endpoint would be replaced instead.
@@ -1490,7 +1497,7 @@ async function withResourceTraffic<T>(
   }
 }
 
-async function waitForE2eValue<T>(description: string, timeoutMs: number, getValue: () => T | undefined | Promise<T | undefined>): Promise<T> {  const started = Date.now();
+async function waitForE2eValue<T>(description: string, timeoutMs: number, getValue: () => T | undefined | Promise<T | undefined>, describeState?: () => string): Promise<T> {  const started = Date.now();
   let lastError: string | undefined;
   while (Date.now() - started < timeoutMs) {
     try {
@@ -1506,7 +1513,11 @@ async function waitForE2eValue<T>(description: string, timeoutMs: number, getVal
     await delay(500);
   }
 
-  throw new Error(`Timed out after ${timeoutMs}ms waiting for ${description}. Last error: ${lastError ?? '<none>'}`);
+  // A poll that returns undefined never sets lastError, so waits that are simply never satisfied
+  // report "Last error: <none>" and say nothing about why. `describeState` lets those callers attach
+  // what they were looking at, which is the difference between an actionable failure and a rerun.
+  const state = describeState ? ` State: ${describeState()}` : '';
+  throw new Error(`Timed out after ${timeoutMs}ms waiting for ${description}. Last error: ${lastError ?? '<none>'}.${state}`);
 }
 
 async function stopDebuggingForE2E(
@@ -1998,7 +2009,91 @@ async function waitForJavaLanguageServer(timeoutMs: number): Promise<{ serverMod
     }
   }
 
+  // serverReady() resolves in LightWeight mode, which only serves syntax and answers no
+  // project-aware request. That is not enough for the callers here: VS Code merges the CodeLens sets
+  // of every registered provider, so while redhat.java is still importing, a .java file renders
+  // `CodeLenses: (none)` - including the Aspire lens, which was ready the whole time. Waiting for
+  // Standard mode is what makes "the workspace is imported" true rather than "the extension started".
+  //
+  // Server modes are LightWeight, Hybrid and Standard; only Standard means the project model exists.
+  // See https://github.com/redhat-developer/vscode-java/blob/master/src/settings.ts (ServerMode).
+  const deadline = Date.now() + timeoutMs;
+  while (api.serverMode !== 'Standard' && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+
+  if (api.serverMode !== 'Standard') {
+    throw new Error(`The Java language server did not reach Standard mode within ${timeoutMs}ms, so the workspace was never imported. Server mode: ${api.serverMode ?? '<unknown>'}.`);
+  }
+
   return { serverMode: api.serverMode };
+}
+
+/**
+ * Adds a folder to the running window's workspace and resolves once the extension host observes it.
+ *
+ * The spec used to drive `Workspaces: Add Folder to Workspace...` and its quick-open input. Adding the
+ * first folder converts a single-folder window into an untitled multi-root workspace, which reloads
+ * the window and restarts the extension host, and after that reload the second add never took - the
+ * command ran, the input was confirmed, and `workspaceFolders` still never listed the folder, so the
+ * spec burned its whole retry budget and failed on the confirmation poll.
+ *
+ * What the spec proves is that CLI commands target the right workspace folder. How the folder gets
+ * added is incidental, so it goes through the API that VS Code itself calls rather than through the
+ * UI, which removes the reload race without weakening the proof.
+ *
+ * `updateWorkspaceFolders` returns false when the edit could not be applied at all, and returning true
+ * only means it was accepted - the folder appears asynchronously, so the caller still has to observe
+ * `onDidChangeWorkspaceFolders`. Both are handled here so callers get one settled answer.
+ */
+async function addWorkspaceFolderForE2E(folderPath: string): Promise<{ added: boolean; folders: string[] }> {
+    const uri = vscode.Uri.file(folderPath);
+    const alreadyPresent = vscode.workspace.workspaceFolders?.some(folder => folder.uri.fsPath === uri.fsPath) ?? false;
+    if (!alreadyPresent) {
+        const accepted = vscode.workspace.updateWorkspaceFolders(vscode.workspace.workspaceFolders?.length ?? 0, null, { uri });
+        if (!accepted) {
+            throw new Error(`VS Code rejected adding '${folderPath}' to the workspace.`);
+        }
+
+        await new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(() => {
+                subscription.dispose();
+                reject(new Error(`'${folderPath}' was accepted but never appeared in workspaceFolders.`));
+            }, 30000);
+            const subscription = vscode.workspace.onDidChangeWorkspaceFolders(() => {
+                if (vscode.workspace.workspaceFolders?.some(folder => folder.uri.fsPath === uri.fsPath)) {
+                    clearTimeout(timer);
+                    subscription.dispose();
+                    resolve();
+                }
+            });
+        });
+    }
+
+    return {
+        added: !alreadyPresent,
+        folders: vscode.workspace.workspaceFolders?.map(folder => folder.uri.fsPath) ?? [],
+    };
+}
+
+/**
+ * Renders every resource the tree knows about, so an endpoint that never appears says why.
+ *
+ * The endpoint wait polls for a URL and returns undefined until one exists, so it never records an
+ * error and its timeout reported only "Last error: <none>" - which cannot distinguish a resource that
+ * failed to start from one still building from one that was never in the model at all.
+ */
+function describeResourcesForE2E(appHostTreeProvider: AspireAppHostTreeProvider, appHostPath: string, resourceName: string): string {
+  const element = appHostTreeProvider.findResourceElement(resourceName, appHostPath);
+  if (!(element instanceof ResourceItem)) {
+    return `resource '${resourceName}' is not in the tree for '${appHostPath}'.`;
+  }
+
+  const describe = (resource: ResourceJson) =>
+    `${resource.name} [type=${resource.resourceType}, state=${resource.state ?? '<none>'}, health=${resource.healthStatus ?? '<none>'}, exitCode=${resource.exitCode ?? '<none>'}, urls=${(resource.urls ?? []).map(url => url.url).join(',') || '<none>'}]`;
+
+  const siblings = element.allResources ?? [element.resource];
+  return `${describe(element.resource)}; all resources: ${siblings.map(describe).join(' | ')}`;
 }
 
 function getUnknownCommandName(command: unknown): string {

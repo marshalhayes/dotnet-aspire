@@ -612,6 +612,19 @@ jobs:
           # installed at ~/.nuget/packages/microsoft.developercontrolplane.<rid>/<version>/tools/dcp".
           if ($LASTEXITCODE -ne 0) { throw "aspire setup failed with exit code $LASTEXITCODE." }
 
+          # A zero exit code only means setup ran, not that it produced an orchestration component. The
+          # shards resolve DCP from this bundle rather than from ~/.nuget/packages, because a
+          # guest-language AppHost never restores the Microsoft.DeveloperControlPlane.<rid> package.
+          # Assert it is really here so a missing DCP fails on this line, naming the component, instead
+          # of surfacing minutes later as an unexplained debug startup timeout.
+          $dcpExecutable = if ('${{ runner.os }}' -eq 'Windows') { 'dcp.exe' } else { 'dcp' }
+          $dcp = Get-ChildItem -Path $bundleDir -Recurse -File -Filter $dcpExecutable -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($null -eq $dcp) {
+            Get-ChildItem -Path $bundleDir -Recurse -Directory | Select-Object -ExpandProperty FullName
+            throw "'aspire setup' succeeded but no $dcpExecutable exists under $bundleDir, so every AppHost in this shard would fail to orchestrate."
+          }
+          Write-Host "Orchestration component: $($dcp.FullName)"
+
           $shippingDir = Join-Path '${{ github.workspace }}' 'artifacts/nugets/Debug/Shipping'
           if (-not (Test-Path $shippingDir)) {
             $shippingDir = Join-Path '${{ github.workspace }}' 'artifacts/nugets'

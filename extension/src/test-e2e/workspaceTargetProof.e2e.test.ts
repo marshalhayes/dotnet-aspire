@@ -4,7 +4,7 @@ import * as path from 'path';
 import { getCommandInvocationCount, getTerminalCommandCount, waitForCommandOutcome, waitForTerminalCommand } from './helpers/assertions';
 import { executeE2eControlCommand, restoreE2eCliPathForE2E, setE2eCliPathForE2E, setTerminalCommandExecutionSuppressedForE2E } from './helpers/fixtures';
 import { getWorkspaceRoot } from './helpers/paths';
-import { InputBox, VSBrowser, Workbench } from './helpers/extester';
+import { VSBrowser } from './helpers/extester';
 import { cancelActiveInput, chooseActiveQuickPick, executeCommandFromPalette, openAspireView } from './helpers/vscode';
 
 suite('Workspace target proof E2E', function () {
@@ -82,44 +82,22 @@ function createFolderFixture(workspaceRoot: string, folderName: string): FolderF
 }
 
 async function addWorkspaceFolder(folderPath: string): Promise<void> {
-    // Adding the first folder converts the single-folder window into an untitled multi-root
-    // workspace, which reloads the window and restarts the extension host. The reload can land
-    // between the command and the quick-open input, so the add is retried until the extension
-    // reports the folder rather than assumed to have taken on the first attempt.
+    // This used to drive `Workspaces: Add Folder to Workspace...` and its quick-open input. Adding the
+    // first folder converts the single-folder window into an untitled multi-root workspace, which
+    // reloads the window and restarts the extension host, and after that reload the second add never
+    // took: the command ran and the input confirmed, but the folder never reached `workspaceFolders`.
+    // Retrying only spent the budget - four attempts failed the same way - so the fragility is in the
+    // UI flow, not in the time allowed for it.
     //
-    // The budget has to leave room for those retries to happen. A single failing attempt can spend
-    // 30s in `InputBox.create` and another 30s confirming the folder never arrived, so a 90s deadline
-    // bought one attempt and part of a second - and then reported the poll timeout as the cause. The
-    // confirmation poll is the cheap half to shorten: an add that took is visible within a second or
-    // two, so a shorter poll costs a successful run nothing and buys a failing one more attempts.
-    // 180s allows roughly four attempts at the 45s worst case, and both adds still fit the suite budget.
-    const deadline = Date.now() + 180000;
-    let lastError: unknown;
-    while (Date.now() < deadline) {
-        try {
-            await VSBrowser.instance.waitForWorkbench();
-            await new Workbench().executeCommand('Workspaces: Add Folder to Workspace...');
-            const input = await InputBox.create(30000);
-            await input.setText(folderPath);
-            await input.confirm();
-        }
-        catch (error) {
-            lastError = error;
-        }
-
-        try {
-            await VSBrowser.instance.driver.wait(async () => {
-                const folders = await executeE2eControlCommand({ name: 'getWorkspaceFolders' });
-                return JSON.stringify(folders.result).includes(folderPath);
-            }, 15000);
-            return;
-        }
-        catch (error) {
-            lastError = error;
-        }
+    // What this spec proves is that CLI commands target the right workspace folder. How the folder is
+    // added is incidental, so it goes through the same API VS Code's own command calls. The bridge
+    // resolves only once the extension host has observed the folder, so there is nothing left to poll.
+    await VSBrowser.instance.waitForWorkbench();
+    const response = await executeE2eControlCommand({ name: 'addWorkspaceFolder', folderPath }, { timeoutMs: 60000 });
+    const folders = JSON.stringify(response.result);
+    if (!folders.includes(folderPath)) {
+        throw new Error(`Adding workspace folder '${folderPath}' reported success but the extension lists: ${folders}`);
     }
-
-    throw new Error(`Timed out adding workspace folder '${folderPath}'. Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
 }
 
 async function invokeNewForFolder(folderLabel: string, fixture: FolderFixture): Promise<void> {
