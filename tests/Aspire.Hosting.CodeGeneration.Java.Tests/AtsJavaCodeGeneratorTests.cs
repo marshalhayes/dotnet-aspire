@@ -2,6 +2,7 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System.Reflection;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.RemoteHost;
@@ -627,6 +628,36 @@ public class AtsJavaCodeGeneratorTests
 
         Assert.Contains("private List<Map<String, String>> entries;", generated);
         Assert.Contains("item0 -> (Map<String, String>) item0", generated);
+    }
+
+    [Fact]
+    public void ExportedDtoValueInitializerCallsTheEscapedSetter()
+    {
+        // The DTO's setter is generated from the keyword-escaped field (setDefault_), but the exported
+        // value initializer derived its call from the raw property name (setDefault). javac rejects the
+        // mismatch with `cannot find symbol`, and because the CLI compiles the whole generated SDK in a
+        // single javac invocation, one keyword-named property on any exported value breaks `aspire run`
+        // for the entire Java AppHost - and the user cannot fix generated code.
+        var context = CreateContextWithSingleDtoProperty("Default");
+        var exported = new AtsExportedValueInfo
+        {
+            OwningAssemblyName = TestTypesAssemblyName,
+            PathSegments = ["Probes", "Sample"],
+            Value = new JsonObject { ["Default"] = "probe" },
+            Type = new AtsTypeRef { TypeId = "KeywordProbe", Category = AtsTypeCategory.Dto }
+        };
+        context = new AtsContext
+        {
+            Capabilities = context.Capabilities,
+            HandleTypes = context.HandleTypes,
+            EnumTypes = context.EnumTypes,
+            DtoTypes = context.DtoTypes,
+            ExportedValues = [exported]
+        };
+
+        var generated = JoinGeneratedFiles(_generator.GenerateDistributedApplication(context));
+
+        Assert.Contains("setDefault_(\"probe\")", generated);
     }
 
     private static AtsContext CreateContextWithSingleDtoProperty(string propertyName)

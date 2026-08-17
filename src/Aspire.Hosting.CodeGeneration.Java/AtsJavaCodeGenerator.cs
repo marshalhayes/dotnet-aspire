@@ -736,12 +736,8 @@ internal sealed class AtsJavaCodeGenerator : ICodeGenerator
             foreach (var property in dto.Properties)
             {
                 var fieldName = ToCamelCase(property.Name);
-                // Derived from the escaped field rather than the raw property name so the accessor and the
-                // field stay in step, and so a property named `Class` becomes getClass_() instead of
-                // colliding with the final java.lang.Object.getClass(), which cannot be overridden.
-                var methodName = ToPascalCase(fieldName);
                 var fieldType = MapDtoFieldTypeToJava(property);
-                
+                var methodName = DtoAccessorSuffix(property.Name);
                 WriteLine($"    public {fieldType} get{methodName}() {{ return {fieldName}; }}");
                 WriteLine($"    public void set{methodName}({fieldType} value) {{ this.{fieldName} = value; }}");
             }
@@ -896,7 +892,7 @@ internal sealed class AtsJavaCodeGenerator : ICodeGenerator
             }
 
             sb.Append("set");
-            sb.Append(ToPascalCase(property.Name));
+            sb.Append(DtoAccessorSuffix(property.Name));
             sb.Append('(');
             sb.Append(RenderJavaExportedValue(propertyValue, property.Type, dtoTypesById));
             sb.Append("); ");
@@ -2702,6 +2698,21 @@ internal sealed class AtsJavaCodeGenerator : ICodeGenerator
         var sanitized = builder.ToString();
         return s_javaKeywords.Contains(sanitized) ? sanitized + "_" : sanitized;
     }
+
+    /// <summary>
+    /// Builds the accessor suffix for a DTO property, so <c>Default</c> yields <c>Default_</c> to match
+    /// the <c>default_</c> field.
+    /// </summary>
+    /// <remarks>
+    /// Derived from the keyword-escaped field rather than the raw property name so the accessors and the
+    /// field stay in step, and so a property named <c>Class</c> becomes <c>getClass_()</c> instead of
+    /// colliding with the final <c>java.lang.Object.getClass()</c>, which cannot be overridden. Both the
+    /// accessor declarations and the exported-value initializers that call the setters must go through
+    /// here: when the initializer derived its call from the raw name instead, it emitted
+    /// <c>setDefault(...)</c> against a <c>setDefault_</c> declaration, and javac rejected the whole
+    /// generated SDK with <c>cannot find symbol</c>.
+    /// </remarks>
+    private static string DtoAccessorSuffix(string propertyName) => ToPascalCase(ToCamelCase(propertyName));
 
     /// <summary>
     /// Converts a name to PascalCase for Java class/method names.
