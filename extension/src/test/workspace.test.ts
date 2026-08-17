@@ -10,8 +10,7 @@ import { AppHostDiscoveryService, getWorkspaceAppHostProjectSearchResult } from 
 import { getAppHostDiscoveryExcludeGlob } from '../utils/workspaceFileSearch';
 import * as cliPathModule from '../utils/cliPath';
 import { windowCliPathTarget, workspaceFolderCliPathTarget } from '../utils/cliPathVariables';
-import { createWorkspaceFolder } from './testHelpers';
-
+import { createWorkspaceFolder, removeDirectorySafely } from './testHelpers';
 suite('utils/workspace tests', () => {
     let sandbox: sinon.SinonSandbox;
 
@@ -232,7 +231,7 @@ suite('utils/workspace tests', () => {
                 status: 'buildable',
             });
         } finally {
-            fs.rmSync(workspaceRoot, { recursive: true, force: true });
+            removeDirectorySafely(workspaceRoot);
         }
     });
 });

@@ -14,6 +14,7 @@ import * as cliPathModule from '../utils/cliPath';
 import { windowCliPathTarget, workspaceFolderCliPathTarget } from '../utils/cliPathVariables';
 import { AppHostDiscoveryService } from '../utils/appHostDiscovery';
 
+import { removeDirectorySafely } from './testHelpers';
 /** Captures the AppHost paths the provider claims for `launch.json`/F5 launches. */
 class RecordingLaunchReservation implements ExternalLaunchReservation {
     readonly reserved: string[] = [];
@@ -49,7 +50,7 @@ suite('AspireDebugConfigurationProvider', () => {
 
     teardown(() => {
         sandbox.restore();
-        fs.rmSync(tempDir, { recursive: true, force: true });
+        removeDirectorySafely(tempDir);
     });
 
     test('resolves launch config SDK-style AppHost Program.cs to containing project file', async () => {

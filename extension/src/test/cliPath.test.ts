@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { createWorkspaceFolder } from './testHelpers';
+import { createWorkspaceFolder, removeDirectorySafely } from './testHelpers';
 import {
     findCliOnPath,
     getConfiguredCliPath,
@@ -205,7 +205,7 @@ suite('utils/cliPath tests', () => {
                     commandShim);
             }
             finally {
-                fs.rmSync(tempDirectory, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+                removeDirectorySafely(tempDirectory);
             }
         });
     });
@@ -958,7 +958,7 @@ suite('utils/cliPath tests', () => {
                 assert.strictEqual(await tryExecuteCli(wrapperPath), true);
             }
             finally {
-                fs.rmSync(tempDirectory, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+                removeDirectorySafely(tempDirectory);
             }
         });
 
@@ -980,7 +980,7 @@ suite('utils/cliPath tests', () => {
                 assert.strictEqual(await tryExecuteCli(wrapperPath), true);
             }
             finally {
-                fs.rmSync(tempDirectory, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+                removeDirectorySafely(tempDirectory);
             }
         });
 

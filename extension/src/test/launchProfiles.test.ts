@@ -15,6 +15,7 @@ import {
 } from '../debugger/launchProfiles';
 import { ExecutableLaunchConfiguration, EnvVar, ProjectLaunchConfiguration } from '../dcp/types';
 
+import { removeDirectorySafely } from './testHelpers';
 suite('Launch Profile Tests', () => {
     suite('determineBaseLaunchProfile', () => {
         const sampleLaunchSettings: LaunchSettings = {
@@ -651,7 +652,7 @@ suite('Launch Profile Tests', () => {
 
         teardown(() => {
             if (fs.existsSync(tempDir)) {
-                fs.rmSync(tempDir, { recursive: true, force: true });
+                removeDirectorySafely(tempDir);
             }
         });
 

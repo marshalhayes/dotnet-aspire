@@ -12,8 +12,7 @@ import { AspireTerminalProvider } from '../utils/AspireTerminalProvider';
 import * as cliPathModule from '../utils/cliPath';
 import { ConfigInfoProvider } from '../utils/configInfoProvider';
 import { windowCliPathTarget, workspaceFolderCliPathTarget } from '../utils/cliPathVariables';
-import { createWorkspaceFolder } from './testHelpers';
-
+import { createWorkspaceFolder, removeDirectorySafely } from './testHelpers';
 suite('registerCliCommands', () => {
     let sandbox: sinon.SinonSandbox;
     let callbacks: Map<string, (...args: unknown[]) => Promise<unknown>>;
@@ -68,7 +67,7 @@ suite('registerCliCommands', () => {
 
     teardown(() => {
         sandbox.restore();
-        fs.rmSync(tempDir, { recursive: true, force: true });
+        removeDirectorySafely(tempDir);
     });
 
     test('init uses the active editor workspace folder without prompting', async () => {

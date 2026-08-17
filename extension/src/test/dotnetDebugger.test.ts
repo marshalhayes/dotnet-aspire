@@ -14,6 +14,7 @@ import * as cliPathModule from '../utils/cliPath';
 import * as cliPathEnvironmentModule from '../utils/cliPathEnvironment';
 import { workspaceFolderCliPathTarget } from '../utils/cliPathVariables';
 
+import { removeDirectorySafely } from './testHelpers';
 class TestDotNetService {
     private _getDotNetTargetPathStub: sinon.SinonStub;
     private _hasDevKit: boolean;
@@ -797,7 +798,7 @@ suite('Dotnet Debugger Extension Tests', () => {
             assert.strictEqual(debugConfig.program, 'dotnet');
             assert.strictEqual(debugConfig.args, '--info');
         } finally {
-            fs.rmSync(tempRoot, { recursive: true, force: true });
+            removeDirectorySafely(tempRoot);
         }
     });
 
@@ -990,7 +991,7 @@ suite('Dotnet Debugger Extension Tests', () => {
 
             assert.strictEqual(debugConfig.cwd, profileWorkingDirectory);
         } finally {
-            fs.rmSync(tempRoot, { recursive: true, force: true });
+            removeDirectorySafely(tempRoot);
         }
     });
 
@@ -1049,7 +1050,7 @@ suite('Dotnet Debugger Extension Tests', () => {
             assert.strictEqual(debugConfig.program, executablePath);
             assert.strictEqual(debugConfig.args, '--from-profile');
         } finally {
-            fs.rmSync(tempRoot, { recursive: true, force: true });
+            removeDirectorySafely(tempRoot);
         }
     });
 
@@ -1116,7 +1117,7 @@ suite('Dotnet Debugger Extension Tests', () => {
             // The profile env (DISABLED_PROFILE_ENV) is dropped; the runtime host variable DOTNET_ROOT is preserved.
             assert.deepStrictEqual(debugConfig.env, { DOTNET_ROOT: '/usr/share/dotnet' });
         } finally {
-            fs.rmSync(tempRoot, { recursive: true, force: true });
+            removeDirectorySafely(tempRoot);
         }
     });
 
@@ -1180,7 +1181,7 @@ suite('Dotnet Debugger Extension Tests', () => {
             // arguments appear exactly once and are not prefixed with run-api's CommandLineArguments.
             assert.strictEqual(debugConfig.args, '--from-profile');
         } finally {
-            fs.rmSync(tempRoot, { recursive: true, force: true });
+            removeDirectorySafely(tempRoot);
         }
     });
 
@@ -1247,7 +1248,7 @@ suite('Dotnet Debugger Extension Tests', () => {
             // DOTNET_ROOT_X64 survives.
             assert.deepStrictEqual(debugConfig.env, { DOTNET_ROOT_X64: '/usr/share/dotnet/x64' });
         } finally {
-            fs.rmSync(tempRoot, { recursive: true, force: true });
+            removeDirectorySafely(tempRoot);
         }
     });
 
@@ -1341,7 +1342,7 @@ suite('Dotnet Debugger Extension Tests', () => {
             assert.deepStrictEqual(appHostDebugConfig.args, ['run', '--file', projectPath, '--no-build', '--no-launch-profile', '--property:_AspireSuppressCliRunHook=true']);
             assert.strictEqual(appHostDebugConfig.noDebug, true);
         } finally {
-            fs.rmSync(tempRoot, { recursive: true, force: true });
+            removeDirectorySafely(tempRoot);
         }
     });
 
@@ -1407,7 +1408,7 @@ suite('Dotnet Debugger Extension Tests', () => {
             assert.strictEqual(debugConfig.noDebug, true);
             assert.strictEqual(debugConfig.cwd, tempRoot);
         } finally {
-            fs.rmSync(tempRoot, { recursive: true, force: true });
+            removeDirectorySafely(tempRoot);
         }
     });
 
@@ -1470,7 +1471,7 @@ suite('Dotnet Debugger Extension Tests', () => {
             assert.strictEqual(debugConfig.cwd, tempRoot);
             assert.deepStrictEqual(debugConfig.env, { APP_ENV: 'from-project-profile' });
         } finally {
-            fs.rmSync(tempRoot, { recursive: true, force: true });
+            removeDirectorySafely(tempRoot);
         }
     });
 
@@ -1556,7 +1557,7 @@ suite('Dotnet Debugger Extension Tests', () => {
             assert.strictEqual(appHostDebugConfig.args, `run --file "${projectPath}" --no-build --no-launch-profile --property:_AspireSuppressCliRunHook=true --property:RunWorkingDirectory="${path.join(tempRoot, 'custom')}" -- --from-profile`);
             assert.strictEqual(appHostDebugConfig.cwd, tempRoot);
         } finally {
-            fs.rmSync(tempRoot, { recursive: true, force: true });
+            removeDirectorySafely(tempRoot);
         }
     });
 
@@ -1626,7 +1627,7 @@ suite('Dotnet Debugger Extension Tests', () => {
             // (SDK-injected, defined by no profile) is preserved.
             assert.deepStrictEqual(debugConfig.env, { DOTNET_ROOT: '/selected/dotnet', DOTNET_ROOT_X64: '/usr/share/dotnet/x64' });
         } finally {
-            fs.rmSync(tempRoot, { recursive: true, force: true });
+            removeDirectorySafely(tempRoot);
         }
     });
 
@@ -1699,7 +1700,7 @@ suite('Dotnet Debugger Extension Tests', () => {
             // genuine SDK-injected DOTNET_ROOT_X64 survives.
             assert.deepStrictEqual(debugConfig.env, { DOTNET_ROOT_X64: '/usr/share/dotnet/x64' });
         } finally {
-            fs.rmSync(tempRoot, { recursive: true, force: true });
+            removeDirectorySafely(tempRoot);
         }
     });
 
@@ -1774,7 +1775,7 @@ suite('Dotnet Debugger Extension Tests', () => {
             assert.deepStrictEqual(debugConfig.args, ['run', '--project', projectPath, '--no-launch-profile', '--', '--message', 'hello world']);
             assert.strictEqual(debugConfig.noDebug, true);
         } finally {
-            fs.rmSync(tempRoot, { recursive: true, force: true });
+            removeDirectorySafely(tempRoot);
         }
     });
 
@@ -1828,7 +1829,7 @@ suite('Dotnet Debugger Extension Tests', () => {
 
             assert.strictEqual(debugConfig.args, `run --project "${projectPath}" --no-launch-profile -- --arg "value with spaces" --message "say \\"hi\\"" --path "C:\\Temp\\file.txt"`);
         } finally {
-            fs.rmSync(tempRoot, { recursive: true, force: true });
+            removeDirectorySafely(tempRoot);
         }
     });
 
@@ -1887,7 +1888,7 @@ suite('Dotnet Debugger Extension Tests', () => {
             assert.strictEqual(debugConfig.cwd, path.join(projectDir, 'custom'));
             assert.strictEqual(debugConfig.executablePath, undefined);
         } finally {
-            fs.rmSync(tempRoot, { recursive: true, force: true });
+            removeDirectorySafely(tempRoot);
         }
     });
 
@@ -1927,7 +1928,7 @@ suite('Dotnet Debugger Extension Tests', () => {
                 extension.createDebugSessionConfigurationCallback!(launchConfig, undefined, [], { debug: true, runId: '1', debugSessionId: '1', isApphost: false, debugSession: fakeAspireDebugSession }, debugConfig),
                 /Failed to inspect runtimeconfig/);
         } finally {
-            fs.rmSync(tempRoot, { recursive: true, force: true });
+            removeDirectorySafely(tempRoot);
         }
     });
 
@@ -1973,7 +1974,7 @@ suite('Dotnet Debugger Extension Tests', () => {
             assert.strictEqual(showInformationMessageStub.calledOnce, true);
             assert.match(showInformationMessageStub.firstCall.args[0], /breakpoints/i);
         } finally {
-            fs.rmSync(tempRoot, { recursive: true, force: true });
+            removeDirectorySafely(tempRoot);
         }
     });
 
@@ -2059,7 +2060,7 @@ suite('Dotnet Debugger Extension Tests', () => {
         assert.strictEqual(debugConfig.serverReadyAction, undefined);
 
         // cleanup
-        fs.rmSync(tempDir, { recursive: true, force: true });
+        removeDirectorySafely(tempDir);
     });
 
     test('preserves serverReadyAction from project debugger settings', async () => {
@@ -2118,7 +2119,7 @@ suite('Dotnet Debugger Extension Tests', () => {
 
         assert.deepStrictEqual(debugConfig.serverReadyAction, serverReadyAction);
 
-        fs.rmSync(tempDir, { recursive: true, force: true });
+        removeDirectorySafely(tempDir);
     });
 
     test('does not open the launch profile URL for the orchestrated dashboard resource', async () => {
@@ -2173,7 +2174,7 @@ suite('Dotnet Debugger Extension Tests', () => {
 
         assert.strictEqual(debugConfig.serverReadyAction, undefined);
 
-        fs.rmSync(tempDir, { recursive: true, force: true });
+        removeDirectorySafely(tempDir);
     });
 
     test('uses executable path for Executable command launch profiles instead of project output', async () => {
@@ -2246,7 +2247,7 @@ suite('Dotnet Debugger Extension Tests', () => {
         assert.strictEqual(dotNetService.buildDotNetProjectStub.calledOnce, true);
 
         // cleanup
-        fs.rmSync(tempDir, { recursive: true, force: true });
+        removeDirectorySafely(tempDir);
     });
 
     test('fails project launch when the selected Executable launch profile has no executablePath', async () => {
@@ -2302,7 +2303,7 @@ suite('Dotnet Debugger Extension Tests', () => {
             // The invalid profile must be rejected before any build/launch work happens.
             assert.strictEqual(dotNetService.buildDotNetProjectStub.called, false);
         } finally {
-            fs.rmSync(tempDir, { recursive: true, force: true });
+            removeDirectorySafely(tempDir);
         }
     });
 
@@ -2357,7 +2358,7 @@ suite('Dotnet Debugger Extension Tests', () => {
 
             assert.strictEqual(dotNetService.buildDotNetProjectStub.called, false);
         } finally {
-            fs.rmSync(tempDir, { recursive: true, force: true });
+            removeDirectorySafely(tempDir);
         }
     });
 
@@ -2424,7 +2425,7 @@ suite('Dotnet Debugger Extension Tests', () => {
 
         // cleanup
         delete process.env[envVarName];
-        fs.rmSync(tempDir, { recursive: true, force: true });
+        removeDirectorySafely(tempDir);
     });
 });
 

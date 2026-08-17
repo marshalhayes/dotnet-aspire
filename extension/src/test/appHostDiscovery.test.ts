@@ -16,6 +16,7 @@ import { __resetCommonPropertiesForTests, __setReporterForTests } from '../utils
 import { appHostDiscoveryFindFilesMaxResults } from '../utils/workspaceFileSearch';
 import { workspaceFolderCliPathTarget, getCliPathTargetKey } from '../utils/cliPathVariables';
 
+import { removeDirectorySafely } from './testHelpers';
 interface RecordedEvent {
     name: string;
     properties?: Record<string, string>;
@@ -1916,7 +1917,7 @@ suite('AppHost discovery', () => {
                 }
             }
             finally {
-                fs.rmSync(tempDir, { recursive: true, force: true });
+                removeDirectorySafely(tempDir);
             }
         });
 
@@ -2052,7 +2053,7 @@ suite('AppHost discovery', () => {
                 }
             }
             finally {
-                fs.rmSync(tempDir, { recursive: true, force: true });
+                removeDirectorySafely(tempDir);
             }
         });
 
@@ -2093,7 +2094,7 @@ suite('AppHost discovery', () => {
                 }
             }
             finally {
-                fs.rmSync(tempDir, { recursive: true, force: true });
+                removeDirectorySafely(tempDir);
             }
         });
 
@@ -2157,7 +2158,7 @@ suite('AppHost discovery', () => {
                 }
             }
             finally {
-                fs.rmSync(tempDir, { recursive: true, force: true });
+                removeDirectorySafely(tempDir);
             }
         });
 
@@ -2228,7 +2229,7 @@ suite('AppHost discovery', () => {
                 }
             }
             finally {
-                fs.rmSync(tempDir, { recursive: true, force: true });
+                removeDirectorySafely(tempDir);
             }
         });
 
@@ -2272,7 +2273,7 @@ suite('AppHost discovery', () => {
                 }
             }
             finally {
-                fs.rmSync(tempDir, { recursive: true, force: true });
+                removeDirectorySafely(tempDir);
             }
         });
 
@@ -2322,7 +2323,7 @@ suite('AppHost discovery', () => {
                 }
             }
             finally {
-                fs.rmSync(tempDir, { recursive: true, force: true });
+                removeDirectorySafely(tempDir);
             }
         });
 
@@ -2464,7 +2465,7 @@ suite('AppHost discovery', () => {
                 }
             }
             finally {
-                fs.rmSync(tempDir, { recursive: true, force: true });
+                removeDirectorySafely(tempDir);
             }
         });
 
@@ -2527,7 +2528,7 @@ suite('AppHost discovery', () => {
                 }
             }
             finally {
-                fs.rmSync(tempDir, { recursive: true, force: true });
+                removeDirectorySafely(tempDir);
             }
         });
 
@@ -2584,7 +2585,7 @@ suite('AppHost discovery', () => {
                 }
             }
             finally {
-                fs.rmSync(tempDir, { recursive: true, force: true });
+                removeDirectorySafely(tempDir);
             }
         });
 
@@ -2617,7 +2618,7 @@ suite('AppHost discovery', () => {
                 assert.strictEqual(selectedPath, matchingAppHostPath);
             }
             finally {
-                fs.rmSync(tempDir, { recursive: true, force: true });
+                removeDirectorySafely(tempDir);
             }
         });
 
@@ -2647,7 +2648,7 @@ suite('AppHost discovery', () => {
                 assert.strictEqual(selectedPath, undefined);
             }
             finally {
-                fs.rmSync(tempDir, { recursive: true, force: true });
+                removeDirectorySafely(tempDir);
             }
         });
 

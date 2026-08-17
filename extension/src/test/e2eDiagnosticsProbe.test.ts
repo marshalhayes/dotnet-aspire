@@ -5,6 +5,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { getDiagnosticsForFile } from '../testing/e2eStateFileBridge';
 
+import { removeDirectorySafely } from './testHelpers';
 /**
  * The Java AppHost E2E spec probes diagnostics for every generated Aspire Java SDK source, which is
  * more than a hundred files. Each probe has to show the document so the language server publishes
@@ -27,7 +28,7 @@ suite('E2E diagnostics probe', () => {
         if (temporaryDirectory) {
             const probedDirectory = temporaryDirectory;
             temporaryDirectory = undefined;
-            removeProbeDirectory(probedDirectory);
+            removeDirectorySafely(probedDirectory);
         }
     });
 
@@ -93,11 +94,3 @@ suite('E2E diagnostics probe', () => {
  * here is about editor tabs - so a removal that still loses the race is only reported.
  * See https://nodejs.org/api/fs.html#fsrmsyncpath-options.
  */
-function removeProbeDirectory(directory: string): void {
-    try {
-        fs.rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-    }
-    catch (error) {
-        console.warn(`Could not remove the diagnostics probe directory '${directory}': ${error}`);
-    }
-}

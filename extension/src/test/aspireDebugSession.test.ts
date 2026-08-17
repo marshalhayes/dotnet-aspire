@@ -7,7 +7,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { delimiter as pathDelimiter, dirname, join } from 'node:path';
 import * as sinon from 'sinon';
 import * as vscode from 'vscode';
-import { createWorkspaceFolder, fsPathOf } from './testHelpers';
+import { createWorkspaceFolder, fsPathOf, removeDirectorySafely } from './testHelpers';
 import * as cliModule from '../utils/process/cliProcess';
 import * as debuggerExtensionsModule from '../debugger/debuggerExtensions';
 import { AspireDebugSession, buildAspireCommandArgs, getLoggableDebugConfiguration, markDebugConfigurationEnvironmentSensitive } from '../debugger/AspireDebugSession';
@@ -66,7 +66,7 @@ suite('AspireDebugSession tests', () => {
         __resetCommonPropertiesForTests();
         for (const dir of tempDirs) {
             if (existsSync(dir)) {
-                rmSync(dir, { recursive: true, force: true });
+                removeDirectorySafely(dir);
             }
         }
         tempDirs.length = 0;

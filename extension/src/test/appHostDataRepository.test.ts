@@ -16,6 +16,7 @@ import { describeIncludeDisabledCommandsCapability, lsJsonStreamCapability } fro
 import { errorFetchingAppHosts } from '../loc/strings';
 import { windowCliPathTarget, workspaceFolderCliPathTarget } from '../utils/cliPathVariables';
 
+import { removeDirectorySafely } from './testHelpers';
 class TestChildProcess extends EventEmitter {
     stdout = new PassThrough();
     stderr = new PassThrough();
@@ -3643,7 +3644,7 @@ suite('AppHostDataRepository', () => {
         } finally {
             repository?.dispose();
             workspaceFoldersStub?.restore();
-            fs.rmSync(workspaceRoot, { recursive: true, force: true });
+            removeDirectorySafely(workspaceRoot);
         }
     });
 

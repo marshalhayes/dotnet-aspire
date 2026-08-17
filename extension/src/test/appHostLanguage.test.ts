@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { summarizeAppHostLanguages, classifyAppHostPath, classifyAppHostDirectory } from '../utils/appHostLanguage';
 import type { CandidateAppHostDisplayInfo } from '../utils/appHostDiscovery';
 
+import { removeDirectorySafely } from './testHelpers';
 function c(language: string | null): CandidateAppHostDisplayInfo {
     return { path: '/x', language, status: 'buildable' };
 }
@@ -120,7 +121,7 @@ suite('appHostLanguage.classifyAppHostDirectory', () => {
     teardown(() => {
         for (const dir of tempDirs) {
             if (existsSync(dir)) {
-                rmSync(dir, { recursive: true, force: true });
+                removeDirectorySafely(dir);
             }
         }
         tempDirs.length = 0;
@@ -128,7 +129,7 @@ suite('appHostLanguage.classifyAppHostDirectory', () => {
 
     suiteTeardown(() => {
         if (existsSync(tempParent)) {
-            rmSync(tempParent, { recursive: true, force: true });
+            removeDirectorySafely(tempParent);
         }
     });
 

@@ -7,7 +7,7 @@ import * as path from 'path';
 import { AspireTerminalProvider, quoteShellArg, shellArg } from '../utils/AspireTerminalProvider';
 import * as cliPathModule from '../utils/cliPath';
 import { windowCliPathTarget, workspaceFolderCliPathTarget } from '../utils/cliPathVariables';
-import { createWorkspaceFolder } from './testHelpers';
+import { createWorkspaceFolder, removeDirectorySafely } from './testHelpers';
 import { EnvironmentVariables } from '../utils/environment';
 import { extensionLogOutputChannel } from '../utils/logging';
 import { terminalCommandArgumentControlCharacters, terminalCommandUnsafeLiteral } from '../loc/strings';
@@ -1097,7 +1097,7 @@ suite('AspireTerminalProvider tests', () => {
                 const env = terminalProvider.createEnvironment(undefined, undefined, undefined, cliPath);
                 assert.strictEqual(env.AspireCliPath, undefined);
             } finally {
-                fs.rmSync(tempDirectory, { recursive: true, force: true });
+                removeDirectorySafely(tempDirectory);
             }
         });
     });

@@ -13,6 +13,7 @@ import type { AspireTerminalProvider } from '../utils/AspireTerminalProvider';
 import { getCmdShimSpawnCommandWithoutVerbatimArguments } from '../utils/cmdShim';
 import { EnvironmentVariables } from '../utils/environment';
 
+import { removeDirectorySafely } from './testHelpers';
 suite('spawnCliProcess tests', () => {
     test('builds the child environment from the exact CLI command being launched', () => {
         const childProcess = createTestChildProcess(4801);
@@ -333,7 +334,7 @@ suite('spawnCliProcess tests', () => {
             assert.strictEqual(result.stdout.trim(), 'mcp-started');
         }
         finally {
-            fs.rmSync(tempDirectory, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+            removeDirectorySafely(tempDirectory);
         }
     });
 

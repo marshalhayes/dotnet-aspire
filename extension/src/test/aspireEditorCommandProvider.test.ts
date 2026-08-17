@@ -11,6 +11,7 @@ import { AppHostDiscoveryService } from '../utils/appHostDiscovery';
 import { AppHostLaunchService } from '../services/AppHostLaunchService';
 import * as cliPathModule from '../utils/cliPath';
 
+import { removeDirectorySafely } from './testHelpers';
 function createEditor(filePath: string): vscode.TextEditor {
     return {
         document: {
@@ -71,7 +72,7 @@ suite('AspireEditorCommandProvider', () => {
         getWorkspaceFolderStub.restore();
         workspaceFoldersStub.restore();
         activeEditorStub.restore();
-        fs.rmSync(tempDir, { recursive: true, force: true });
+        removeDirectorySafely(tempDir);
     });
 
     test('returns containing project file when active editor is SDK-style AppHost Program.cs', async () => {

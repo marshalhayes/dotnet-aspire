@@ -24,6 +24,7 @@ import type { CandidateAppHostDisplayInfo } from '../utils/appHostDiscovery';
 import { lsJsonStreamCapability } from '../types/configInfo';
 import { workspaceFolderCliPathTarget } from '../utils/cliPathVariables';
 
+import { removeDirectorySafely } from './testHelpers';
 function makeResource(overrides: Partial<ResourceJson> = {}): ResourceJson {
     const base: ResourceJson = {
         name: 'my-service',
@@ -191,7 +192,7 @@ function createShellProof(): ShellProof {
             assert.strictEqual(fs.existsSync(resourceMarkerPath), false, 'resource payload should not execute');
         },
         dispose(): void {
-            fs.rmSync(directory, { recursive: true, force: true });
+            removeDirectorySafely(directory);
         },
     };
 }

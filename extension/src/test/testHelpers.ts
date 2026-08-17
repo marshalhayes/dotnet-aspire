@@ -1,3 +1,4 @@
+import * as fs from 'node:fs';
 import * as vscode from 'vscode';
 
 export function languageIdForPath(filePath: string): string {
@@ -97,4 +98,29 @@ export function createWorkspaceFolder(name: string, fsPath: string, index: numbe
         name,
         index,
     };
+}
+
+/**
+ * Removes a directory created by a test, tolerating the handle-release races that make plain
+ * `rmSync` flaky on Windows CI.
+ *
+ * Windows releases the handle behind a closed editor or an exited child process asynchronously, so a
+ * teardown that runs immediately after the test body can still see the directory as in use and throw
+ * `EPERM, Permission denied`. Mocha fails the hook, which fails the whole run - CI has been broken by
+ * exactly this in `e2eDiagnosticsProbe` and `aspireEditorCommandProvider`, both times on Windows only
+ * and neither reproducible on macOS or Linux.
+ *
+ * Two things are needed, and `force: true` supplies neither: it only suppresses `ENOENT`.
+ *  - `maxRetries`/`retryDelay`, which Node applies to EBUSY/EMFILE/ENFILE/ENOTEMPTY/EPERM but only for
+ *    recursive removals (https://nodejs.org/api/fs.html#fsrmsyncpath-options).
+ *  - Swallowing whatever survives the retries. Leaving a temp directory behind is a non-event - the OS
+ *    reclaims it - whereas failing the hook loses the entire test run's signal.
+ */
+export function removeDirectorySafely(directory: string): void {
+    try {
+        fs.rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+    catch (error) {
+        console.warn(`Failed to remove test directory '${directory}': ${error instanceof Error ? error.message : String(error)}`);
+    }
 }
