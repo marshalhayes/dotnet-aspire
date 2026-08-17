@@ -86,7 +86,8 @@ internal static class JavaBuildToolResolver
             var candidate = Path.Combine(directory.FullName, wrapperName);
             var isApplicationDirectory = directory.FullName == appDirectory;
 
-            if (File.Exists(candidate) && (isApplicationDirectory || IsBuildRoot(directory.FullName, tool)))
+            if (File.Exists(candidate)
+                && (isApplicationDirectory || (IsBuildRoot(directory.FullName, tool) && !IsWorldWritable(directory))))
             {
                 return candidate;
             }
@@ -116,6 +117,42 @@ internal static class JavaBuildToolResolver
         JavaBuildTool.Maven => File.Exists(Path.Combine(directory, "pom.xml")),
         _ => false
     };
+
+    /// <summary>
+    /// Returns whether any user on the machine can write to <paramref name="directory"/>.
+    /// </summary>
+    /// <remarks>
+    /// The application directory is named in the AppHost, so running the wrapper beside it is the
+    /// developer's own instruction. Ancestors are inferred instead, and the walk continues past the
+    /// application when no <c>.git</c> marks a checkout boundary - so on a shared machine an
+    /// application under a world-writable directory such as <c>/tmp</c> could otherwise pick up a
+    /// <c>mvnw</c> another user planted alongside a <c>pom.xml</c>, and execute it with the
+    /// developer's privileges before anything is built.
+    /// <para>
+    /// Only applied to inferred ancestors, and only where the mode is meaningful: Windows uses ACLs
+    /// that <see cref="UnixFileMode"/> does not describe, and .NET reports
+    /// <see cref="UnixFileMode.None"/> there.
+    /// </para>
+    /// </remarks>
+    private static bool IsWorldWritable(DirectoryInfo directory)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return false;
+        }
+
+        try
+        {
+            return directory.UnixFileMode.HasFlag(UnixFileMode.OtherWrite);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // The mode could not be read, so the directory cannot be shown to be safe. Treating it as
+            // world-writable falls back to the wrapper beside the application, which is the same
+            // outcome as finding no ancestor wrapper at all.
+            return true;
+        }
+    }
 
     /// <summary>
     /// Returns the directory, or <see langword="null"/> when the path cannot be interpreted.

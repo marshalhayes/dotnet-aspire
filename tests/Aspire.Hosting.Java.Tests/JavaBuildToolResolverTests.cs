@@ -39,4 +39,69 @@ public class JavaBuildToolResolverTests
 
         Assert.Equal(Path.GetFullPath(Path.Combine(tempDir.Path, "tools", "custom-wrapper")), wrapperPath);
     }
+
+    [Fact]
+    public void ResolveWrapperPath_UsesAnAncestorWrapperAtTheBuildRoot()
+    {
+        // A Maven multi-module repository keeps one mvnw next to the aggregator POM, so a resource
+        // pointed at a module has to find it there.
+        using var root = new TempJavaBuildRootDirectory();
+        var module = root.CreateModule("catalog");
+        var resource = new JavaAppResource("catalog", module);
+
+        var wrapperPath = JavaBuildToolResolver.ResolveWrapperPath(resource, JavaBuildTool.Maven, isWindows: false);
+
+        Assert.Equal(Path.GetFullPath(Path.Combine(root.RootPath, "mvnw")), wrapperPath);
+    }
+
+    [Fact]
+    [SkipOnPlatform(TestPlatforms.Windows, "UnixFileMode does not describe Windows ACLs")]
+    public void ResolveWrapperPath_IgnoresAnAncestorWrapperInAWorldWritableDirectory()
+    {
+        // On a shared machine an application under a world-writable directory such as /tmp would
+        // otherwise execute an mvnw another user planted beside a pom.xml. The wrapper beside the
+        // application is used instead, which is the same outcome as finding no ancestor wrapper.
+        using var root = new TempJavaBuildRootDirectory();
+        var module = root.CreateModule("catalog");
+        // CA1416 does not understand SkipOnPlatform, which already keeps this off Windows.
+#pragma warning disable CA1416
+        File.SetUnixFileMode(
+            root.RootPath,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+                | UnixFileMode.GroupRead | UnixFileMode.GroupExecute
+                | UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute);
+#pragma warning restore CA1416
+        var resource = new JavaAppResource("catalog", module);
+
+        var wrapperPath = JavaBuildToolResolver.ResolveWrapperPath(resource, JavaBuildTool.Maven, isWindows: false);
+
+        Assert.Equal(Path.GetFullPath(Path.Combine(module, "mvnw")), wrapperPath);
+    }
+}
+
+/// <summary>
+/// A Maven multi-module layout: an aggregator POM and wrapper at the root, modules beneath it, and no
+/// <c>.git</c>, so the ancestor walk is not stopped by a checkout boundary.
+/// </summary>
+internal sealed class TempJavaBuildRootDirectory : IDisposable
+{
+    private readonly DirectoryInfo _root = Directory.CreateTempSubdirectory("aspire-java-build-root");
+
+    public TempJavaBuildRootDirectory()
+    {
+        File.WriteAllText(Path.Combine(_root.FullName, "pom.xml"), "<project/>");
+        File.WriteAllText(Path.Combine(_root.FullName, "mvnw"), "#!/bin/sh\n");
+    }
+
+    public string RootPath => _root.FullName;
+
+    public string CreateModule(string name)
+    {
+        var module = _root.CreateSubdirectory(name);
+        File.WriteAllText(Path.Combine(module.FullName, "pom.xml"), "<project/>");
+
+        return module.FullName;
+    }
+
+    public void Dispose() => _root.Delete(recursive: true);
 }
