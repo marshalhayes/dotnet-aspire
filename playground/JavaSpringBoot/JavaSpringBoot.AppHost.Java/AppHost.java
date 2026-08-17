@@ -6,6 +6,10 @@ import aspire.*;
 void main() throws Exception {
     var builder = DistributedApplication.CreateBuilder();
 
+    // Matches the C# AppHost next door, so `aspire publish` emits the same Docker Compose artifacts
+    // from either language. Without a compute environment the publish pipeline has nothing to write.
+    builder.addDockerComposeEnvironment("compose");
+
     // Maven, detected from the pom.xml in the directory. addSpringBootApp builds the application,
     // launches it through spring-boot:run, and declares an HTTP endpoint through SERVER_PORT.
     var catalog = builder.addSpringBootApp("catalog", "../catalog")
