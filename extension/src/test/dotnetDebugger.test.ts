@@ -427,8 +427,8 @@ suite('Dotnet Debugger Extension Tests', () => {
             { debug: true, runId: '1', debugSessionId: '1', isApphost: false, debugSession: fakeAspireDebugSession },
             debugConfig);
 
-        assert.strictEqual(execFileStub.firstCall.args[2]?.cwd, projectDirectory);
-        assert.strictEqual(spawnStub.firstCall.args[2]?.cwd, projectDirectory);
+        assert.strictEqual(msbuildCallFor(execFileStub, projectPath).args[2]?.cwd, projectDirectory);
+        assert.strictEqual(buildCallFor(spawnStub, projectPath).args[2]?.cwd, projectDirectory);
     });
 
     test('project-scoped dotnet commands resolve the CLI using the target derived from the project path and forward only that resolved CLI', async () => {
@@ -479,8 +479,8 @@ suite('Dotnet Debugger Extension Tests', () => {
 
         assert.ok(resolveCliPathStub.calledWith(workspaceFolderCliPathTarget(folder)));
         assert.ok(createResolvedEnvStub.calledWith('/resolved/aspire'));
-        assert.strictEqual(execFileStub.firstCall.args[2]?.env, resolvedEnv);
-        assert.strictEqual(spawnStub.firstCall.args[2]?.env, resolvedEnv);
+        assert.strictEqual(msbuildCallFor(execFileStub, projectPath).args[2]?.env, resolvedEnv);
+        assert.strictEqual(buildCallFor(spawnStub, projectPath).args[2]?.env, resolvedEnv);
     });
 
     test('dotnet run-api preserves CLI resolution errors without spawning', async () => {
@@ -2427,3 +2427,27 @@ suite('Dotnet Debugger Extension Tests', () => {
         fs.rmSync(tempDir, { recursive: true, force: true });
     });
 });
+
+/**
+ * All unit tests share one extension host, so background extension work - an editor event that
+ * queues AppHost discovery, for example - can reach a freshly installed stub before the call the
+ * test itself makes. Selecting the process by the project it was started for keeps these assertions
+ * about the dotnet command under test rather than about whichever process happened to start first.
+ */
+function msbuildCallFor(stub: sinon.SinonStub, projectPath: string): sinon.SinonSpyCall<any[], any> {
+    return dotnetCallFor(stub, projectPath, 'dotnet msbuild');
+}
+
+function buildCallFor(stub: sinon.SinonStub, projectPath: string): sinon.SinonSpyCall<any[], any> {
+    return dotnetCallFor(stub, projectPath, 'dotnet build');
+}
+
+function dotnetCallFor(stub: sinon.SinonStub, projectPath: string, description: string): sinon.SinonSpyCall<any[], any> {
+    const call = stub.getCalls().find(candidate => {
+        const args = candidate.args[1];
+        return Array.isArray(args) && args.includes(projectPath);
+    });
+
+    assert.ok(call, `${description} was not started for '${projectPath}'. Started: ${JSON.stringify(stub.getCalls().map(candidate => candidate.args[1]))}`);
+    return call;
+}

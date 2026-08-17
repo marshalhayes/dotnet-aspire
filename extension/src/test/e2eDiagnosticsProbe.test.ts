@@ -25,8 +25,9 @@ suite('E2E diagnostics probe', () => {
         }
 
         if (temporaryDirectory) {
-            fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+            const probedDirectory = temporaryDirectory;
             temporaryDirectory = undefined;
+            removeProbeDirectory(probedDirectory);
         }
     });
 
@@ -84,3 +85,19 @@ suite('E2E diagnostics probe', () => {
             `Probing must not close an editor the caller already had open. Open tabs: ${JSON.stringify(openPaths)}`);
     });
 });
+
+/**
+ * Windows releases the handle behind a closed editor asynchronously, so removing the probe directory
+ * races that release and fails with `EPERM`. Node retries recursive removals for exactly that code,
+ * and a directory stranded in the OS temp folder is not worth failing the suite over - the assertion
+ * here is about editor tabs - so a removal that still loses the race is only reported.
+ * See https://nodejs.org/api/fs.html#fsrmsyncpath-options.
+ */
+function removeProbeDirectory(directory: string): void {
+    try {
+        fs.rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+    catch (error) {
+        console.warn(`Could not remove the diagnostics probe directory '${directory}': ${error}`);
+    }
+}
