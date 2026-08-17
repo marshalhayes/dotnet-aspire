@@ -98,6 +98,12 @@ export type AspireExtensionApi = AspireExtensionApiV2;
 
 export interface AspireExtensionE2EStateFile {
     updatedAt: string;
+    /**
+     * Identifies the E2E run whose extension host produced this file. The state and control files
+     * live at a stable per-shard path, so an extension host left behind by an earlier run can still
+     * be polling them. Readers compare this against their own run id to ignore a foreign writer.
+     */
+    runId?: string;
     state: AspireExtensionStateSnapshot;
     dashboardUrl?: string;
     commandInvocations: readonly AspireExtensionE2ECommandInvocation[];
@@ -167,6 +173,12 @@ export interface AspireExtensionE2EControlStatus {
 
 export interface AspireExtensionE2EControlPayload {
     revision: number;
+    /**
+     * Addresses this payload to a single E2E run. `revision` alone cannot do that: it restarts at 0
+     * in every test process while a freshly launched extension host starts at -1, so a host left
+     * behind by an earlier run would accept another run's commands.
+     */
+    runId?: string;
     aspireCliExecutablePath?: string;
     e2eCliExecutablePath?: string | null;
     forceCliUnavailable?: boolean;
@@ -228,6 +240,7 @@ export type AspireExtensionE2EControlCommand =
     | { name: 'getActiveEditor' }
     | { name: 'getResourceDebuggerExtensions' }
     | { name: 'getSupportedCapabilities' }
+    | { name: 'getVisibleExtensionIds' }
     | { name: 'waitForJavaLanguageServer'; timeoutMs?: number }
     | { name: 'createResourceDebugConfiguration'; launchConfig: ExecutableLaunchConfiguration; args?: readonly string[]; env?: readonly EnvVar[]; debug?: boolean }
     | { name: 'proveAppHostAndResourceDebugging'; appHostPath: string; resourceName: string; appHostSourcePath: string; appHostBreakpointLine: number; resourceSourcePath: string; resourceBreakpointLine: number; resourceRequestPath?: string; timeoutMs?: number }

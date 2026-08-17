@@ -48,7 +48,12 @@ export async function waitForJavaAppHostCandidate(timeoutMs?: number): Promise<v
 export async function assertJavaCapabilityAdvertised(): Promise<void> {
     const capabilities = (await executeE2eControlCommand({ name: 'getSupportedCapabilities' })).result as string[];
     if (!capabilities.includes('java')) {
-        throw new Error(`The extension is not advertising the 'java' capability, so the CLI will not ask it to launch a Java AppHost. Install redhat.java and vscjava.vscode-java-debug into the E2E instance. Advertised capabilities: ${capabilities.join(', ')}`);
+        // The runner already verified the extensions directory and extensions.json, so when the
+        // capability is still missing the useful question is what the extension host can see: a copied
+        // extension directory is only scanned while extensions.json is absent, which leaves both of the
+        // runner's checks passing while the host loads nothing.
+        const visibleExtensionIds = (await executeE2eControlCommand({ name: 'getVisibleExtensionIds' })).result as string[];
+        throw new Error(`The extension is not advertising the 'java' capability, so the CLI will not ask it to launch a Java AppHost. Install redhat.java and vscjava.vscode-java-debug into the E2E instance. Advertised capabilities: ${capabilities.join(', ')}. Extensions visible to the extension host: ${visibleExtensionIds.join(', ')}`);
     }
 }
 

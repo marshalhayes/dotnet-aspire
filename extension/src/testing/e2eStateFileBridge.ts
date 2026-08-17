@@ -35,6 +35,9 @@ export function createE2eStateFileBridge(
 ): vscode.Disposable {
   const stateFile = process.env.ASPIRE_EXTENSION_E2E_STATE_FILE;
   const controlFile = process.env.ASPIRE_EXTENSION_E2E_CONTROL_FILE;
+  // Identifies this run so a host left behind by an earlier run cannot service this run's control
+  // commands or overwrite its state file — both files live at a stable per-shard path.
+  const runId = process.env.ASPIRE_EXTENSION_E2E_RUN_ID;
   if (!isE2eBridgeEnabled() || !stateFile || !controlFile) {
     return new vscode.Disposable(() => undefined);
   }
@@ -69,6 +72,7 @@ export function createE2eStateFileBridge(
 
     writeJsonFileAtomic(stateFile, {
       updatedAt: new Date().toISOString(),
+      runId,
       state,
       dashboardUrl: getSensitiveDashboardUrl(dataRepository),
       commandInvocations,
@@ -202,7 +206,7 @@ export function createE2eStateFileBridge(
         return;
       }
 
-      controlProcessing = processE2eControlFile(controlFile, lastControlRevision, async (payload) => {
+      controlProcessing = processE2eControlFile(controlFile, lastControlRevision, runId, async (payload) => {
         const revision = payload.revision;
         lastControlRevision = revision;
         try {
@@ -327,6 +331,7 @@ function sleepSynchronously(milliseconds: number): void {
 async function processE2eControlFile(
   controlFile: string,
   lastControlRevision: number,
+  runId: string | undefined,
   applyControl: (payload: AspireExtensionE2EControlPayload) => Promise<void>,
 ): Promise<void> {
   let payload: AspireExtensionE2EControlPayload;
@@ -343,6 +348,12 @@ async function processE2eControlFile(
   }
 
   if (typeof payload.revision !== 'number' || payload.revision <= lastControlRevision) {
+    return;
+  }
+
+  // Ignore commands addressed to a different run. Revisions restart at 0 in every test process, so
+  // without this an extension host from an earlier run would answer — and race the intended host.
+  if (runId !== undefined && payload.runId !== undefined && payload.runId !== runId) {
     return;
   }
 
@@ -649,6 +660,14 @@ async function executeE2eControlCommand(
       // The capability list is what the CLI asks for before it hands an AppHost to the extension to
       // launch, so a spec that needs the extension to debug an AppHost has to be able to see it.
       return getSupportedCapabilities();
+    }
+    case 'getVisibleExtensionIds': {
+      markStarted();
+      // Capabilities are derived from vscode.extensions.getExtension, so the only list that explains a
+      // missing capability is the one the extension host itself can see. The runner already checks the
+      // extensions directory and extensions.json, but both can be correct while the host still loads
+      // nothing - a copied extension directory is only scanned while extensions.json is absent.
+      return vscode.extensions.all.map(extension => extension.id);
     }
     case 'waitForJavaLanguageServer': {
       markStarted();

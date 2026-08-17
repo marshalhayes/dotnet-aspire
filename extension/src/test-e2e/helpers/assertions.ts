@@ -3,7 +3,7 @@ import * as http from 'http';
 import * as https from 'https';
 import * as path from 'path';
 import type { AspireAppHostState as AppHostState, AspireDebugSessionState, AspireExtensionE2EControlStatus as ExtensionE2EControlStatus, AspireExtensionE2EStateFile as ExtensionE2EStateFile, AspireExtensionE2ETaskProcessEvent as TaskProcessEvent, AspireExtensionStateSnapshot as ExtensionStateSnapshot, AspireResourceState as ResourceState } from '../../types/extensionApi';
-import { getControlFilePath, getPrimaryAppHostProjectPath, getStateFilePath, getWorkspaceRoot } from './paths';
+import { getControlFilePath, getPrimaryAppHostProjectPath, getRunId, getStateFilePath, getWorkspaceRoot } from './paths';
 
 type CommandInvocation = ExtensionE2EStateFile['commandInvocations'][number];
 type BrowserDebugSession = ExtensionE2EStateFile['browserDebugSessions'][number];
@@ -303,7 +303,18 @@ export function readStateFile(): ExtensionE2EStateFile {
     const maxAttempts = process.platform === 'win32' ? 10 : 1;
     for (let attempt = 1; ; attempt++) {
         try {
-            return JSON.parse(fs.readFileSync(getStateFilePath(), 'utf8')) as ExtensionE2EStateFile;
+            const stateFile = JSON.parse(fs.readFileSync(getStateFilePath(), 'utf8')) as ExtensionE2EStateFile;
+            // An extension host left behind by an earlier run keeps writing this file, so reject a
+            // foreign snapshot rather than asserting against another run's state. Waiters retry on
+            // a throw, which lets the intended host's next write win.
+            const runId = getRunId();
+            if (runId !== undefined && stateFile.runId !== undefined && stateFile.runId !== runId) {
+                throw new Error(
+                    `The E2E state file was written by run '${stateFile.runId}' but this run is '${runId}'. `
+                    + 'An extension host from an earlier run is still writing to it; close leftover VS Code instances.');
+            }
+
+            return stateFile;
         }
         catch (error) {
             if (attempt >= maxAttempts || !isRetryableStateFileReadError(error)) {
@@ -380,7 +391,7 @@ export async function applyE2eControl(payload: Record<string, unknown>, waitFor:
     }
 
     const revision = ++controlRevision;
-    writeJsonFileAtomic(controlFilePath, { revision, ...payload });
+    writeJsonFileAtomic(controlFilePath, { revision, runId: getRunId(), ...payload });
     const stateFile = await waitForExtensionState(
         file => file.control?.revision === revision && (file.control.status === 'error' || (waitFor === 'applied' ? file.control.status === 'applied' : file.control.startedObserved === true)),
         `E2E control revision ${revision}`,

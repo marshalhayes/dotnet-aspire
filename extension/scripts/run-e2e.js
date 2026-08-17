@@ -627,6 +627,9 @@ async function main() {
       ASPIRE_EXTENSION_E2E_WORKSPACE_ROOT: workspaceRoot,
       ASPIRE_EXTENSION_E2E_STATE_FILE: stateFile,
       ASPIRE_EXTENSION_E2E_CONTROL_FILE: controlFile,
+      // The state and control files live at a stable per-shard path, so both sides stamp this to
+      // ignore an extension host left behind by an earlier run that is still polling them.
+      ASPIRE_EXTENSION_E2E_RUN_ID: runId,
       ASPIRE_EXTENSION_E2E_ENABLE_BRIDGE: 'true',
       ASPIRE_EXTENSION_E2E_SKIP_CURRENT_CLI_REGRESSIONS: process.env.ASPIRE_EXTENSION_E2E_SKIP_CURRENT_CLI_REGRESSIONS === 'true' ? 'true' : 'false',
       ASPIRE_EXTENSION_E2E_PRIMARY_APPHOST: primaryAppHostProject,
