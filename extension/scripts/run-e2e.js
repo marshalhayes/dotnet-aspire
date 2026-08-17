@@ -1874,10 +1874,7 @@ function assertWorkspaceRootSafeForDeletion() {
   // so that the CLI resolves packages the way it does for the playground. The marker-file check
   // still applies, so this is not a weakening of the delete guard.
   if (isSamePath(resolvedWorkspaceRoot, resolveExistingPathForSafety(javaScratchWorkspaceRoot))) {
-    if (fs.existsSync(workspaceRoot) && !fs.existsSync(workspaceMarkerFile)) {
-      throw new Error(`Refusing to delete external E2E workspace root without marker file ${workspaceMarkerFile}.`);
-    }
-
+    assertWorkspaceRootCarriesMarker();
     return;
   }
 
@@ -1885,9 +1882,38 @@ function assertWorkspaceRootSafeForDeletion() {
     throw new Error(`ASPIRE_EXTENSION_E2E_WORKSPACE_ROOT must be under the runner temp root unless ASPIRE_EXTENSION_E2E_ALLOW_EXTERNAL_WORKSPACE_ROOT_CLEANUP=true is set. Refusing to delete ${workspaceRoot}.`);
   }
 
-  if (fs.existsSync(workspaceRoot) && !fs.existsSync(workspaceMarkerFile)) {
-    throw new Error(`Refusing to delete external E2E workspace root without marker file ${workspaceMarkerFile}.`);
+  assertWorkspaceRootCarriesMarker();
+}
+
+/**
+ * Refuses to delete a workspace root that holds content the runner did not create.
+ *
+ * An empty directory is accepted because it cannot hold anything worth protecting, and because
+ * `prepareWorkspaceFixture` creates the directory before it writes the marker: a run interrupted in
+ * that window, or one that failed before writing the marker, otherwise leaves a markerless
+ * directory that blocks every later run with no way to recover but manual deletion.
+ */
+function assertWorkspaceRootCarriesMarker() {
+  if (isWorkspaceRootOwnedByRunner()) {
+    return;
   }
+
+  throw new Error(
+    `Refusing to delete external E2E workspace root without marker file ${workspaceMarkerFile}. `
+    + `Delete ${workspaceRoot} manually if it is not yours, then re-run.`);
+}
+
+/**
+ * Reports whether the workspace root is the runner's to delete: absent, marked by a previous run,
+ * or empty. Both the pre-run fixture reset and the post-run cleanup consult this, so a developer
+ * directory that happens to sit at the workspace path survives a run intact.
+ */
+function isWorkspaceRootOwnedByRunner() {
+  if (!fs.existsSync(workspaceRoot) || fs.existsSync(workspaceMarkerFile)) {
+    return true;
+  }
+
+  return fs.readdirSync(workspaceRoot).length === 0;
 }
 
 function resolveExistingPathForSafety(value) {
@@ -2175,7 +2201,11 @@ function cleanupTemporaryRunRoot() {
 
   // The Java workspace lives inside the repository and is deliberately not gitignored, so leaving it
   // behind would show up as untracked changes and could be committed by accident.
-  if (enableJavaE2E && workspaceRoot === javaScratchWorkspaceRoot) {
+  //
+  // Only remove it when the runner owns it. `prepareWorkspaceFixture` refuses to delete a workspace
+  // root that holds content the runner did not create, and deleting it here regardless would defeat
+  // that guard and destroy a developer's directory that happens to sit at this path.
+  if (enableJavaE2E && workspaceRoot === javaScratchWorkspaceRoot && isWorkspaceRootOwnedByRunner()) {
     removePathWithoutFollowingLinks(javaScratchWorkspaceRoot, { recursive: true, force: true });
   }
 
